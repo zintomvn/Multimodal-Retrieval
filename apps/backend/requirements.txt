@@ -1,0 +1,12 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+SQLAlchemy==2.0.40
+psycopg[binary]==3.2.9
+pydantic==2.11.5
+python-multipart==0.0.20
+PyYAML==6.0.2
+httpx==0.28.1
+numpy==2.2.6
+pymilvus==2.5.10
+elasticsearch==8.15.1
+boto3==1.38.23

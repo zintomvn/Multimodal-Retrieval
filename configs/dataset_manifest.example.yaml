@@ -1,0 +1,16 @@
+name: mock-aic-2026
+version: v0
+root_uri: data/mock
+videos:
+  - video_code: L00_V000
+    uri: data/mock/videos/L00_V000.mp4
+    fps: 25
+    duration_ms: 120000
+  - video_code: L01_V028
+    uri: data/mock/videos/L01_V028.mp4
+    fps: 25
+    duration_ms: 180000
+  - video_code: L10_V001
+    uri: data/mock/videos/L10_V001.mp4
+    fps: 30
+    duration_ms: 240000

@@ -1,0 +1,72 @@
+embedders:
+  clip_mock:
+    task: multimodal_embedding
+    provider: mock
+    dim: 768
+    enabled: true
+    description: "Deterministic mock embedder for local development."
+  pe_core_bigg:
+    task: multimodal_embedding
+    provider: huggingface
+    checkpoint_uri: models/pe-core-bigg
+    device: cuda:0
+    dtype: fp16
+    batch_size: 16
+    enabled: false
+    description: "Place PE/OpenCLIP-style checkpoint here when available."
+  beit3:
+    task: multimodal_embedding
+    provider: huggingface
+    checkpoint_uri: models/beit3
+    device: cuda:0
+    dtype: fp16
+    batch_size: 16
+    enabled: false
+
+ocr:
+  mock_ocr:
+    task: ocr
+    provider: mock
+    enabled: true
+  paddle_vietocr:
+    task: ocr
+    provider: local
+    checkpoint_uri: models/paddle-vietocr
+    device: cuda:0
+    enabled: false
+
+asr:
+  mock_asr:
+    task: asr
+    provider: mock
+    enabled: true
+  whisperx:
+    task: asr
+    provider: huggingface
+    checkpoint_uri: models/whisperx
+    device: cuda:0
+    enabled: false
+
+vision_language:
+  mock_vlm:
+    task: visual_qa
+    provider: mock
+    enabled: true
+  qwen2_5_vl:
+    task: visual_qa
+    provider: openai_compatible
+    base_url: http://localhost:8001/v1
+    model: qwen2.5-vl-7b-instruct
+    enabled: false
+
+llm:
+  mock_query_expander:
+    task: query_expansion
+    provider: mock
+    enabled: true
+  local_qwen:
+    task: query_expansion
+    provider: openai_compatible
+    base_url: http://localhost:8001/v1
+    model: qwen2.5-7b-instruct
+    enabled: false

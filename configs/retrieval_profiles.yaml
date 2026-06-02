@@ -1,0 +1,45 @@
+competition_default:
+  semantic_weight: 0.60
+  metadata_weight: 0.25
+  temporal_weight: 0.10
+  user_boost_weight: 0.05
+  rrf:
+    enabled: true
+    k: 60
+  query_expansion:
+    enabled_default: true
+    max_variants: 5
+  milvus:
+    top_k_per_model: 500
+    final_top_k: 100
+  metadata:
+    ocr_boost: 3.0
+    asr_boost: 2.5
+    object_boost: 1.8
+    caption_boost: 1.5
+  temporal:
+    delta_t_max_ms: 180000
+    min_match_ratio: 0.67
+
+semantic_fast:
+  semantic_weight: 0.85
+  metadata_weight: 0.10
+  temporal_weight: 0.05
+  user_boost_weight: 0.0
+  rrf:
+    enabled: false
+    k: 60
+  query_expansion:
+    enabled_default: false
+    max_variants: 1
+  milvus:
+    top_k_per_model: 200
+    final_top_k: 100
+  metadata:
+    ocr_boost: 2.0
+    asr_boost: 2.0
+    object_boost: 1.2
+    caption_boost: 1.0
+  temporal:
+    delta_t_max_ms: 120000
+    min_match_ratio: 0.67

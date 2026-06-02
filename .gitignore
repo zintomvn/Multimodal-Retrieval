@@ -203,6 +203,14 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Project generated data and local model weights
+data/raw/
+data/processed/
+data/submissions/
+models/*
+!models/README.md
+!models/.gitkeep
+
 # Ruff stuff:
 .ruff_cache/
 

@@ -1,0 +1,15 @@
+.git
+.venv
+env
+venv
+__pycache__
+*.pyc
+node_modules
+apps/web/node_modules
+data/submissions
+data/raw
+data/processed
+models/*
+!models/README.md
+!models/.gitkeep
+docs/papers/*.pdf
