@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.modules.models.service import model_registry_service
+from app.core.deps import get_model_registry_service
+from app.modules.models.service import ModelRegistryService
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
 @router.get("")
-def list_models() -> dict:
-    return {"models": model_registry_service.list_models(), "enabled": model_registry_service.enabled_models()}
+def list_models(svc: ModelRegistryService = Depends(get_model_registry_service)) -> dict:
+    return {"models": svc.list_models(), "enabled": svc.enabled_models()}

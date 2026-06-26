@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult
-from app.modules.models.service import model_registry_service
+from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import ResultItem, SearchRequest, SearchResponse
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
@@ -34,8 +34,9 @@ def cosine_like_overlap(query: str, document: str) -> float:
 
 
 class RetrievalService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, model_registry: ModelRegistryService) -> None:
         self.db = db
+        self.model_registry = model_registry
         self.settings = get_settings()
         self.profiles = self._load_profiles()
 
@@ -114,7 +115,7 @@ class RetrievalService:
         max_variants = int(profile.get("query_expansion", {}).get("max_variants", 5))
         variants = [request.query_text]
         if request.options.use_query_expansion:
-            variants = model_registry_service.query_expander.expand(request.query_text, max_variants=max_variants)
+            variants = self.model_registry.query_expander.expand(request.query_text, max_variants=max_variants)
         temporal_events = request.options.temporal_events or self._split_temporal_events(request.query_text)
         return {
             "language": "auto",
@@ -144,7 +145,7 @@ class RetrievalService:
             if request.query_type == "QA":
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
-                answer = model_registry_service.visual_qa.answer(request.query_text, evidence, answer_hint)
+                answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
             result = RetrievalResult(
                 query_run_id=run.id,
                 rank=rank,

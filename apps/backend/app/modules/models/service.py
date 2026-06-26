@@ -5,17 +5,22 @@ from typing import Any
 
 import yaml
 
-from app.adapters.model_runtime.mock import MockEmbedder, MockQueryExpander, MockVisualQaModel
+from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, VisualQaModel
 from app.core.config import get_settings
 
 
 class ModelRegistryService:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        embedder: TextImageEmbedder,
+        query_expander: QueryExpander,
+        visual_qa: VisualQaModel,
+    ) -> None:
         self.settings = get_settings()
         self.registry = self._load_yaml(self.settings.model_registry_path)
-        self.embedder = MockEmbedder(dim=64)
-        self.query_expander = MockQueryExpander()
-        self.visual_qa = MockVisualQaModel()
+        self.embedder = embedder
+        self.query_expander = query_expander
+        self.visual_qa = visual_qa
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -35,6 +40,3 @@ class ModelRegistryService:
                 if isinstance(config, dict) and config.get("enabled"):
                     enabled.append({"group": group, "name": name, **config})
         return enabled
-
-
-model_registry_service = ModelRegistryService()

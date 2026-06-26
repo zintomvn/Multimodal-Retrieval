@@ -21,6 +21,10 @@ class Settings:
     s3_secret_key: str = os.getenv("S3_SECRET_KEY", "")
     s3_bucket: str = os.getenv("S3_BUCKET", "multimodal-assets")
     r2_public_url: str = os.getenv("R2_PUBLIC_URL", "")
+    gcs_bucket: str = os.getenv("GCS_BUCKET", "")
+    gcs_credentials_file: str = os.getenv("GCS_CREDENTIALS_FILE", "")
+    gcs_public_url: str = os.getenv("GCS_PUBLIC_URL", "")
+    storage_provider: str = os.getenv("STORAGE_PROVIDER", "r2")  # "mock" | "r2" | "gcs"
     data_root: Path = Path(os.getenv("DATA_ROOT", "./data"))
     model_registry_path: Path = Path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
     retrieval_profiles_path: Path = Path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
