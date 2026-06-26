@@ -6,10 +6,13 @@ from app.adapters.vector_db.base import VectorHit
 class MilvusVectorSearchClient:
     """Thin optional wrapper. Import pymilvus only when this adapter is enabled."""
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, uri: str, token: str = "") -> None:
         from pymilvus import MilvusClient
 
-        self.client = MilvusClient(uri=f"http://{host}:{port}")
+        kwargs: dict = {"uri": uri}
+        if token:
+            kwargs["token"] = token
+        self.client = MilvusClient(**kwargs)
 
     def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
         filter_expr = self._to_filter_expr(filters or {})

@@ -10,3 +10,4 @@ numpy==2.2.6
 pymilvus==2.5.10
 elasticsearch==8.15.1
 boto3==1.38.23
+google-cloud-storage==2.18.2
