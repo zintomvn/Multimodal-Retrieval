@@ -1,0 +1,32 @@
+models:
+  gpt_oss_120b:
+    alias: gpt_oss_120b
+    provider: groq
+    model_name: openai/gpt-oss-120b
+    api_key_env: GROQ_API_KEY
+    base_url_env: null
+    supports_reasoning_effort: true
+
+  gemma_4_31b:
+    alias: gemma_4_31b
+    provider: openai_compatible
+    model_name: google/gemma-4-31b-it
+    api_key_env: NVIDIA_API_KEY
+    base_url_env: NVIDIA_BASE_URL
+    supports_reasoning_effort: true
+
+  nemotron_3_super_120b:
+    alias: nemotron_3_super_120b
+    provider: openai_compatible
+    model_name: nvidia/nemotron-3-super-120b-a12b
+    api_key_env: NVIDIA_API_KEY
+    base_url_env: NVIDIA_BASE_URL
+    supports_reasoning_effort: true
+
+  nemotron_3_ultra_550b:
+    alias: nemotron_3_ultra_550b
+    provider: openai_compatible
+    model_name: nvidia/nemotron-3-ultra-550b-a55b
+    api_key_env: NVIDIA_API_KEY
+    base_url_env: NVIDIA_BASE_URL
+    supports_reasoning_effort: true
