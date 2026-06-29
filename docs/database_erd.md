@@ -1,282 +1,209 @@
-# PostgreSQL Database ERD
+# PostgreSQL ERD (Target Demo-Aligned)
 
-> Sơ đồ quan hệ PostgreSQL cho backend hiện tại. Milvus lưu vector embedding, Elasticsearch lưu text index; PostgreSQL là nguồn sự thật cho metadata, runs và submissions.
+Tai lieu nay mo ta ERD muc tieu cho backend retrieval, dong bo voi schema contract:
+- `docs/database_schema_demo_v1.md`
 
-## 1. ERD Tổng Quan
+Muc dich:
+- chot quan he bang cho Module 1/2;
+- dam bao import du lieu tu `demo/` khong mat thong tin;
+- giu contract on dinh de map Elasticsearch va Milvus.
+
+## 1. ERD Tong Quan
 
 ```mermaid
 erDiagram
     DATASETS ||--o{ VIDEOS : contains
-    VIDEOS ||--o{ FRAMES : contains
-    VIDEOS ||--o{ EVENTS : segments
-    FRAMES ||--o{ FRAME_ANNOTATIONS : has
-    FRAMES ||--o{ EVENTS : representative_for
+    VIDEOS ||--o{ SHOTS : has
+    SHOTS ||--o{ KEYFRAMES : has
+    KEYFRAMES ||--|| FRAME_ANNOTATIONS : annotates
+
+    VIDEOS ||--o{ EVENTS : has
+    EVENTS ||--o{ EVENT_KEYFRAMES : expands_to
+    KEYFRAMES ||--o{ EVENT_KEYFRAMES : participates_in
+    KEYFRAMES ||--o{ EVENTS : representative_for
 
     DATASETS ||--o{ INDEX_BUILDS : builds
     DATASETS ||--o{ QUERY_RUNS : runs
     QUERY_RUNS ||--o{ RETRIEVAL_RESULTS : returns
     VIDEOS ||--o{ RETRIEVAL_RESULTS : result_video
-    FRAMES ||--o{ RETRIEVAL_RESULTS : result_frame
+    KEYFRAMES ||--o{ RETRIEVAL_RESULTS : result_keyframe
     EVENTS ||--o{ RETRIEVAL_RESULTS : result_event
 
     DATASETS ||--o{ SUBMISSIONS : owns
     SUBMISSIONS ||--o{ SUBMISSION_ITEMS : contains
 
     DATASETS {
-        string id PK
-        string name
-        string version
+        uuid dataset_id PK
+        text dataset_code UK
+        text name
+        text version
         text root_uri
-        string status
-        datetime created_at
+        text status
+        timestamptz created_at
     }
 
     VIDEOS {
-        string id PK
-        string dataset_id FK
-        string video_code
-        text uri
+        text video_id PK
+        uuid dataset_id FK
+        text video_name
+        float duration_seconds
         float fps
-        int duration_ms
-        int width
-        int height
-        json extra_metadata
+        int num_keyframes
+        text embedding_shape
+        text source_video_path
     }
 
-    FRAMES {
-        string id PK
-        string video_id FK
+    SHOTS {
+        text shot_id PK
+        text video_id FK
+        int shot_index
+        int start_frame
+        int end_frame
+        float start_seconds
+        float end_seconds
+        float boundary_threshold
+    }
+
+    KEYFRAMES {
+        text keyframe_id PK
+        text video_id FK
+        text shot_id FK
         int frame_idx
-        int timestamp_ms
-        text image_uri
-        text thumbnail_uri
-        string shot_id
-        string dedup_group_id
-        float quality_score
-        datetime created_at
-    }
-
-    EVENTS {
-        string id PK
-        string video_id FK
-        int start_frame_idx
-        int end_frame_idx
-        string representative_frame_id FK
-        text title
-        text description
-        int event_order
-        string segmentation_version
+        float frame_seconds
+        text frame_type
+        int map_n
+        int embedding_index_0
+        text image_rel_path
+        text image_storage_key
+        text image_url
+        bool is_media_present
     }
 
     FRAME_ANNOTATIONS {
-        string id PK
-        string frame_id FK
-        string kind
-        text text_value
-        json json_value
-        float confidence
-        string model_version
-        datetime created_at
+        text keyframe_id PK,FK
+        text caption
+        jsonb ocr_texts
+        jsonb detected_objects
+        jsonb object_counts
+        jsonb detections
+        text annotation_version
     }
 
-    MODEL_REGISTRY {
-        string id PK
-        string name
-        string task
-        string provider
-        text checkpoint_uri
-        json config
-        string status
-        datetime created_at
+    EVENTS {
+        text event_id PK
+        text video_id FK
+        int embedding_index_0
+        float start_seconds
+        float end_seconds
+        int start_frame
+        int end_frame
+        text representative_keyframe_id FK
+        int n_shots
+        int n_keyframes
+    }
+
+    EVENT_KEYFRAMES {
+        text event_id PK,FK
+        int seq_no PK
+        text keyframe_id FK
+        int keyframe_embedding_index_0
     }
 
     INDEX_BUILDS {
-        string id PK
-        string dataset_id FK
-        string index_type
-        string collection_name
-        string model_name
-        string model_version
-        string status
-        json stats
-        datetime created_at
-        datetime completed_at
+        uuid index_build_id PK
+        uuid dataset_id FK
+        text index_type
+        text target_name
+        text model_name
+        text model_version
+        text status
+        jsonb stats
     }
 
     QUERY_RUNS {
-        string id PK
-        string dataset_id FK
-        string query_name
-        string query_type
+        uuid query_run_id PK
+        uuid dataset_id FK
+        text query_name
+        text query_type
         text query_text
-        json normalized_query
-        json options
-        string status
-        datetime created_at
+        jsonb normalized_query
+        jsonb options
+        text status
     }
 
     RETRIEVAL_RESULTS {
-        string id PK
-        string query_run_id FK
+        uuid result_id PK
+        uuid query_run_id FK
         int rank
-        string video_id FK
-        string frame_id FK
-        string event_id FK
+        text video_id FK
+        text keyframe_id FK
+        text event_id FK
         text answer
         float score
-        json score_breakdown
-        json sequence_frames
-        bool selected
+        jsonb score_breakdown
+        jsonb sequence_frames
     }
 
     SUBMISSIONS {
-        string id PK
-        string dataset_id FK
-        string name
+        uuid submission_id PK
+        uuid dataset_id FK
+        text name
         text zip_uri
-        string status
-        json validation_report
-        datetime created_at
+        text status
+        jsonb validation_report
     }
 
     SUBMISSION_ITEMS {
-        string id PK
-        string submission_id FK
-        string query_name
-        string query_type
+        uuid submission_item_id PK
+        uuid submission_id FK
+        text query_name
+        text query_type
         int rank
-        string video_code
-        json frame_indices
+        text video_code
+        jsonb frame_indices
         text answer
-        datetime created_at
-    }
-
-    JOBS {
-        string id PK
-        string kind
-        string status
-        float progress
-        text message
-        json payload
-        datetime created_at
-        datetime updated_at
     }
 ```
 
-## 2. Nhóm Bảng Theo Luồng
-
-### 2.1 Dataset Và Media Metadata
+## 2. Luong du lieu chinh
 
 ```text
 datasets
   -> videos
-      -> frames
-          -> frame_annotations
+      -> shots
+          -> keyframes
+              -> frame_annotations
       -> events
+          -> event_keyframes
 ```
 
-Ý nghĩa:
+- `keyframes` la diem giao giua relational metadata va vector/text indexes.
+- `event_keyframes` giup truy van TRAKE theo chuoi theo thu tu ma khong can parse chuoi text.
 
-- `datasets`: một bộ dữ liệu hoặc một version dataset.
-- `videos`: video thuộc dataset, định danh bằng `video_code`, ví dụ `L00_V000`.
-- `frames`: keyframe hoặc frame đại diện được dùng cho search/submission.
-- `frame_annotations`: OCR, ASR, object labels, caption, scene, tag.
-- `events`: cụm frame theo thời gian, dùng cho event retrieval và TRAKE.
+## 3. Constraint quan trong
 
-### 2.2 Index Và Model Versioning
+- `videos`: unique theo business id `video_id`.
+- `shots`: unique `(video_id, shot_index)`.
+- `keyframes`: unique `(video_id, frame_idx)`.
+- `events`: unique `(video_id, embedding_index_0)`.
+- `event_keyframes`: PK `(event_id, seq_no)` va unique `(event_id, keyframe_id)`.
+- `retrieval_results`: unique `(query_run_id, rank)`.
+- `submission_items`: unique `(submission_id, query_name, rank)`.
 
-```text
-model_registry
-datasets -> index_builds
-```
-
-Ý nghĩa:
-
-- `model_registry`: snapshot model/adapters đang dùng.
-- `index_builds`: record cho Milvus/Elasticsearch/PostgreSQL index build.
-
-Milvus và Elasticsearch không phải nguồn sự thật. Nếu index hỏng, có thể rebuild từ PostgreSQL + artifact trong MinIO/local storage.
-
-### 2.3 Retrieval Runs
-
-```text
-datasets
-  -> query_runs
-      -> retrieval_results
-```
-
-Ý nghĩa:
-
-- `query_runs`: mỗi lần user chạy query.
-- `retrieval_results`: top-k results đã được rank, có score breakdown và sequence frames.
-- `retrieval_results.sequence_frames`: dùng cho TRAKE, ví dụ `[1200, 1850, 2100]`.
-
-### 2.4 Submission
-
-```text
-datasets
-  -> submissions
-      -> submission_items
-```
-
-Ý nghĩa:
-
-- `submissions`: một lần export ZIP.
-- `submission_items`: từng dòng CSV chuẩn bị nộp.
-
-Format mapping:
-
-| Query type | `submission_items` mapping | CSV output |
-| --- | --- | --- |
-| `KIS` | `video_code`, `frame_indices[0]` | `<video>,<frame>` |
-| `QA` | `video_code`, `frame_indices[0]`, `answer` | `<video>,<frame>,<answer>` |
-| `TRAKE` | `video_code`, `frame_indices[]` | `<video>,<frame_1>,...,<frame_n>` |
-
-### 2.5 Jobs
-
-```text
-jobs
-```
-
-Ý nghĩa:
-
-- Theo dõi ingest/index/preprocessing job.
-- `payload` lưu tham số job.
-- `progress` và `message` dùng cho UI/admin logs.
-
-## 3. Constraint Quan Trọng
-
-| Bảng | Constraint | Lý do |
-| --- | --- | --- |
-| `datasets` | unique `(name, version)` | Không trùng dataset version. |
-| `videos` | unique `(dataset_id, video_code)` | Một video code chỉ xuất hiện một lần trong dataset. |
-| `frames` | unique `(video_id, frame_idx)` | Chạy ingest lại không tạo trùng frame. |
-| `query_runs` | FK `dataset_id` | Mỗi query run gắn với một dataset cụ thể. |
-| `retrieval_results` | unique `(query_run_id, rank)` | Rank trong một query run không trùng. |
-| `submission_items` | unique `(submission_id, query_name, rank)` | Một query trong submission không có hai dòng cùng rank. |
-
-## 4. Gợi Ý Index PostgreSQL
-
-Khi chuyển từ mock sang dataset lớn hơn, nên thêm các index sau:
+## 4. Index uu tien cao
 
 ```sql
-CREATE INDEX idx_videos_dataset_code ON videos(dataset_id, video_code);
-CREATE INDEX idx_frames_video_frame_idx ON frames(video_id, frame_idx);
-CREATE INDEX idx_frames_video_timestamp ON frames(video_id, timestamp_ms);
-CREATE INDEX idx_annotations_frame_kind ON frame_annotations(frame_id, kind);
-CREATE INDEX idx_events_video_order ON events(video_id, event_order);
-CREATE INDEX idx_query_runs_dataset_created ON query_runs(dataset_id, created_at DESC);
-CREATE INDEX idx_retrieval_results_run_rank ON retrieval_results(query_run_id, rank);
-CREATE INDEX idx_submission_items_submission_query_rank ON submission_items(submission_id, query_name, rank);
+create index if not exists idx_videos_dataset on videos(dataset_id);
+create index if not exists idx_shots_video_time on shots(video_id, start_seconds, end_seconds);
+create index if not exists idx_keyframes_video_time on keyframes(video_id, frame_seconds);
+create index if not exists idx_keyframes_shot on keyframes(shot_id, frame_idx);
+create index if not exists idx_events_video_time on events(video_id, start_seconds, end_seconds);
+create index if not exists idx_event_keyframes_keyframe on event_keyframes(keyframe_id);
 ```
 
-Nếu cần full-text fallback trong PostgreSQL:
+## 5. Boundary voi Elasticsearch va Milvus
 
-```sql
-CREATE INDEX idx_frame_annotations_text_trgm
-ON frame_annotations
-USING gin (text_value gin_trgm_ops);
-```
-
-Ghi chú: cần extension `pg_trgm`.
+- PostgreSQL: source-of-truth.
+- Elasticsearch: text retrieval index (caption, OCR, objects), id tham chieu `keyframe_id`.
+- Milvus: ANN vector index, id tham chieu `keyframe_id` va `event_id`.
 
