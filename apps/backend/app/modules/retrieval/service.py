@@ -187,7 +187,8 @@ class RetrievalService:
             if request.query_type == "QA":
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
-                answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                raw_answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                answer = self._postprocess_qa_answer(raw_answer)
             result = RetrievalResult(
                 query_run_id=run.id,
                 rank=rank,
@@ -250,17 +251,32 @@ class RetrievalService:
             min_match=min_match,
             limit=request.top_k,
         )
+        sequences = sorted(
+            sequences,
+            key=lambda item: (
+                -round(item.score, 8),
+                -len(item.candidates),
+                item.video_code,
+                item.candidates[0].frame_idx if item.candidates else 10**9,
+                tuple(candidate.frame_idx for candidate in item.candidates),
+            ),
+        )
         items: list[ResultItem] = []
         for rank, sequence in enumerate(sequences, start=1):
             representative = sequence.candidates[len(sequence.candidates) // 2]
+            frame_indices = [candidate.frame_idx for candidate in sequence.candidates]
+            delta_frames_seq = [frame_indices[idx] - frame_indices[idx - 1] for idx in range(1, len(frame_indices))]
             sequence_frames = [
                 {
                     "frame_id": candidate.frame_id,
                     "frame_idx": candidate.frame_idx,
                     "video_code": candidate.video_code,
                     "score": round(candidate.score, 4),
+                    "order_index": idx + 1,
+                    "event_index": idx + 1,
+                    "delta_from_previous": None if idx == 0 else candidate.frame_idx - sequence.candidates[idx - 1].frame_idx,
                 }
-                for candidate in sequence.candidates
+                for idx, candidate in enumerate(sequence.candidates)
             ]
             result = RetrievalResult(
                 query_run_id=run.id,
@@ -272,6 +288,17 @@ class RetrievalService:
                     "temporal_score": round(sequence.score, 4),
                     "matched_events": len(sequence.candidates),
                     "expected_events": len(events),
+                    "ordering": {
+                        "is_strictly_increasing": all(delta > 0 for delta in delta_frames_seq) if delta_frames_seq else True,
+                        "frame_indices": frame_indices,
+                        "delta_frames": delta_frames_seq,
+                        "stable_sort_key": [
+                            round(sequence.score, 8),
+                            len(sequence.candidates),
+                            sequence.video_code,
+                            frame_indices[0] if frame_indices else None,
+                        ],
+                    },
                 },
                 sequence_frames=sequence_frames,
             )
@@ -674,6 +701,16 @@ class RetrievalService:
             if hint:
                 return str(hint)
         return None
+
+    def _postprocess_qa_answer(self, answer: str | None) -> str | None:
+        if answer is None:
+            return None
+        normalized = " ".join(str(answer).split())
+        if not normalized:
+            return None
+        if len(normalized) <= 100:
+            return normalized
+        return normalized[:100].rstrip()
 
     def _result_to_item(self, result: RetrievalResult) -> ResultItem:
         frame = result.frame
