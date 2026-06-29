@@ -91,8 +91,10 @@ class RetrievalService:
                 results = self._search_frame_level(run, dataset, request, normalized)
             run.status = "DONE"
             latency_ms = int((perf_counter() - started_at) * 1000)
+            normalized = {**normalized, "latency_ms": latency_ms}
+            # Re-assign JSON fields so SQLAlchemy persists updated values reliably.
+            run.normalized_query = normalized
             run.options = {**(run.options or {}), "latency_ms": latency_ms}
-            normalized["latency_ms"] = latency_ms
             self.db.commit()
         except Exception:
             run.status = "FAILED"

@@ -193,6 +193,7 @@ def test_m3_search_returns_hybrid_scores_and_persists_run(tmp_path: Path) -> Non
         "final_score",
     }
     assert response.results[0].score_breakdown["final_score"] == pytest.approx(response.results[0].score)
+    assert isinstance(response.normalized_query.get("latency_ms"), int)
 
     run = db.query(QueryRun).one()
     stored_results = db.query(RetrievalResult).filter(RetrievalResult.query_run_id == run.id).all()
@@ -200,8 +201,13 @@ def test_m3_search_returns_hybrid_scores_and_persists_run(tmp_path: Path) -> Non
 
     assert run.status == "DONE"
     assert isinstance(run.options.get("latency_ms"), int)
+    assert isinstance((run.normalized_query or {}).get("latency_ms"), int)
     assert len(stored_results) == 2
     assert len(ranks) == len(set(ranks))
+
+    loaded_run = service.get_run(response.query_run_id)
+    assert loaded_run.query_run_id == response.query_run_id
+    assert isinstance(loaded_run.normalized_query.get("latency_ms"), int)
 
     db.close()
 
@@ -251,4 +257,34 @@ def test_m3_blank_query_returns_http_400(tmp_path: Path) -> None:
 
     assert excinfo.value.status_code == 400
     assert excinfo.value.detail == "query_text must not be empty"
+    db.close()
+
+
+def test_m3_invalid_time_range_returns_http_400(tmp_path: Path) -> None:
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
+
+    request = SearchRequest(
+        dataset_id=dataset.dataset_id,
+        query_type="KIS",
+        query_name="m3-invalid-time-range",
+        query_text="nguoi ao do",
+        top_k=1,
+        options=SearchOptions(
+            use_query_expansion=False,
+            time_range_start_seconds=2.0,
+            time_range_end_seconds=1.0,
+        ),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        search_endpoint(
+            request=request,
+            db=db,
+            model_registry=service.model_registry,
+            vector_client=service.vector_client,
+            text_client=service.text_client,
+        )
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "options.time_range_start_seconds must be <= options.time_range_end_seconds"
     db.close()
