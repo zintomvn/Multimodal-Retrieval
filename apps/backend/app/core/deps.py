@@ -26,6 +26,10 @@ def get_object_storage() -> ObjectStorageClient:
         from app.adapters.object_storage.mock import InMemoryObjectStorageClient
 
         return InMemoryObjectStorageClient()
+    if settings.storage_provider == "local":
+        from app.adapters.object_storage.local import LocalObjectStorageClient
+
+        return LocalObjectStorageClient(data_root=settings.data_root)
     if settings.storage_provider == "gcs":
         from app.adapters.object_storage.gcs import GCSObjectStorageClient
 
