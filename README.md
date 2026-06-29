@@ -61,6 +61,7 @@ Multimodal-Retrieval/
 ├── docs/
 │   ├── blueprint/                # Proposal + technical design
 │   ├── tasks/                    # Milestone/phase task plans
+│   ├── database_schema_demo_v1.md # Schema contract bám dữ liệu demo
 │   ├── database_erd.md           # PostgreSQL ERD
 │   ├── model_pipeline_guide.md   # Hướng dẫn cắm model/thay pipeline
 │   └── runbook.md                # Lệnh vận hành thường dùng
@@ -315,6 +316,7 @@ Test plan chi tiết:
 | --- | --- |
 | `docs/blueprint/proposal.md` | Đề xuất hệ thống, mục tiêu, phạm vi. |
 | `docs/blueprint/design.md` | Thiết kế kỹ thuật, module, schema, ERD. |
+| `docs/database_schema_demo_v1.md` | Schema contract mục tiêu cho dữ liệu `demo/`. |
 | `docs/database_erd.md` | ERD PostgreSQL riêng để xem nhanh. |
 | `docs/model_pipeline_guide.md` | Cách bỏ model vào và sửa pipeline. |
 | `docs/runbook.md` | Lệnh vận hành thường dùng. |
@@ -344,4 +346,3 @@ Test plan chi tiết:
 | Port bị chiếm | Dừng stack cũ bằng `docker compose down --remove-orphans`. |
 | Search không đúng | Kiểm tra mock dataset, query text, `score_breakdown`. |
 | Export ZIP lỗi | Gọi `/api/submissions/{id}/validate` để xem lỗi format. |
-

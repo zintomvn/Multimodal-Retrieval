@@ -224,3 +224,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data Extration Notebooks
+feature_extraction_notebooks
+
+# Data
+demo
+
+# Env
+.env
+
+# Agent and Skill
+.agents
+skills-lock.json
