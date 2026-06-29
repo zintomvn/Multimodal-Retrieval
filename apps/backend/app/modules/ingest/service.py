@@ -494,11 +494,43 @@ class DemoIngestService:
             frame_to_n=map_frame_to_n,
             failed_rows=failed_rows,
         )
-        imported_event_ids = sorted({row["event_id"] for row in event_keyframe_rows})
+        existing_event_ids = {
+            event_id
+            for (event_id,) in self.db.query(Event.event_id).filter(Event.video_id.in_(video_ids)).all()
+        }
+        existing_keyframe_ids = {
+            keyframe_id
+            for (keyframe_id,) in self.db.query(Frame.keyframe_id).filter(Frame.video_id.in_(video_ids)).all()
+        }
+        filtered_event_keyframe_rows: list[dict[str, Any]] = []
+        for row in event_keyframe_rows:
+            if row["event_id"] not in existing_event_ids:
+                failed_rows.append(
+                    {
+                        "stage": "pg.event_keyframes",
+                        "reason": "event_not_in_events_table",
+                        "event_id": row["event_id"],
+                        "keyframe_id": row["keyframe_id"],
+                    }
+                )
+                continue
+            if row["keyframe_id"] not in existing_keyframe_ids:
+                failed_rows.append(
+                    {
+                        "stage": "pg.event_keyframes",
+                        "reason": "keyframe_not_in_keyframes_table",
+                        "event_id": row["event_id"],
+                        "keyframe_id": row["keyframe_id"],
+                    }
+                )
+                continue
+            filtered_event_keyframe_rows.append(row)
+
+        imported_event_ids = sorted({row["event_id"] for row in filtered_event_keyframe_rows})
         for chunk in _chunks(imported_event_ids, 500):
             self.db.query(EventKeyframe).filter(EventKeyframe.event_id.in_(chunk)).delete(synchronize_session=False)
         self.db.flush()
-        for row in event_keyframe_rows:
+        for row in filtered_event_keyframe_rows:
             self.db.add(
                 EventKeyframe(
                     event_id=row["event_id"],
@@ -521,7 +553,7 @@ class DemoIngestService:
             "annotations_updated": annotations_updated,
             "events_inserted": events_inserted,
             "events_updated": events_updated,
-            "event_keyframes_upserted": len(event_keyframe_rows),
+            "event_keyframes_upserted": len(filtered_event_keyframe_rows),
         }
 
     def import_media(self, dataset: Dataset, files: DemoFiles, failed_rows: list[dict[str, Any]]) -> dict[str, Any]:
