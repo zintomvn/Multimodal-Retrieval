@@ -69,11 +69,8 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     from app.modules.models.service import ModelRegistryService
 
     settings = get_settings()
-    if settings.mock_mode:
-        embedder = MockEmbedder(dim=64)
-        query_expander = MockQueryExpander()
-        visual_qa = MockVisualQaModel()
-    else:
-        raise NotImplementedError("Non-mock model runtime not yet wired. Enable a model in model_registry.yaml.")
+    embedder = MockEmbedder(dim=settings.mock_embedding_dim)
+    query_expander = MockQueryExpander()
+    visual_qa = MockVisualQaModel()
 
     return ModelRegistryService(embedder=embedder, query_expander=query_expander, visual_qa=visual_qa)

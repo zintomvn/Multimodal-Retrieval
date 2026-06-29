@@ -3,19 +3,24 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 import yaml
 from sqlalchemy.orm import Session
 
+from app.adapters.text_search.base import TextSearchClient
+from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
-from app.db.models import Dataset, Frame, QueryRun, RetrievalResult
+from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import ResultItem, SearchRequest, SearchResponse
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
 
 TOKEN_RE = re.compile(r"[\wÀ-ỹ]+", re.UNICODE)
+FRAME_VIDEO_ID_RE = re.compile(r"^(?P<video_id>.+)_F\d+$")
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -33,14 +38,35 @@ def cosine_like_overlap(query: str, document: str) -> float:
     return intersection / (q_norm * d_norm)
 
 
+@dataclass(frozen=True)
+class FrameScore:
+    frame: Frame
+    semantic_score: float
+    text_score: float
+    quality_score: float
+    final_score: float
+
+
 class RetrievalService:
-    def __init__(self, db: Session, model_registry: ModelRegistryService) -> None:
+    def __init__(
+        self,
+        db: Session,
+        model_registry: ModelRegistryService,
+        vector_client: VectorSearchClient | None = None,
+        text_client: TextSearchClient | None = None,
+    ) -> None:
         self.db = db
         self.model_registry = model_registry
+        self.vector_client = vector_client
+        self.text_client = text_client
         self.settings = get_settings()
         self.profiles = self._load_profiles()
 
     def search(self, request: SearchRequest) -> SearchResponse:
+        if not request.query_text.strip():
+            raise ValueError("query_text must not be empty")
+
+        started_at = perf_counter()
         dataset = self._resolve_dataset(request.dataset_id)
         normalized = self._normalize_query(request)
         run = QueryRun(
@@ -61,6 +87,9 @@ class RetrievalService:
             else:
                 results = self._search_frame_level(run, dataset, request, normalized)
             run.status = "DONE"
+            latency_ms = int((perf_counter() - started_at) * 1000)
+            run.options = {**(run.options or {}), "latency_ms": latency_ms}
+            normalized["latency_ms"] = latency_ms
             self.db.commit()
         except Exception:
             run.status = "FAILED"
@@ -112,9 +141,11 @@ class RetrievalService:
 
     def _normalize_query(self, request: SearchRequest) -> dict[str, Any]:
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
-        max_variants = int(profile.get("query_expansion", {}).get("max_variants", 5))
+        expansion_profile = profile.get("query_expansion", {})
+        max_variants = int(expansion_profile.get("max_variants", 5))
+        expansion_default_enabled = bool(expansion_profile.get("enabled_default", True))
         variants = [request.query_text]
-        if request.options.use_query_expansion:
+        if request.options.use_query_expansion and expansion_default_enabled:
             variants = self.model_registry.query_expander.expand(request.query_text, max_variants=max_variants)
         temporal_events = request.options.temporal_events or self._split_temporal_events(request.query_text)
         return {
@@ -138,9 +169,10 @@ class RetrievalService:
         request: SearchRequest,
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
-        candidates = self._rank_frames(dataset, normalized["variants"], request.profile)
+        candidates = self._rank_frames(dataset, normalized["variants"], request.profile, request.top_k)
         items: list[ResultItem] = []
-        for rank, (frame, score, breakdown) in enumerate(candidates[: request.top_k], start=1):
+        for rank, candidate in enumerate(candidates[: request.top_k], start=1):
+            frame = candidate.frame
             answer = None
             if request.query_type == "QA":
                 evidence = self._frame_text(frame)
@@ -152,8 +184,13 @@ class RetrievalService:
                 video_id=frame.video_id,
                 frame_id=frame.id,
                 answer=answer,
-                score=score,
-                score_breakdown=breakdown,
+                score=candidate.final_score,
+                score_breakdown={
+                    "semantic_score": round(candidate.semantic_score, 6),
+                    "text_score": round(candidate.text_score, 6),
+                    "quality_score": round(candidate.quality_score, 6),
+                    "final_score": round(candidate.final_score, 6),
+                },
                 sequence_frames=[],
             )
             self.db.add(result)
@@ -171,18 +208,18 @@ class RetrievalService:
         events = normalized["temporal_events"] or [request.query_text]
         candidate_sets: list[list[Candidate]] = []
         for event_query in events:
-            ranked = self._rank_frames(dataset, [event_query], request.profile)[:80]
+            ranked = self._rank_frames(dataset, [event_query], request.profile, top_k=80)
             candidate_sets.append(
                 [
                     Candidate(
-                        frame_id=frame.id,
-                        video_id=frame.video_id,
-                        video_code=frame.video.video_code,
-                        frame_idx=frame.frame_idx,
-                        score=score,
-                        text=self._frame_text(frame),
+                        frame_id=candidate.frame.id,
+                        video_id=candidate.frame.video_id,
+                        video_code=candidate.frame.video.video_code,
+                        frame_idx=candidate.frame.frame_idx,
+                        score=candidate.final_score,
+                        text=self._frame_text(candidate.frame),
                     )
-                    for frame, score, _ in ranked
+                    for candidate in ranked
                 ]
             )
         delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
@@ -224,39 +261,189 @@ class RetrievalService:
             items.append(self._result_to_item(result))
         return items
 
-    def _rank_frames(self, dataset: Dataset, variants: list[str], profile_name: str) -> list[tuple[Frame, float, dict[str, float]]]:
+    def _rank_frames(
+        self,
+        dataset: Dataset,
+        variants: list[str],
+        profile_name: str,
+        top_k: int,
+    ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
-        metadata_weight = float(profile.get("metadata_weight", 0.25))
+        text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
+        quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
+        ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
+
+        dataset_video_ids = self._dataset_video_ids(dataset)
+        semantic_scores = self._semantic_scores(variants, ann_top_k, dataset_video_ids)
+        text_scores = self._text_scores(variants, ann_top_k, dataset_video_ids, profile)
+
+        candidate_ids = set(semantic_scores).union(text_scores)
+        if not candidate_ids:
+            return self._fallback_rank_frames(
+                dataset=dataset,
+                variants=variants,
+                semantic_weight=semantic_weight,
+                text_weight=text_weight,
+                quality_weight=quality_weight,
+            )
+
         frames = (
             self.db.query(Frame)
             .join(Frame.video)
-            .filter_by(dataset_id=dataset.id)
+            .filter(Video.dataset_id == dataset.id, Frame.keyframe_id.in_(candidate_ids))
             .all()
         )
-        scored: list[tuple[Frame, float, dict[str, float]]] = []
+        if not frames:
+            return []
+
+        semantic_max = max(semantic_scores.values(), default=1.0) or 1.0
+        text_max = max(text_scores.values(), default=1.0) or 1.0
+        scored: list[FrameScore] = []
         for frame in frames:
-            doc = self._frame_text(frame)
-            semantic_score = max(cosine_like_overlap(variant, doc) for variant in variants)
-            metadata_score = self._metadata_score(variants, frame)
-            quality = frame.quality_score or 1.0
-            score = semantic_weight * semantic_score + metadata_weight * metadata_score + 0.03 * quality
+            semantic_score = (semantic_scores.get(frame.keyframe_id, 0.0) / semantic_max) if semantic_max > 0 else 0.0
+            text_score = (text_scores.get(frame.keyframe_id, 0.0) / text_max) if text_max > 0 else 0.0
+            quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
+            final_score = (
+                semantic_weight * semantic_score
+                + text_weight * text_score
+                + quality_weight * quality_score
+            )
             scored.append(
-                (
-                    frame,
-                    score,
-                    {
-                        "semantic_score": round(semantic_score, 4),
-                        "metadata_score": round(metadata_score, 4),
-                        "quality_score": round(quality, 4),
-                    },
+                FrameScore(
+                    frame=frame,
+                    semantic_score=semantic_score,
+                    text_score=text_score,
+                    quality_score=quality_score,
+                    final_score=final_score,
                 )
             )
-        scored.sort(key=lambda item: item[1], reverse=True)
+        scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return scored
 
+    def _semantic_scores(self, variants: list[str], top_k: int, dataset_video_ids: set[str]) -> dict[str, float]:
+        if self.vector_client is None:
+            return {}
+        scores: dict[str, float] = {}
+        for variant in variants:
+            query_vector = self.model_registry.embedder.embed_text(variant)
+            if not query_vector:
+                continue
+            try:
+                hits = self.vector_client.search("keyframe_embeddings", query_vector, top_k=top_k)
+            except Exception:
+                continue
+            for hit in hits:
+                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                if not frame_id:
+                    continue
+                if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                    continue
+                score = max(0.0, float(hit.score))
+                existing = scores.get(frame_id, 0.0)
+                if score > existing:
+                    scores[frame_id] = score
+        return scores
+
+    def _text_scores(
+        self,
+        variants: list[str],
+        top_k: int,
+        dataset_video_ids: set[str],
+        profile: dict[str, Any],
+    ) -> dict[str, float]:
+        if self.text_client is None:
+            return {}
+        metadata_profile = profile.get("metadata", {})
+        boosts = {
+            "ocr_texts": float(metadata_profile.get("ocr_boost", 3.0)),
+            "caption": float(metadata_profile.get("caption_boost", 1.5)),
+            "detected_objects": float(metadata_profile.get("object_boost", 1.0)),
+        }
+        scores: dict[str, float] = {}
+        for variant in variants:
+            try:
+                hits = self.text_client.search(
+                    "keyframe_annotations",
+                    query=variant,
+                    top_k=top_k,
+                    boosts=boosts,
+                )
+            except Exception:
+                continue
+            for hit in hits:
+                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                if not frame_id:
+                    continue
+                if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                    continue
+                score = max(0.0, float(hit.score))
+                existing = scores.get(frame_id, 0.0)
+                if score > existing:
+                    scores[frame_id] = score
+        return scores
+
+    def _fallback_rank_frames(
+        self,
+        dataset: Dataset,
+        variants: list[str],
+        semantic_weight: float,
+        text_weight: float,
+        quality_weight: float,
+    ) -> list[FrameScore]:
+        frames = (
+            self.db.query(Frame)
+            .join(Frame.video)
+            .filter(Video.dataset_id == dataset.id)
+            .all()
+        )
+        scored: list[FrameScore] = []
+        for frame in frames:
+            doc = self._frame_text(frame)
+            overlap_score = max(cosine_like_overlap(variant, doc) for variant in variants)
+            quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
+            final_score = (
+                semantic_weight * overlap_score
+                + text_weight * overlap_score
+                + quality_weight * quality_score
+            )
+            scored.append(
+                FrameScore(
+                    frame=frame,
+                    semantic_score=overlap_score,
+                    text_score=overlap_score,
+                    quality_score=quality_score,
+                    final_score=final_score,
+                )
+            )
+        scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
+        return scored
+
+    def _dataset_video_ids(self, dataset: Dataset) -> set[str]:
+        return {
+            video_id
+            for (video_id,) in self.db.query(Video.video_id).filter(Video.dataset_id == dataset.id).all()
+        }
+
+    def _resolve_keyframe_id(self, item_id: str, metadata: dict[str, Any]) -> str | None:
+        if metadata.get("keyframe_id"):
+            return str(metadata["keyframe_id"])
+        if metadata.get("frame_id"):
+            return str(metadata["frame_id"])
+        if item_id:
+            return str(item_id)
+        return None
+
+    def _resolve_video_id(self, frame_id: str, metadata: dict[str, Any]) -> str:
+        if metadata.get("video_id"):
+            return str(metadata["video_id"])
+        match = FRAME_VIDEO_ID_RE.match(frame_id or "")
+        if match:
+            return match.group("video_id")
+        return ""
+
     def _metadata_score(self, variants: list[str], frame: Frame) -> float:
-        annotation_text = " ".join(annotation.text_value or "" for annotation in frame.annotations)
+        annotation_text = self._frame_text(frame)
         scores = []
         for variant in variants:
             score = cosine_like_overlap(variant, annotation_text)
@@ -266,7 +453,17 @@ class RetrievalService:
         return max(scores) if scores else 0.0
 
     def _frame_text(self, frame: Frame) -> str:
-        return " ".join(annotation.text_value or "" for annotation in frame.annotations)
+        chunks: list[str] = []
+        for annotation in frame.annotations:
+            if annotation.text_value:
+                chunks.append(annotation.text_value)
+            if annotation.caption:
+                chunks.append(annotation.caption)
+            if isinstance(annotation.ocr_texts, list):
+                chunks.extend(str(item) for item in annotation.ocr_texts)
+            if isinstance(annotation.detected_objects, list):
+                chunks.extend(str(item) for item in annotation.detected_objects)
+        return " ".join(chunks).strip()
 
     def _answer_hint(self, frame: Frame) -> str | None:
         for annotation in frame.annotations:

@@ -29,6 +29,7 @@ class Settings:
     model_registry_path: Path = Path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
     retrieval_profiles_path: Path = Path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
     mock_mode: bool = os.getenv("MOCK_MODE", "true").lower() in {"1", "true", "yes", "on"}
+    mock_embedding_dim: int = int(os.getenv("MOCK_EMBEDDING_DIM", "512"))
 
     @property
     def cors_origins(self) -> list[str]:

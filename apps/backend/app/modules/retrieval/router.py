@@ -3,7 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_model_registry_service
+from app.adapters.text_search.base import TextSearchClient
+from app.adapters.vector_db.base import VectorSearchClient
+from app.core.deps import get_model_registry_service, get_text_client, get_vector_client
 from app.db.session import get_db
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import SearchRequest, SearchResponse, SelectResultsRequest
@@ -17,9 +19,11 @@ def search(
     request: SearchRequest,
     db: Session = Depends(get_db),
     model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    vector_client: VectorSearchClient = Depends(get_vector_client),
+    text_client: TextSearchClient = Depends(get_text_client),
 ) -> SearchResponse:
     try:
-        return RetrievalService(db, model_registry).search(request)
+        return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -29,10 +33,12 @@ def qa_search(
     request: SearchRequest,
     db: Session = Depends(get_db),
     model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    vector_client: VectorSearchClient = Depends(get_vector_client),
+    text_client: TextSearchClient = Depends(get_text_client),
 ) -> SearchResponse:
     request.query_type = "QA"
     try:
-        return RetrievalService(db, model_registry).search(request)
+        return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -42,10 +48,12 @@ def trake_search(
     request: SearchRequest,
     db: Session = Depends(get_db),
     model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    vector_client: VectorSearchClient = Depends(get_vector_client),
+    text_client: TextSearchClient = Depends(get_text_client),
 ) -> SearchResponse:
     request.query_type = "TRAKE"
     try:
-        return RetrievalService(db, model_registry).search(request)
+        return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
