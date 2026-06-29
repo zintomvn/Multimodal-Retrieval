@@ -84,6 +84,22 @@ apps/backend/
 }
 ```
 
+M4 fusion + filter hỗ trợ thêm trong `SearchRequest.options`:
+
+```json
+{
+  "video_codes": ["L30_V001"],
+  "time_range_start_seconds": 0,
+  "time_range_end_seconds": 120,
+  "objects": ["person", "motorbike"],
+  "scene": "nguoi ao do",
+  "debug_filters": true
+}
+```
+
+- Fusion profile: weighted sum + RRF (theo `configs/retrieval_profiles.yaml`).
+- Mỗi result có `score_breakdown.filter_debug` để debug lý do match filter.
+
 ### 3.3 TRAKE retrieval
 
 1. Client gọi `POST /api/retrieval/trake`.
@@ -271,6 +287,17 @@ Nội dung gate:
 - KIS trả về breakdown chuẩn `semantic_score/text_score/quality_score/final_score`.
 - QA trả về answer hợp lệ.
 - Persist `query_runs` + `retrieval_results` đúng thứ hạng và kiểm tra input validation.
+
+### 9.6 Test gate M4 (fusion and filtering)
+
+```powershell
+pytest tests/test_fusion_filtering.py -q
+```
+
+Nội dung gate:
+- Weighted profile và RRF profile cho thứ tự khác nhau theo fixture.
+- Filter `video_codes/time_range/objects/scene` loại đúng kết quả ngoài phạm vi.
+- `score_breakdown.filter_debug` có metadata debug filter.
 
 ### 9.3 Build image
 
