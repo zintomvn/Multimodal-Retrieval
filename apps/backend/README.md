@@ -65,12 +65,24 @@ apps/backend/
    - tách token,
    - sinh query variants nếu bật multiperspective expansion,
    - nhận diện temporal events nếu có.
-4. Retrieval service rank frame bằng hybrid score:
-   - semantic overlap mock,
-   - metadata score từ annotations,
-   - quality bonus.
+4. Retrieval service chạy flow thật:
+   - `embed_text(query)` từ model runtime,
+   - Milvus ANN trên collection `keyframe_embeddings`,
+   - Elasticsearch multi-match trên index `keyframe_annotations`,
+   - gộp điểm với quality score và xếp hạng final.
 5. Với QA, `VisualQaModel` sinh answer ngắn từ evidence text và answer hint.
-6. Kết quả được lưu vào `retrieval_results`, trả về frontend kèm score breakdown.
+6. Kết quả được lưu vào `retrieval_results`, trả về frontend kèm `score_breakdown`.
+
+`score_breakdown` chuẩn M3 cho `/api/retrieval/search` và `/api/retrieval/qa`:
+
+```json
+{
+  "semantic_score": 0.9342,
+  "text_score": 0.7125,
+  "quality_score": 0.95,
+  "final_score": 0.8266
+}
+```
 
 ### 3.3 TRAKE retrieval
 
@@ -160,6 +172,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `RETRIEVAL_PROFILES_PATH` | `configs/retrieval_profiles.yaml` | File trọng số retrieval. |
 | `DATA_ROOT` | `./data` | Nơi ghi submissions/artifacts. |
 | `MOCK_MODE` | `true` | Bật mock mode khi chưa có model thật. |
+| `MOCK_EMBEDDING_DIM` | `512` | Số chiều vector cho mock embedder (đặt khớp dimension Milvus collection). |
 
 ## 7. API surface
 
@@ -223,6 +236,15 @@ Test gate M2:
 pytest tests/test_ingestion_pipeline.py -q
 ```
 
+Test docs với Supabase + Zilliz + Elasticsearch (không dùng mock vector/text):
+
+```powershell
+$env:MOCK_MODE="false"
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Mở `http://localhost:8000/docs` và gọi `POST /api/retrieval/search`.
+
 ### 9.1 Smoke test nhanh trong container
 
 ```powershell
@@ -238,6 +260,17 @@ docker compose run --rm --no-deps `
 $env:PYTHONDONTWRITEBYTECODE="1"
 python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('apps/backend/app').rglob('*.py')]; print('syntax ok')"
 ```
+
+### 9.5 Test gate M3 (core retrieval)
+
+```powershell
+pytest tests/test_retrieval_pipeline.py -q
+```
+
+Nội dung gate:
+- KIS trả về breakdown chuẩn `semantic_score/text_score/quality_score/final_score`.
+- QA trả về answer hợp lệ.
+- Persist `query_runs` + `retrieval_results` đúng thứ hạng và kiểm tra input validation.
 
 ### 9.3 Build image
 
