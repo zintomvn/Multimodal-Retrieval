@@ -137,7 +137,7 @@ def upgrade() -> None:
         sa.Column("thumbnail_uri", sa.Text()),
         sa.Column("dedup_group_id", sa.String(length=36)),
         sa.Column("quality_score", sa.Float(), server_default="1"),
-        sa.Column("is_media_present", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("is_media_present", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.UniqueConstraint("video_id", "frame_idx", name="uq_frame_video_idx"),
     )
@@ -260,7 +260,7 @@ def upgrade() -> None:
         sa.Column("score", sa.Float(), nullable=False),
         sa.Column("score_breakdown", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("sequence_frames", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),
-        sa.Column("selected", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("selected", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.UniqueConstraint("query_run_id", "rank", name="uq_query_run_rank"),
     )
 
