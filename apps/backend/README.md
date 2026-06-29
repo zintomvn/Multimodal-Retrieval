@@ -100,6 +100,10 @@ M4 fusion + filter hỗ trợ thêm trong `SearchRequest.options`:
 - Fusion profile: weighted sum + RRF (theo `configs/retrieval_profiles.yaml`).
 - Mỗi result có `score_breakdown.filter_debug` để debug lý do match filter.
 
+M5 hardening:
+- QA answer luôn được normalize và giới hạn tối đa 100 ký tự.
+- TRAKE response có ordering metadata ổn định trong `score_breakdown.ordering` và `sequence_frames[*].order_index`.
+
 ### 3.3 TRAKE retrieval
 
 1. Client gọi `POST /api/retrieval/trake`.
@@ -298,6 +302,19 @@ Nội dung gate:
 - Weighted profile và RRF profile cho thứ tự khác nhau theo fixture.
 - Filter `video_codes/time_range/objects/scene` loại đúng kết quả ngoài phạm vi.
 - `score_breakdown.filter_debug` có metadata debug filter.
+
+### 9.7 Test gate M5 (qa-trake + submission)
+
+```powershell
+pytest tests/test_qa_trake_hardening.py -q
+pytest tests/test_submission_hardening.py -q
+```
+
+Nội dung gate:
+- QA answer được post-process <= 100 ký tự.
+- TRAKE sequence có ordering metadata ổn định giữa các lần gọi.
+- Submission validator trả report chi tiết lỗi theo dòng (`violations`).
+- ZIP export đúng cấu trúc `submission/*.csv`, UTF-8, không header.
 
 ### 9.3 Build image
 
