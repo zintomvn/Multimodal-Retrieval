@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.adapters.object_storage.base import ObjectStorageClient
+from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
 
@@ -17,6 +18,18 @@ def get_vector_client() -> VectorSearchClient:
     from app.adapters.vector_db.milvus import MilvusVectorSearchClient
 
     return MilvusVectorSearchClient(uri=settings.milvus_uri, token=settings.milvus_token)
+
+
+@lru_cache(maxsize=1)
+def get_text_client() -> TextSearchClient:
+    settings = get_settings()
+    if settings.mock_mode:
+        from app.adapters.text_search.mock import InMemoryTextSearchClient
+
+        return InMemoryTextSearchClient()
+    from app.adapters.text_search.elasticsearch import ElasticsearchTextSearchClient
+
+    return ElasticsearchTextSearchClient(url=settings.elasticsearch_url)
 
 
 @lru_cache(maxsize=1)
