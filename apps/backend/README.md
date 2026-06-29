@@ -170,7 +170,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `GET` | `/api/datasets` | Liệt kê dataset. |
 | `POST` | `/api/datasets` | Tạo dataset draft. |
 | `GET` | `/api/models` | Xem model registry và enabled models. |
-| `POST` | `/api/ingest/jobs` | Tạo ingest job. |
+| `POST` | `/api/ingest/jobs` | Tạo ingest job (demo import pipeline thật hoặc mock). |
 | `GET` | `/api/jobs/{job_id}` | Xem trạng thái job. |
 | `POST` | `/api/retrieval/search` | KIS/freeform search. |
 | `POST` | `/api/retrieval/qa` | QA retrieval + answer. |
@@ -198,6 +198,30 @@ Quy trình chuẩn:
 Tài liệu chi tiết: `docs/model_pipeline_guide.md`.
 
 ## 9. Development workflow
+
+### 9.0 M2 ingestion pipeline (demo data)
+
+Chạy ingest full:
+
+```powershell
+cd apps\backend
+python scripts/import_all.py --dataset-root ..\..\demo
+```
+
+Chạy từng phần:
+
+```powershell
+python scripts/import_pg.py --dataset-root ..\..\demo
+python scripts/import_media.py --dataset-root ..\..\demo
+python scripts/import_milvus.py --dataset-root ..\..\demo
+python scripts/import_es.py --dataset-root ..\..\demo
+```
+
+Test gate M2:
+
+```powershell
+pytest tests/test_ingestion_pipeline.py -q
+```
 
 ### 9.1 Smoke test nhanh trong container
 
