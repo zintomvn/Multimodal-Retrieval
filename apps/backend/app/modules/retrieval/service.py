@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
@@ -15,7 +15,7 @@ from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
 from app.modules.models.service import ModelRegistryService
-from app.modules.retrieval.schemas import ResultItem, SearchRequest, SearchResponse
+from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
 
@@ -44,7 +44,10 @@ class FrameScore:
     semantic_score: float
     text_score: float
     quality_score: float
+    weighted_score: float
+    rrf_score: float
     final_score: float
+    filter_debug: dict[str, Any] = field(default_factory=dict)
 
 
 class RetrievalService:
@@ -154,6 +157,7 @@ class RetrievalService:
             "tokens": normalize_tokens(" ".join(variants)),
             "temporal_events": temporal_events,
             "profile": request.profile,
+            "filters": self._normalized_filter_options(request.options),
         }
 
     def _split_temporal_events(self, query: str) -> list[str]:
@@ -169,7 +173,13 @@ class RetrievalService:
         request: SearchRequest,
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
-        candidates = self._rank_frames(dataset, normalized["variants"], request.profile, request.top_k)
+        candidates = self._rank_frames(
+            dataset=dataset,
+            variants=normalized["variants"],
+            profile_name=request.profile,
+            options=request.options,
+            top_k=request.top_k,
+        )
         items: list[ResultItem] = []
         for rank, candidate in enumerate(candidates[: request.top_k], start=1):
             frame = candidate.frame
@@ -189,7 +199,10 @@ class RetrievalService:
                     "semantic_score": round(candidate.semantic_score, 6),
                     "text_score": round(candidate.text_score, 6),
                     "quality_score": round(candidate.quality_score, 6),
+                    "weighted_score": round(candidate.weighted_score, 6),
+                    "rrf_score": round(candidate.rrf_score, 6),
                     "final_score": round(candidate.final_score, 6),
+                    "filter_debug": candidate.filter_debug,
                 },
                 sequence_frames=[],
             )
@@ -208,7 +221,13 @@ class RetrievalService:
         events = normalized["temporal_events"] or [request.query_text]
         candidate_sets: list[list[Candidate]] = []
         for event_query in events:
-            ranked = self._rank_frames(dataset, [event_query], request.profile, top_k=80)
+            ranked = self._rank_frames(
+                dataset=dataset,
+                variants=[event_query],
+                profile_name=request.profile,
+                options=request.options,
+                top_k=80,
+            )
             candidate_sets.append(
                 [
                     Candidate(
@@ -266,12 +285,19 @@ class RetrievalService:
         dataset: Dataset,
         variants: list[str],
         profile_name: str,
+        options: SearchOptions,
         top_k: int,
     ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
         text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
         quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
+        rrf_config = profile.get("rrf", {})
+        rrf_enabled = bool(rrf_config.get("enabled", False))
+        rrf_k = max(1.0, float(rrf_config.get("k", 60)))
+        rrf_blend = min(1.0, max(0.0, float(rrf_config.get("blend", 0.35))))
+        rrf_semantic_weight = float(rrf_config.get("semantic_weight", semantic_weight))
+        rrf_text_weight = float(rrf_config.get("text_weight", text_weight))
         ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
 
         dataset_video_ids = self._dataset_video_ids(dataset)
@@ -286,6 +312,12 @@ class RetrievalService:
                 semantic_weight=semantic_weight,
                 text_weight=text_weight,
                 quality_weight=quality_weight,
+                rrf_enabled=rrf_enabled,
+                rrf_k=rrf_k,
+                rrf_blend=rrf_blend,
+                rrf_semantic_weight=rrf_semantic_weight,
+                rrf_text_weight=rrf_text_weight,
+                options=options,
             )
 
         frames = (
@@ -297,25 +329,66 @@ class RetrievalService:
         if not frames:
             return []
 
-        semantic_max = max(semantic_scores.values(), default=1.0) or 1.0
-        text_max = max(text_scores.values(), default=1.0) or 1.0
-        scored: list[FrameScore] = []
-        for frame in frames:
-            semantic_score = (semantic_scores.get(frame.keyframe_id, 0.0) / semantic_max) if semantic_max > 0 else 0.0
-            text_score = (text_scores.get(frame.keyframe_id, 0.0) / text_max) if text_max > 0 else 0.0
+        filtered_frames, filter_debug = self._apply_filters(frames, options)
+        if not filtered_frames:
+            return []
+
+        filtered_ids = {frame.keyframe_id for frame in filtered_frames}
+        semantic_rank_map = self._rank_map(semantic_scores, filtered_ids)
+        text_rank_map = self._rank_map(text_scores, filtered_ids)
+        semantic_max = max((semantic_scores.get(frame_id, 0.0) for frame_id in filtered_ids), default=1.0) or 1.0
+        text_max = max((text_scores.get(frame_id, 0.0) for frame_id in filtered_ids), default=1.0) or 1.0
+
+        intermediate: list[dict[str, Any]] = []
+        max_rrf_raw = 0.0
+        for frame in filtered_frames:
+            frame_id = frame.keyframe_id
+            semantic_score = (semantic_scores.get(frame_id, 0.0) / semantic_max) if semantic_max > 0 else 0.0
+            text_score = (text_scores.get(frame_id, 0.0) / text_max) if text_max > 0 else 0.0
             quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
-            final_score = (
+            weighted_score = (
                 semantic_weight * semantic_score
                 + text_weight * text_score
                 + quality_weight * quality_score
             )
+            rrf_raw = 0.0
+            if rrf_enabled:
+                semantic_rank = semantic_rank_map.get(frame_id)
+                text_rank = text_rank_map.get(frame_id)
+                semantic_rrf = (1.0 / (rrf_k + semantic_rank)) if semantic_rank else 0.0
+                text_rrf = (1.0 / (rrf_k + text_rank)) if text_rank else 0.0
+                rrf_raw = rrf_semantic_weight * semantic_rrf + rrf_text_weight * text_rrf
+                max_rrf_raw = max(max_rrf_raw, rrf_raw)
+            intermediate.append(
+                {
+                    "frame": frame,
+                    "semantic_score": semantic_score,
+                    "text_score": text_score,
+                    "quality_score": quality_score,
+                    "weighted_score": weighted_score,
+                    "rrf_raw": rrf_raw,
+                }
+            )
+
+        scored: list[FrameScore] = []
+        for item in intermediate:
+            frame = item["frame"]
+            rrf_score = (item["rrf_raw"] / max_rrf_raw) if rrf_enabled and max_rrf_raw > 0 else 0.0
+            final_score = (
+                (1.0 - rrf_blend) * item["weighted_score"] + rrf_blend * rrf_score
+                if rrf_enabled
+                else item["weighted_score"]
+            )
             scored.append(
                 FrameScore(
                     frame=frame,
-                    semantic_score=semantic_score,
-                    text_score=text_score,
-                    quality_score=quality_score,
+                    semantic_score=item["semantic_score"],
+                    text_score=item["text_score"],
+                    quality_score=item["quality_score"],
+                    weighted_score=item["weighted_score"],
+                    rrf_score=rrf_score,
                     final_score=final_score,
+                    filter_debug=filter_debug.get(frame.keyframe_id, {}),
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
@@ -390,6 +463,12 @@ class RetrievalService:
         semantic_weight: float,
         text_weight: float,
         quality_weight: float,
+        rrf_enabled: bool,
+        rrf_k: float,
+        rrf_blend: float,
+        rrf_semantic_weight: float,
+        rrf_text_weight: float,
+        options: SearchOptions,
     ) -> list[FrameScore]:
         frames = (
             self.db.query(Frame)
@@ -397,27 +476,151 @@ class RetrievalService:
             .filter(Video.dataset_id == dataset.id)
             .all()
         )
-        scored: list[FrameScore] = []
-        for frame in frames:
-            doc = self._frame_text(frame)
-            overlap_score = max(cosine_like_overlap(variant, doc) for variant in variants)
+        filtered_frames, filter_debug = self._apply_filters(frames, options)
+        if not filtered_frames:
+            return []
+
+        overlap_scores = {
+            frame.keyframe_id: max(cosine_like_overlap(variant, self._frame_text(frame)) for variant in variants)
+            for frame in filtered_frames
+        }
+        overlap_rank_map = self._rank_map(overlap_scores, set(overlap_scores))
+
+        intermediate: list[dict[str, Any]] = []
+        max_rrf_raw = 0.0
+        for frame in filtered_frames:
+            overlap_score = overlap_scores.get(frame.keyframe_id, 0.0)
             quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
-            final_score = (
+            weighted_score = (
                 semantic_weight * overlap_score
                 + text_weight * overlap_score
                 + quality_weight * quality_score
             )
+            rrf_raw = 0.0
+            if rrf_enabled:
+                overlap_rank = overlap_rank_map.get(frame.keyframe_id)
+                overlap_rrf = (1.0 / (rrf_k + overlap_rank)) if overlap_rank else 0.0
+                rrf_raw = (rrf_semantic_weight + rrf_text_weight) * overlap_rrf
+                max_rrf_raw = max(max_rrf_raw, rrf_raw)
+            intermediate.append(
+                {
+                    "frame": frame,
+                    "overlap_score": overlap_score,
+                    "quality_score": quality_score,
+                    "weighted_score": weighted_score,
+                    "rrf_raw": rrf_raw,
+                }
+            )
+
+        scored: list[FrameScore] = []
+        for item in intermediate:
+            frame = item["frame"]
+            rrf_score = (item["rrf_raw"] / max_rrf_raw) if rrf_enabled and max_rrf_raw > 0 else 0.0
+            final_score = (
+                (1.0 - rrf_blend) * item["weighted_score"] + rrf_blend * rrf_score
+                if rrf_enabled
+                else item["weighted_score"]
+            )
             scored.append(
                 FrameScore(
                     frame=frame,
-                    semantic_score=overlap_score,
-                    text_score=overlap_score,
-                    quality_score=quality_score,
+                    semantic_score=item["overlap_score"],
+                    text_score=item["overlap_score"],
+                    quality_score=item["quality_score"],
+                    weighted_score=item["weighted_score"],
+                    rrf_score=rrf_score,
                     final_score=final_score,
+                    filter_debug=filter_debug.get(frame.keyframe_id, {}),
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return scored
+
+    def _normalized_filter_options(self, options: SearchOptions) -> dict[str, Any]:
+        video_codes = sorted({code.strip() for code in options.video_codes if code.strip()})
+        objects = sorted({obj.strip().lower() for obj in options.objects if obj.strip()})
+        scene = (options.scene or "").strip()
+        start = options.time_range_start_seconds
+        end = options.time_range_end_seconds
+        if start is not None and end is not None and start > end:
+            raise ValueError("options.time_range_start_seconds must be <= options.time_range_end_seconds")
+        return {
+            "video_codes": video_codes,
+            "time_range_start_seconds": start,
+            "time_range_end_seconds": end,
+            "objects": objects,
+            "scene": scene or None,
+        }
+
+    def _apply_filters(self, frames: list[Frame], options: SearchOptions) -> tuple[list[Frame], dict[str, dict[str, Any]]]:
+        filters = self._normalized_filter_options(options)
+        video_codes = set(filters["video_codes"])
+        objects = set(filters["objects"])
+        scene = (filters.get("scene") or "").lower()
+        start = filters.get("time_range_start_seconds")
+        end = filters.get("time_range_end_seconds")
+
+        selected: list[Frame] = []
+        debug: dict[str, dict[str, Any]] = {}
+        for frame in frames:
+            reasons: list[str] = []
+            matched: dict[str, Any] = {}
+
+            if video_codes:
+                if frame.video.video_code not in video_codes:
+                    reasons.append("video_code_mismatch")
+                else:
+                    matched["video_code"] = frame.video.video_code
+
+            if start is not None and frame.frame_seconds < float(start):
+                reasons.append("time_range_before_start")
+            if end is not None and frame.frame_seconds > float(end):
+                reasons.append("time_range_after_end")
+            if start is not None or end is not None:
+                matched["frame_seconds"] = round(float(frame.frame_seconds or 0.0), 3)
+
+            if objects:
+                frame_objects = self._frame_objects(frame)
+                matched_objects = sorted(objects.intersection(frame_objects))
+                if not matched_objects:
+                    reasons.append("objects_mismatch")
+                else:
+                    matched["objects"] = matched_objects
+
+            if scene:
+                has_scene = scene in self._frame_text(frame).lower()
+                if not has_scene:
+                    reasons.append("scene_mismatch")
+                else:
+                    matched["scene"] = scene
+
+            if reasons:
+                continue
+
+            selected.append(frame)
+            debug[frame.keyframe_id] = {
+                "applied_filters": filters,
+                "matched": matched,
+                "debug_enabled": options.debug_filters,
+            }
+        return selected, debug
+
+    def _rank_map(self, scores: dict[str, float], candidate_ids: set[str]) -> dict[str, int]:
+        ranked = sorted(
+            ((frame_id, score) for frame_id, score in scores.items() if frame_id in candidate_ids and score > 0),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return {frame_id: rank for rank, (frame_id, _) in enumerate(ranked, start=1)}
+
+    def _frame_objects(self, frame: Frame) -> set[str]:
+        values: set[str] = set()
+        for annotation in frame.annotations:
+            if isinstance(annotation.detected_objects, list):
+                values.update(str(item).strip().lower() for item in annotation.detected_objects if str(item).strip())
+            if isinstance(annotation.object_counts, dict):
+                values.update(str(key).strip().lower() for key in annotation.object_counts if str(key).strip())
+        return values
 
     def _dataset_video_ids(self, dataset: Dataset) -> set[str]:
         return {
