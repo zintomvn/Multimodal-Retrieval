@@ -1,14 +1,14 @@
 # PostgreSQL ERD (Target Demo-Aligned)
 
-Tai lieu nay mo ta ERD muc tieu cho backend retrieval, dong bo voi schema contract:
+Tài liệu này mô tả ERD mục tiêu cho backend retrieval, đồng bộ với schema contract:
 - `docs/database_schema_demo_v1.md`
 
-Muc dich:
-- chot quan he bang cho Module 1/2;
-- dam bao import du lieu tu `demo/` khong mat thong tin;
-- giu contract on dinh de map Elasticsearch va Milvus.
+Mục đích:
+- chốt quan hệ bảng cho Module 1/2;
+- đảm bảo import dữ liệu từ `demo/` không mất thông tin;
+- giữ contract ổn định để map Elasticsearch và Milvus.
 
-## 1. ERD Tong Quan
+## 1. ERD Tổng Quan
 
 ```mermaid
 erDiagram
@@ -165,7 +165,7 @@ erDiagram
     }
 ```
 
-## 2. Luong du lieu chinh
+## 2. Luồng dữ liệu chính
 
 ```text
 datasets
@@ -177,10 +177,10 @@ datasets
           -> event_keyframes
 ```
 
-- `keyframes` la diem giao giua relational metadata va vector/text indexes.
-- `event_keyframes` giup truy van TRAKE theo chuoi theo thu tu ma khong can parse chuoi text.
+- `keyframes` là điểm giao giữa relational metadata và vector/text indexes.
+- `event_keyframes` giúp truy vấn TRAKE theo chuỗi theo thứ tự mà không cần parse chuỗi text.
 
-## 3. Constraint quan trong
+## 3. Constraint quan trọng
 
 - `videos`: unique theo business id `video_id`.
 - `shots`: unique `(video_id, shot_index)`.
@@ -190,7 +190,7 @@ datasets
 - `retrieval_results`: unique `(query_run_id, rank)`.
 - `submission_items`: unique `(submission_id, query_name, rank)`.
 
-## 4. Index uu tien cao
+## 4. Index ưu tiên cao
 
 ```sql
 create index if not exists idx_videos_dataset on videos(dataset_id);
@@ -201,9 +201,9 @@ create index if not exists idx_events_video_time on events(video_id, start_secon
 create index if not exists idx_event_keyframes_keyframe on event_keyframes(keyframe_id);
 ```
 
-## 5. Boundary voi Elasticsearch va Milvus
+## 5. Boundary với Elasticsearch và Milvus
 
 - PostgreSQL: source-of-truth.
-- Elasticsearch: text retrieval index (caption, OCR, objects), id tham chieu `keyframe_id`.
-- Milvus: ANN vector index, id tham chieu `keyframe_id` va `event_id`.
+- Elasticsearch: text retrieval index (caption, OCR, objects), id tham chiếu `keyframe_id`.
+- Milvus: ANN vector index, id tham chiếu `keyframe_id` và `event_id`.
 

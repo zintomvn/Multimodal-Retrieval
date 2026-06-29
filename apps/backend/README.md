@@ -221,6 +221,25 @@ python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p 
 docker compose build backend
 ```
 
+### 9.4 Migration workflow (M1 db-storage)
+
+```powershell
+cd apps\backend
+alembic upgrade head
+alembic downgrade base
+alembic upgrade head
+```
+
+Kiểm tra nhanh core schema:
+
+```sql
+select count(*) from datasets;
+select count(*) from videos;
+select count(*) from shots;
+select count(*) from keyframes;
+select count(*) from events;
+```
+
 ## 10. Quy ước code
 
 - Module API đặt trong `modules/<domain>/router.py`.

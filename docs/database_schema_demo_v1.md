@@ -1,34 +1,34 @@
 # Database Schema v1 (Demo-Aligned)
 
-Tai lieu nay chot schema PostgreSQL de backend ingest va retrieval bám dung du lieu trong thu muc `demo/`.
+Tài liệu này chốt schema PostgreSQL để backend ingest và retrieval bám đúng dữ liệu trong thư mục `demo/`.
 
-Muc tieu:
-- dong bo 1-1 voi cac file `per_video_summary.csv`, `shot_segments.csv`, `annotations.jsonl`, `Event Embedding/event_mapping.csv`;
-- tao khoa dinh danh on dinh de map qua Elasticsearch va Milvus;
-- de mo rong len production ma khong pha vo contract import.
+Mục tiêu:
+- đồng bộ 1-1 với các file `per_video_summary.csv`, `shot_segments.csv`, `annotations.jsonl`, `Event Embedding/event_mapping.csv`;
+- tạo khóa định danh ổn định để map qua Elasticsearch và Milvus;
+- dễ mở rộng lên production mà không phá vỡ contract import.
 
-## 1. Nguyen tac thiet ke
+## 1. Nguyên tắc thiết kế
 
-- Dung natural business ID lam PK cho media entities:
+- Dùng Natural Business ID làm PK cho media entities:
   - `video_id` = `L30_V001`
   - `shot_id` = `L30_V001_S0000`
   - `keyframe_id` = `L30_V001_F000037`
   - `event_id` = `L30_V001_E000000`
-- Tat ca ten bang/cot lowercase.
-- Postgres la source-of-truth cho metadata va quan he.
-- Elasticsearch chi giu text index.
-- Milvus chi giu vector + id lien ket.
-- Truong du lieu goc de debug/rebuild duoc luu dang `jsonb` khi can.
+- Tất cả tên bảng/cột lowercase.
+- Postgres là source-of-truth cho metadata và quan hệ.
+- Elasticsearch chỉ giữ text index.
+- Milvus chỉ giữ vector + id liên kết.
+- Trường dữ liệu gốc để debug/rebuild được lưu dạng `jsonb` khi cần.
 
-## 2. Inventory demo (snapshot de doi chieu import)
+## 2. Inventory demo (snapshot để đối chiếu import)
 
-Tu du lieu trong `demo/`:
+Từ dữ liệu trong `demo/`:
 - `per_video_summary.csv`: 96 videos.
 - `shot_segments.csv`: 13278 rows keyframe.
 - `annotations.jsonl`: 318 rows.
 - `Event Embedding/event_mapping.csv`: 2737 rows event.
 
-Luu y: can co buoc reconcile media truoc import vi co kha nang chenhlech giua metadata va file JPG thuc te.
+Lưu ý: cần có bước reconcile media trước import vì có khả năng chênh lệch giữa metadata và file JPG thực tế.
 
 ## 3. Canonical schema (core ingestion)
 
@@ -132,7 +132,7 @@ create table if not exists event_keyframes (
 );
 ```
 
-## 4. Indexes bat buoc (Postgres)
+## 4. Indexes bắt buộc (Postgres)
 
 ```sql
 create index if not exists idx_videos_dataset on videos(dataset_id);
@@ -147,7 +147,7 @@ create index if not exists idx_ann_objects_gin on frame_annotations using gin (d
 create index if not exists idx_ann_ocr_gin on frame_annotations using gin (ocr_texts);
 ```
 
-## 5. Mapping sang Elasticsearch va Milvus
+## 5. Mapping sang Elasticsearch và Milvus
 
 - Elasticsearch index `keyframe_annotations`:
   - id = `keyframe_id`
@@ -159,7 +159,7 @@ create index if not exists idx_ann_ocr_gin on frame_annotations using gin (ocr_t
   - scalar id: `event_id`
   - vector dim: 512
 
-## 6. DQ checks sau moi lan import
+## 6. DQ checks sau mỗi lần import
 
 ```sql
 -- 1) keyframes count
@@ -188,13 +188,13 @@ having count(*) > 1;
 
 ## 7. Supabase security note
 
-- Neu bang dat trong schema duoc expose qua Data API (`public`), bat buoc bat RLS va policy ro rang.
-- Neu backend la trusted service va khong expose Data API truc tiep cho client, van nen:
-  - khong cap quyen rong cho `anon`/`authenticated`;
-  - tach key server/client ro rang;
-  - review lai policy truoc khi mo REST public.
+- Nếu bảng đặt trong schema được expose qua Data API (`public`), bắt buộc bật RLS và policy rõ ràng.
+- Nếu backend là trusted service và không expose Data API trực tiếp cho client, vẫn nên:
+  - không cấp quyền rộng cho `anon`/`authenticated`;
+  - tách key server/client rõ ràng;
+  - review lại policy trước khi mở REST public.
 
 ## 8. Contract status
 
-Tai lieu nay la schema contract uu tien de implement Module 1 va Module 2 trong `docs/tasks/backend_milestones/`.
+Tài liệu này là schema contract ưu tiên để implement Module 1 và Module 2 trong `docs/tasks/backend_milestones/`.
 

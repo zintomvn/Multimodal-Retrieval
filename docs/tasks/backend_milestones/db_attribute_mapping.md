@@ -43,6 +43,9 @@ Ký hiệu:
 | **Event Embedding** | `event_id` | `✅` | `🔑` | `🔑` | `❌` | Định dạng: `{video_id}_E{event_index:06d}`. Khóa chính bảng `events`. |
 | | `event_embeddings.npy` | `❌` | `❌` | `✅` | `❌` | Lưu vector 512 chiều vào Milvus collection `event_embeddings`. |
 | | `vit-.../[video_id].npy` | `❌` | `❌` | `✅` | `❌` | Lưu vector 512 chiều vào Milvus collection `keyframe_embeddings`. |
+| **features/map-keyframes/[video_id].csv** | `n`, `pts_time`, `fps`, `frame_idx` | `✅` | `❌` | `🔑` | `❌` | Bảng mapping bat buoc de map `row i` cua embedding (`i = n - 1`) sang `keyframe_id` va `frame_seconds`. |
+| **features/map-event/[video_id].csv** | `event_id`, `start_n`, `end_n`, `keyframe_ns` | `✅` | `❌` | `🔑` | `❌` | Dung de tao quan he `events` <-> `keyframes` (bang `event_keyframes`) theo thu tu sequence. |
+| **features/events/[video_id].npy** | event vectors theo video | `❌` | `❌` | `✅` | `❌` | Co the dung de debug/rebuild theo tung video; index chinh uu tien nguon global `Event Embedding/event_embeddings.npy`. |
 
 ---
 
@@ -152,6 +155,22 @@ Milvus **chỉ lưu trữ** ID thực thể khóa chính (`keyframe_id` hoặc `
     *   `event_id`: Kiểu `VARCHAR(100)` (Dùng để tham chiếu ngược về bảng `events` trong Postgres).
     *   `vector`: Kiểu `FLOAT_VECTOR` (độ dài 512 chiều).
 
+### 2.5. Vai trò của thư mục `demo/features/` (quan trọng)
+
+`demo/features/` khong phai du lieu phu, ma la nguon mapping cot loi cho import:
+
+- `features/vit-ViT-B-32-laion2b_s34b_b79k/[video_id].npy`:
+  - chua keyframe embeddings theo tung video.
+- `features/map-keyframes/[video_id].csv`:
+  - xac dinh dong embedding nao map sang frame nao (`n` <-> `frame_idx`), va thoi diem `pts_time`.
+  - bat buoc dung file nay khi nap `keyframe_embeddings` vao Milvus.
+- `features/map-event/[video_id].csv`:
+  - xac dinh event theo video va danh sach keyframe thuoc event.
+  - dung de insert bang `event_keyframes` (truy van TRAKE sequence de/on dinh).
+- `features/events/[video_id].npy`:
+  - event embeddings theo video (co ich cho verify/rebuild cuc bo).
+  - nguon event index chinh toan bo dataset van la `Event Embedding/event_embeddings.npy`.
+
 ---
 
 ### 2.4. MinIO (Object Storage)
@@ -178,6 +197,7 @@ Khi bắt đầu viết code module nạp dữ liệu, hãy bám sát danh sách
 - [ ] **Bước 3**: Chạy script nạp PostgreSQL để lưu toàn bộ thực thể gốc kèm `image_url` vừa tạo.
 - [ ] **Bước 4**: Chạy script nạp Milvus. Đảm bảo rằng chỉ số dòng `i` của file `.npy` tương ứng với khóa ngoại `keyframe_id` (lấy từ cột `frame_idx` khớp với dòng có `n = i + 1` trong file mapping CSV).
 - [ ] **Bước 5**: Chạy script nạp Elasticsearch. Thực hiện nối (join) thông tin text từ `annotations.jsonl` với `keyframe_id` tương ứng trước khi insert tài liệu phẳng vào ES.
+- [ ] **Bước 6**: Tạo quan hệ `event_keyframes` từ `features/map-event/[video_id].csv` để backend truy vấn chuỗi TRAKE ổn định.
 
 ## 4. Data quality gates (bat buoc)
 
