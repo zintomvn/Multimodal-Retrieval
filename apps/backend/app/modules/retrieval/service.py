@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any
 
 import yaml
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
@@ -351,6 +351,7 @@ class RetrievalService:
 
         frames = (
             self.db.query(Frame)
+            .options(joinedload(Frame.video), selectinload(Frame.annotations))
             .join(Frame.video)
             .filter(Video.dataset_id == dataset.id, Frame.keyframe_id.in_(candidate_ids))
             .all()
@@ -501,6 +502,7 @@ class RetrievalService:
     ) -> list[FrameScore]:
         frames = (
             self.db.query(Frame)
+            .options(joinedload(Frame.video), selectinload(Frame.annotations))
             .join(Frame.video)
             .filter(Video.dataset_id == dataset.id)
             .all()

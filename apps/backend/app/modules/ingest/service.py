@@ -28,12 +28,11 @@ class DemoFiles:
     root: Path
     per_video_summary_csv: Path
     shot_segments_csv: Path
-    annotations_jsonl: Path
-    event_mapping_csv: Path
-    event_embeddings_npy: Path
+    annotations_dir: Path
     frames_dir: Path
     features_map_keyframes_dir: Path
     features_map_event_dir: Path
+    features_events_dir: Path
     keyframe_feature_dir: Path
 
 
@@ -169,7 +168,11 @@ class DemoIngestService:
                     missing_media.append(rel_path)
 
         frames_total = sum(1 for _ in files.frames_dir.rglob("*.jpg"))
-        annotations_rows = sum(1 for line in files.annotations_jsonl.open("r", encoding="utf-8") if line.strip())
+        annotation_files = self._annotation_files(files.annotations_dir)
+        annotations_rows = 0
+        for path in annotation_files:
+            with path.open("r", encoding="utf-8") as handle:
+                annotations_rows += sum(1 for line in handle if line.strip())
 
         per_video_rows = list(csv.DictReader(files.per_video_summary_csv.open("r", encoding="utf-8")))
         map_rows_total = 0
@@ -196,8 +199,17 @@ class DemoIngestService:
                         n_mismatch_rows += 1
             keyframe_npy_rows_total += int(np.load(npy_file).shape[0])
 
-        event_mapping_rows = sum(1 for _ in csv.DictReader(files.event_mapping_csv.open("r", encoding="utf-8")))
-        event_embeddings_rows = int(np.load(files.event_embeddings_npy).shape[0])
+        event_mapping_rows = 0
+        event_embeddings_rows = 0
+        missing_event_feature_files: list[str] = []
+        for map_file in sorted(files.features_map_event_dir.glob("*.csv")):
+            with map_file.open("r", encoding="utf-8") as handle:
+                event_mapping_rows += sum(1 for _ in csv.DictReader(handle))
+            npy_file = files.features_events_dir / f"{map_file.stem}.npy"
+            if not npy_file.exists():
+                missing_event_feature_files.append(str(npy_file))
+                continue
+            event_embeddings_rows += int(np.load(npy_file).shape[0])
 
         return {
             "per_video_rows": len(per_video_rows),
@@ -209,6 +221,7 @@ class DemoIngestService:
             "missing_media_count": len(missing_media),
             "missing_media_samples": missing_media[:20],
             "annotations_rows": annotations_rows,
+            "annotations_files_count": len(annotation_files),
             "map_rows_total": map_rows_total,
             "keyframe_npy_rows_total": keyframe_npy_rows_total,
             "map_n_sequential_mismatch_rows": n_mismatch_rows,
@@ -219,6 +232,8 @@ class DemoIngestService:
             "event_mapping_rows": event_mapping_rows,
             "event_embeddings_rows": event_embeddings_rows,
             "event_embedding_parity": event_mapping_rows == event_embeddings_rows,
+            "missing_event_feature_files_count": len(missing_event_feature_files),
+            "missing_event_feature_files_samples": missing_event_feature_files[:20],
         }
 
     def import_pg(self, dataset: Dataset, files: DemoFiles, failed_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -355,8 +370,8 @@ class DemoIngestService:
                     keyframes_inserted += 1
         self.db.flush()
 
-        # frame_annotations from annotations.jsonl
-        annotation_rows = [json.loads(line) for line in files.annotations_jsonl.open("r", encoding="utf-8") if line.strip()]
+        # frame_annotations from annotations/<video_id>/annotations.jsonl
+        annotation_rows = list(self._iter_annotation_rows(files.annotations_dir))
         frame_lookup = {
             frame.keyframe_id: frame
             for frame in self.db.query(Frame).filter(Frame.video_id.in_(video_ids)).all()
@@ -423,8 +438,8 @@ class DemoIngestService:
                 annotations_inserted += 1
         self.db.flush()
 
-        # events from global event_mapping.csv
-        event_rows = list(csv.DictReader(files.event_mapping_csv.open("r", encoding="utf-8")))
+        # events from per-video features/map-event/*.csv
+        event_rows = self._load_event_rows(files.features_map_event_dir)
         event_ids = [row.get("event_id", "") for row in event_rows if row.get("event_id")]
         existing_events = {
             item.event_id: item
@@ -443,9 +458,10 @@ class DemoIngestService:
                     {"stage": "pg.events", "reason": "video_not_found", "video_id": video_id, "event_id": event_id}
                 )
                 continue
-            representative = self._representative_keyframe_id(
+            representative = self._representative_keyframe_id_from_map(
                 video_id=video_id,
-                representative_path=row.get("representative_path") or "",
+                start_n=_to_int(row.get("start_n"), default=-1),
+                frame_to_n=map_frame_to_n,
             )
             if representative and representative not in frame_lookup:
                 failed_rows.append(
@@ -466,10 +482,10 @@ class DemoIngestService:
                 "start_frame": _to_int(row.get("start_frame")),
                 "end_frame": _to_int(row.get("end_frame")),
                 "representative_keyframe_id": representative,
-                "n_shots": _to_int(row.get("n_shots")),
+                "n_shots": None,
                 "n_keyframes": _to_int(row.get("n_keyframes")),
-                "shot_ids_raw": row.get("shot_ids") or "",
-                "keyframe_embedding_indices_raw": row.get("keyframe_embedding_indices") or "",
+                "shot_ids_raw": "",
+                "keyframe_embedding_indices_raw": row.get("keyframe_ns") or "",
                 "start_frame_idx": _to_int(row.get("start_frame")),
                 "end_frame_idx": _to_int(row.get("end_frame")),
                 "representative_frame_id": representative,
@@ -676,35 +692,72 @@ class DemoIngestService:
                 )
             keyframe_vectors_upserted += self.vector_client.upsert("keyframe_embeddings", payload)
 
-        event_rows = {
-            _to_int(row.get("event_embedding_index")): row
-            for row in csv.DictReader(files.event_mapping_csv.open("r", encoding="utf-8"))
-        }
-        event_embeddings = np.load(files.event_embeddings_npy)
         event_payload: list[tuple[str, list[float], dict[str, Any]]] = []
-        for idx, vector in enumerate(event_embeddings):
-            row = event_rows.get(idx)
-            if not row:
-                failed_rows.append({"stage": "milvus.event", "reason": "missing_event_mapping_index", "index": idx})
-                continue
-            event_id = (row.get("event_id") or "").strip()
-            video_id = (row.get("video_id") or "").strip()
-            if event_id not in event_ids:
+        for video_id in video_ids:
+            map_file = files.features_map_event_dir / f"{video_id}.csv"
+            npy_file = files.features_events_dir / f"{video_id}.npy"
+            if not map_file.exists():
                 failed_rows.append(
-                    {"stage": "milvus.event", "reason": "event_not_in_db", "event_id": event_id, "index": idx}
+                    {
+                        "stage": "milvus.event",
+                        "reason": "missing_map_event_file",
+                        "video_id": video_id,
+                        "path": str(map_file),
+                    }
                 )
                 continue
-            event_payload.append(
-                (
-                    event_id,
-                    vector.astype(float).tolist(),
+            if not npy_file.exists():
+                failed_rows.append(
                     {
-                        "event_id": event_id,
+                        "stage": "milvus.event",
+                        "reason": "missing_event_feature_file",
                         "video_id": video_id,
-                        "model_version": "event-embedding-demo-v1",
-                    },
+                        "path": str(npy_file),
+                    }
                 )
-            )
+                continue
+
+            with map_file.open("r", encoding="utf-8") as handle:
+                event_rows = {
+                    _to_int(row.get("event_embedding_index"), default=-1): row
+                    for row in csv.DictReader(handle)
+                }
+            vectors = np.load(npy_file)
+            for idx, vector in enumerate(vectors):
+                row = event_rows.get(idx)
+                if not row:
+                    failed_rows.append(
+                        {
+                            "stage": "milvus.event",
+                            "reason": "missing_event_mapping_index",
+                            "video_id": video_id,
+                            "index": idx,
+                        }
+                    )
+                    continue
+                event_id = _normalize_event_id(row.get("event_id") or "")
+                if event_id not in event_ids:
+                    failed_rows.append(
+                        {
+                            "stage": "milvus.event",
+                            "reason": "event_not_in_db",
+                            "event_id": event_id,
+                            "video_id": video_id,
+                            "index": idx,
+                        }
+                    )
+                    continue
+                event_payload.append(
+                    (
+                        event_id,
+                        vector.astype(float).tolist(),
+                        {
+                            "event_id": event_id,
+                            "video_id": video_id,
+                            "model_version": files.features_events_dir.name,
+                        },
+                    )
+                )
         event_vectors_upserted = self.vector_client.upsert("event_embeddings", event_payload)
 
         return {
@@ -728,11 +781,8 @@ class DemoIngestService:
 
         docs: list[tuple[str, dict[str, Any]]] = []
         total_rows = 0
-        for line in files.annotations_jsonl.open("r", encoding="utf-8"):
-            if not line.strip():
-                continue
+        for row in self._iter_annotation_rows(files.annotations_dir):
             total_rows += 1
-            row = json.loads(line)
             video_id = (row.get("video_id") or "").strip()
             frame_idx = _extract_frame_idx_from_name(row.get("image_name") or row.get("image_path") or "")
             if not video_id or frame_idx is None:
@@ -777,12 +827,11 @@ class DemoIngestService:
         required = {
             "per_video_summary_csv": root / "per_video_summary.csv",
             "shot_segments_csv": root / "shot_segments.csv",
-            "annotations_jsonl": root / "annotations.jsonl",
-            "event_mapping_csv": root / "Event Embedding" / "event_mapping.csv",
-            "event_embeddings_npy": root / "Event Embedding" / "event_embeddings.npy",
+            "annotations_dir": root / "annotations",
             "frames_dir": root / "frames",
             "features_map_keyframes_dir": root / "features" / "map-keyframes",
             "features_map_event_dir": root / "features" / "map-event",
+            "features_events_dir": root / "features" / "events",
         }
         for name, path in required.items():
             if not path.exists():
@@ -893,8 +942,16 @@ class DemoIngestService:
                         )
         return event_keyframes
 
-    def _representative_keyframe_id(self, video_id: str, representative_path: str) -> str | None:
-        frame_idx = _extract_frame_idx_from_name(representative_path)
+    def _representative_keyframe_id_from_map(
+        self,
+        video_id: str,
+        start_n: int,
+        frame_to_n: dict[str, dict[int, int]],
+    ) -> str | None:
+        if start_n <= 0:
+            return None
+        n_to_frame_idx = {n_value: frame_idx for frame_idx, n_value in frame_to_n.get(video_id, {}).items()}
+        frame_idx = n_to_frame_idx.get(start_n)
         if frame_idx is None:
             return None
         return self._keyframe_id(video_id, frame_idx)
@@ -934,3 +991,26 @@ class DemoIngestService:
                 }
             },
         )
+
+    def _annotation_files(self, annotations_dir: Path) -> list[Path]:
+        return sorted(path for path in annotations_dir.glob("*/annotations.jsonl") if path.is_file())
+
+    def _iter_annotation_rows(self, annotations_dir: Path):  # noqa: ANN201 - generator yielding dict rows.
+        for path in self._annotation_files(annotations_dir):
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    yield json.loads(line)
+
+    def _load_event_rows(self, map_event_dir: Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for map_file in sorted(map_event_dir.glob("*.csv")):
+            with map_file.open("r", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    row_copy = dict(row)
+                    row_copy["event_id"] = _normalize_event_id(row_copy.get("event_id") or "")
+                    if not row_copy.get("video_id"):
+                        row_copy["video_id"] = map_file.stem
+                    rows.append(row_copy)
+        return rows

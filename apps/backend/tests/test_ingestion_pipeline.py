@@ -22,8 +22,9 @@ from app.modules.ingest.service import DemoIngestService
 
 def _write_demo_fixture(root: Path) -> Path:
     demo = root / "demo"
-    (demo / "Event Embedding").mkdir(parents=True, exist_ok=True)
+    (demo / "annotations" / "L30_V001").mkdir(parents=True, exist_ok=True)
     (demo / "features" / "vit-ViT-B-32-laion2b_s34b_b79k").mkdir(parents=True, exist_ok=True)
+    (demo / "features" / "events").mkdir(parents=True, exist_ok=True)
     (demo / "features" / "map-keyframes").mkdir(parents=True, exist_ok=True)
     (demo / "features" / "map-event").mkdir(parents=True, exist_ok=True)
     (demo / "frames" / "L30_V001").mkdir(parents=True, exist_ok=True)
@@ -54,19 +55,12 @@ def _write_demo_fixture(root: Path) -> Path:
         np.array([[0.1, 0.2, 0.3, 0.4], [0.5, 0.2, 0.1, 0.2]], dtype=np.float32),
     )
 
-    (demo / "Event Embedding" / "event_mapping.csv").write_text(
-        "event_id,event_embedding_index,video_id,video_name,video_path,start_sec,end_sec,start_frame,end_frame,"
-        "shot_ids,keyframe_embedding_indices,representative_path,n_shots,n_keyframes\n"
-        "L30_V001_E000000,0,L30_V001,L30_V001.mp4,/tmp/L30_V001.mp4,0.0,1.0,0,25,0,0|1,frames/L30_V001/shot_0000_first_f000000.jpg,1,2\n",
-        encoding="utf-8",
-    )
-    np.save(demo / "Event Embedding" / "event_embeddings.npy", np.array([[0.7, 0.2, 0.1, 0.5]], dtype=np.float32))
-
     (demo / "features" / "map-event" / "L30_V001.csv").write_text(
         "event_id,event_embedding_index,video_id,start_n,end_n,start_sec,end_sec,start_frame,end_frame,keyframe_ns,n_keyframes\n"
         "L30_V001_E0000,0,L30_V001,1,2,0.0,1.0,0,25,1 2,2\n",
         encoding="utf-8",
     )
+    np.save(demo / "features" / "events" / "L30_V001.npy", np.array([[0.7, 0.2, 0.1, 0.5]], dtype=np.float32))
 
     annotations = [
         {
@@ -90,7 +84,7 @@ def _write_demo_fixture(root: Path) -> Path:
             "video_id": "L30_V001",
         },
     ]
-    with (demo / "annotations.jsonl").open("w", encoding="utf-8") as handle:
+    with (demo / "annotations" / "L30_V001" / "annotations.jsonl").open("w", encoding="utf-8") as handle:
         for row in annotations:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -127,6 +121,9 @@ def test_m2_ingestion_pipeline_imports_pg_media_milvus_and_es(tmp_path: Path) ->
     report = service.run(request)
 
     assert report["reconcile"]["unique_keyframes"] == 2
+    assert report["reconcile"]["annotations_rows"] == 2
+    assert report["reconcile"]["event_mapping_rows"] == 1
+    assert report["reconcile"]["event_embeddings_rows"] == 1
     assert report["pg"]["videos_inserted"] == 1
     assert report["pg"]["keyframes_inserted"] == 2
     assert report["pg"]["event_keyframes_upserted"] == 2
@@ -146,6 +143,39 @@ def test_m2_ingestion_pipeline_imports_pg_media_milvus_and_es(tmp_path: Path) ->
     assert len(vector._collections["event_embeddings"]) == 1
     assert len(text._indices["keyframe_annotations"]) == 2
 
+    db.close()
+
+
+def test_m2_reconcile_uses_per_video_annotations_instead_of_root_jsonl(tmp_path: Path) -> None:
+    demo_root = _write_demo_fixture(tmp_path)
+    (demo_root / "annotations.jsonl").write_text(
+        json.dumps(
+            {
+                "video_id": "L30_V001",
+                "image_name": "shot_0000_first_f000000.jpg",
+                "image_path": "/tmp/frames/L30_V001/shot_0000_first_f000000.jpg",
+                "caption": "legacy-row-should-be-ignored",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    service, db, _vector, _text = _build_service(tmp_path)
+    request = IngestJobRequest(
+        mode="demo",
+        dataset_root=str(demo_root),
+        targets=["pg", "media", "milvus", "es"],
+        dataset_code="l30-demo",
+        dataset_name="l30-demo",
+        dataset_version="v1",
+    )
+
+    report = service.run(request)
+
+    assert report["reconcile"]["annotations_rows"] == 2
+    assert report["es"]["annotations_rows"] == 2
+    assert db.query(FrameAnnotation).count() == 2
     db.close()
 
 
