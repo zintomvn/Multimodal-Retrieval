@@ -14,6 +14,12 @@ class SearchOptions(BaseModel):
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)
+    video_codes: list[str] = Field(default_factory=list)
+    time_range_start_seconds: float | None = None
+    time_range_end_seconds: float | None = None
+    objects: list[str] = Field(default_factory=list)
+    scene: str | None = None
+    debug_filters: bool = False
 
 
 class SearchRequest(BaseModel):
