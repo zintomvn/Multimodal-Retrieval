@@ -9,7 +9,8 @@ Quy trình được thiết kế theo dạng **từng mô-đun độc lập**, y
 
 ```mermaid
 graph TD
-    M1[Mô-đun 1: Khởi tạo DB & Storage] --> M2[Mô-đun 2: Ingestion & Import Pipeline]
+    M0[Mô-đun 0: Contract & Data Preflight] --> M1[Mô-đun 1: Khởi tạo DB & Storage]
+    M1 --> M2[Mô-đun 2: Ingestion & Import Pipeline]
     M2 --> M3[Mô-đun 3: Core Search APIs]
     M3 --> M4[Mô-đun 4: Hybrid Fusion & Filtering]
     M4 --> M5[Mô-đun 5: Reranking, QA & TRAKE APIs]
@@ -18,6 +19,32 @@ graph TD
 ```
 
 ---
+
+## 📑 MÔ-ĐUN 0: KHÓA CONTRACT DỮ LIỆU & PREFLIGHT
+*Mục tiêu: Chốt nguồn dữ liệu chuẩn trước khi viết/chỉnh code backend.*
+
+### 1. Contract tài liệu bắt buộc
+*   `docs/database_schema_demo_v1.md`
+*   `docs/database_erd.md`
+*   `docs/tasks/backend_milestones/db_attribute_mapping.md`
+*   `docs/tasks/backend_milestones/execution_plan.md`
+
+### 2. Nguồn ingest mặc định (đã khóa)
+*   `demo/per_video_summary.csv`
+*   `demo/shot_segments.csv`
+*   `demo/features/map-keyframes/[video_id].csv`
+*   `demo/features/vit-ViT-B-32-laion2b_s34b_b79k/[video_id].npy`
+*   `demo/features/map-event/[video_id].csv`
+*   `demo/features/events/[video_id].npy`
+*   `demo/annotations/[video_id]/annotations.jsonl`
+
+### 3. Nguồn legacy (không dùng làm source ingest mặc định)
+*   `demo/Event Embedding/*`
+*   `demo/annotations.jsonl`
+
+### 🔍 Tiêu chí nghiệm thu Mô-đun 0:
+- [ ] Tài liệu không còn mô tả ingest mặc định bằng nguồn legacy.
+- [ ] Mô tả mapping event/keyframe và annotations đồng nhất trên toàn bộ docs backend milestones.
 
 ## 📑 MÔ-ĐUN 1: KHỞI TẠO CƠ SỞ DỮ LIỆU & LƯU TRỮ (DB & STORAGE)
 *Mục tiêu: Xây dựng nền tảng lưu trữ cho toàn bộ hệ thống.*
@@ -68,14 +95,14 @@ Schema contract ưu tiên cho Module 1/2:
 ### 1. Script `import_pg.py` (Nạp PostgreSQL)
 *   Đọc file `demo/per_video_summary.csv` để nạp dữ liệu vào bảng `videos`.
 *   Đọc file `demo/shot_segments.csv` để nạp dữ liệu vào bảng `shots` và `keyframes`.
-*   Đọc file `demo/Event Embedding/event_mapping.csv` để nạp dữ liệu vào bảng `events`.
+*   Đọc file `demo/features/map-event/[video_id].csv` để nạp dữ liệu vào bảng `events` và `event_keyframes`.
 
 ### 2. Script `import_milvus.py` (Nạp Milvus)
-*   Đọc file numpy toàn cục `demo/Event Embedding/event_embeddings.npy` và nạp vào collection `event_embeddings`.
-*   Duyệt qua từng video, đọc file `.npy` tại `demo/features/vit-ViT-B-32-laion2b_s34b_b79k/[video_id].npy` và ánh xạ với file mapping `.csv` tương ứng để nạp vector keyframe vào collection `keyframe_embeddings` (sắp xếp theo quy tắc `row index = csv n - 1`).
+*   Duyệt qua từng video, đọc file `.npy` tại `demo/features/events/[video_id].npy` và map qua `event_embedding_index` trong `demo/features/map-event/[video_id].csv` để nạp vào collection `event_embeddings`.
+*   Duyệt qua từng video, đọc file `.npy` tại `demo/features/vit-ViT-B-32-laion2b_s34b_b79k/[video_id].npy` và ánh xạ với `demo/features/map-keyframes/[video_id].csv` để nạp vector keyframe vào collection `keyframe_embeddings` (quy tắc `row index = csv n - 1`).
 
 ### 3. Script `import_es.py` (Nạp Elasticsearch)
-*   Đọc từng dòng của file `demo/annotations.jsonl`.
+*   Quét toàn bộ file `demo/annotations/[video_id]/annotations.jsonl`.
 *   Trích xuất: `caption`, `texts` (đưa vào `ocr_texts`), và `objects` (đưa vào `detected_objects`). Đẩy dạng bulk document lên Elasticsearch.
 
 ### 4. Script Upload Media
@@ -83,7 +110,7 @@ Schema contract ưu tiên cho Module 1/2:
 
 ### 🔍 Tiêu chí nghiệm thu Mô-đun 2:
 - [ ] Tổng số dòng trong bảng `keyframes` của PostgreSQL trùng khớp với số lượng ảnh trên MinIO và số lượng vector trong Milvus.
-- [ ] Elasticsearch chứa đúng số lượng tài liệu bằng với số dòng trong `annotations.jsonl`.
+- [ ] Elasticsearch chứa đúng số lượng tài liệu bằng tổng số dòng hợp lệ trong `annotations/[video_id]/annotations.jsonl`.
 
 ---
 

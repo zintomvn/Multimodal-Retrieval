@@ -35,17 +35,15 @@ Ký hiệu:
 | | `frame_sec` | `✅` | `✅` | `❌` | `❌` | Lưu ở Postgres để tính toán, lưu ở ES để lọc nhanh theo thời gian. |
 | | `image_path` | `✅` | `❌` | `❌` | `🔑` | Postgres lưu URL của ảnh trên MinIO; MinIO lưu file ảnh thực tế. |
 | | `fps` | `✅` | `❌` | `❌` | `❌` | Lưu ở Postgres để phục vụ đổi từ frame_idx sang giây. |
-| **annotations.jsonl** | `caption` | `✅` | `✅` | `❌` | `❌` | Postgres lưu dạng thô; ES đánh chỉ mục văn bản (Vietnamese Analyzer). |
+| **annotations/<video_id>/annotations.jsonl** | `caption` | `✅` | `✅` | `❌` | `❌` | Postgres lưu dạng thô; ES đánh chỉ mục văn bản (Vietnamese Analyzer). |
 | | `texts` (OCR) | `✅` | `✅` | `❌` | `❌` | Postgres lưu dạng JSON array thô; ES đánh chỉ mục văn bản tiếng Việt. |
 | | `objects` | `✅` | `✅` | `❌` | `❌` | Postgres lưu dạng JSON array; ES lưu dạng mảng `keyword` để lọc. |
 | | `object_counts` | `✅` | `✅` | `❌` | `❌` | Postgres lưu dạng JSON; ES lưu dạng `nested object` để truy vấn số lượng. |
 | | `detections` | `✅` | `❌` | `❌` | `❌` | Chỉ lưu ở Postgres làm siêu dữ liệu chi tiết khi người dùng click xem. |
-| **Event Embedding** | `event_id` | `✅` | `🔑` | `🔑` | `❌` | Định dạng: `{video_id}_E{event_index:06d}`. Khóa chính bảng `events`. |
-| | `event_embeddings.npy` | `❌` | `❌` | `✅` | `❌` | Lưu vector 512 chiều vào Milvus collection `event_embeddings`. |
-| | `vit-.../[video_id].npy` | `❌` | `❌` | `✅` | `❌` | Lưu vector 512 chiều vào Milvus collection `keyframe_embeddings`. |
+| **features/events/[video_id].npy** | event vectors theo video | `❌` | `❌` | `✅` | `❌` | Nguồn chính cho `event_embeddings` (dim 512), map qua `event_embedding_index` từ `map-event`. |
+| **features/map-event/[video_id].csv** | `event_id`, `event_embedding_index`, `start_n`, `end_n`, `keyframe_ns` | `✅` | `❌` | `🔑` | `❌` | Tạo bản ghi `events` và quan hệ `event_keyframes`; `event_id` format thực tế ví dụ `L30_V001_E0000`. |
+| **features/vit-.../[video_id].npy** | keyframe vectors theo video | `❌` | `❌` | `✅` | `❌` | Lưu vector 512 chiều vào Milvus collection `keyframe_embeddings`. |
 | **features/map-keyframes/[video_id].csv** | `n`, `pts_time`, `fps`, `frame_idx` | `✅` | `❌` | `🔑` | `❌` | Bảng mapping bat buoc de map `row i` cua embedding (`i = n - 1`) sang `keyframe_id` va `frame_seconds`. |
-| **features/map-event/[video_id].csv** | `event_id`, `start_n`, `end_n`, `keyframe_ns` | `✅` | `❌` | `🔑` | `❌` | Dung de tao quan he `events` <-> `keyframes` (bang `event_keyframes`) theo thu tu sequence. |
-| **features/events/[video_id].npy** | event vectors theo video | `❌` | `❌` | `✅` | `❌` | Co the dung de debug/rebuild theo tung video; index chinh uu tien nguon global `Event Embedding/event_embeddings.npy`. |
 
 ---
 
@@ -101,7 +99,7 @@ class Keyframe(Base):
 
 class Event(Base):
     __tablename__ = 'events'
-    id = Column(String(100), primary_key=True) # e.g., "L30_V001_E000000"
+    id = Column(String(100), primary_key=True) # e.g., "L30_V001_E0000"
     video_id = Column(String(50), ForeignKey('videos.id', ondelete='CASCADE'))
     start_seconds = Column(Float, nullable=False)
     end_seconds = Column(Float, nullable=False)
@@ -168,8 +166,11 @@ Milvus **chỉ lưu trữ** ID thực thể khóa chính (`keyframe_id` hoặc `
   - xac dinh event theo video va danh sach keyframe thuoc event.
   - dung de insert bang `event_keyframes` (truy van TRAKE sequence de/on dinh).
 - `features/events/[video_id].npy`:
-  - event embeddings theo video (co ich cho verify/rebuild cuc bo).
-  - nguon event index chinh toan bo dataset van la `Event Embedding/event_embeddings.npy`.
+  - event embeddings theo video (nguon chinh de nap `event_embeddings`).
+  - map voi `event_id` thong qua cot `event_embedding_index` trong `map-event`.
+
+Nguon du lieu legacy:
+- `demo/annotations.jsonl` va `demo/Event Embedding/*` chi giu lai de doi chieu lich su, khong dung lam source ingest mac dinh.
 
 ---
 
@@ -196,14 +197,14 @@ Khi bắt đầu viết code module nạp dữ liệu, hãy bám sát danh sách
 - [ ] **Bước 2**: Đẩy ảnh lên MinIO trước để lấy được danh sách `image_url` dạng `http://[minio_host]:[port]/keyframes/[video_id]/[file_name]`.
 - [ ] **Bước 3**: Chạy script nạp PostgreSQL để lưu toàn bộ thực thể gốc kèm `image_url` vừa tạo.
 - [ ] **Bước 4**: Chạy script nạp Milvus. Đảm bảo rằng chỉ số dòng `i` của file `.npy` tương ứng với khóa ngoại `keyframe_id` (lấy từ cột `frame_idx` khớp với dòng có `n = i + 1` trong file mapping CSV).
-- [ ] **Bước 5**: Chạy script nạp Elasticsearch. Thực hiện nối (join) thông tin text từ `annotations.jsonl` với `keyframe_id` tương ứng trước khi insert tài liệu phẳng vào ES.
+- [ ] **Bước 5**: Chạy script nạp Elasticsearch. Quét toàn bộ `annotations/<video_id>/annotations.jsonl`, join theo `image_path`/`image_name` để map về `keyframe_id` trước khi insert tài liệu phẳng vào ES.
 - [ ] **Bước 6**: Tạo quan hệ `event_keyframes` từ `features/map-event/[video_id].csv` để backend truy vấn chuỗi TRAKE ổn định.
 
 ## 4. Data quality gates (bat buoc)
 
 - [ ] So dong `videos` = so dong trong `per_video_summary.csv`.
 - [ ] So dong `keyframes` = so keyframe hop le tu `shot_segments.csv` sau khi reconcile media.
-- [ ] So dong `events` = so dong trong `event_mapping.csv`.
+- [ ] So dong `events` = tong so dong hop le trong `features/map-event/*.csv`.
 - [ ] Khong co orphan:
   - `keyframes.shot_id` khong duoc mo coi trong `shots`.
   - `frame_annotations.keyframe_id` khong duoc mo coi trong `keyframes`.

@@ -3,7 +3,7 @@
 Tài liệu này chốt schema PostgreSQL để backend ingest và retrieval bám đúng dữ liệu trong thư mục `demo/`.
 
 Mục tiêu:
-- đồng bộ 1-1 với các file `per_video_summary.csv`, `shot_segments.csv`, `annotations.jsonl`, `Event Embedding/event_mapping.csv`;
+- đồng bộ 1-1 với các file `per_video_summary.csv`, `shot_segments.csv`, `annotations/<video_id>/annotations.jsonl`, `features/map-keyframes/*.csv`, `features/map-event/*.csv`;
 - tạo khóa định danh ổn định để map qua Elasticsearch và Milvus;
 - dễ mở rộng lên production mà không phá vỡ contract import.
 
@@ -13,7 +13,7 @@ Mục tiêu:
   - `video_id` = `L30_V001`
   - `shot_id` = `L30_V001_S0000`
   - `keyframe_id` = `L30_V001_F000037`
-  - `event_id` = `L30_V001_E000000`
+  - `event_id` = `L30_V001_E0000`
 - Tất cả tên bảng/cột lowercase.
 - Postgres là source-of-truth cho metadata và quan hệ.
 - Elasticsearch chỉ giữ text index.
@@ -25,10 +25,13 @@ Mục tiêu:
 Từ dữ liệu trong `demo/`:
 - `per_video_summary.csv`: 96 videos.
 - `shot_segments.csv`: 13278 rows keyframe.
-- `annotations.jsonl`: 318 rows.
-- `Event Embedding/event_mapping.csv`: 2737 rows event.
+- `annotations/<video_id>/annotations.jsonl`: 96 files, tổng 13278 rows.
+- `features/map-keyframes/*.csv`: 96 files, tổng 13278 rows.
+- `features/map-event/*.csv`: 96 files, tổng 4419 rows event.
+- `features/events/*.npy`: 96 files, event embeddings theo từng video (dim 512).
 
 Lưu ý: cần có bước reconcile media trước import vì có khả năng chênh lệch giữa metadata và file JPG thực tế.
+Lưu ý 2: `demo/annotations.jsonl` và thư mục `demo/Event Embedding/` chỉ còn vai trò legacy/context, không phải nguồn ingest mặc định.
 
 ## 3. Canonical schema (core ingestion)
 
@@ -106,9 +109,9 @@ create table if not exists frame_annotations (
 );
 
 create table if not exists events (
-  event_id text primary key,                       -- ex: L30_V001_E000000
+  event_id text primary key,                       -- ex: L30_V001_E0000
   video_id text not null references videos(video_id) on delete cascade,
-  embedding_index_0 integer not null check (embedding_index_0 >= 0),
+  embedding_index_0 integer not null check (embedding_index_0 >= 0), -- map từ event_embedding_index
   start_seconds double precision not null check (start_seconds >= 0),
   end_seconds double precision not null check (end_seconds >= start_seconds),
   start_frame integer not null check (start_frame >= 0),
@@ -154,10 +157,15 @@ create index if not exists idx_ann_ocr_gin on frame_annotations using gin (ocr_t
   - fields: `video_id`, `shot_id`, `frame_seconds`, `caption`, `ocr_texts`, `detected_objects`
 - Milvus collection `keyframe_embeddings`:
   - scalar id: `keyframe_id`
-  - vector dim: 512
+  - source: `features/vit-ViT-B-32-laion2b_s34b_b79k/[video_id].npy` + `features/map-keyframes/[video_id].csv`
+  - vector dim: 512 (`row i = n - 1`)
 - Milvus collection `event_embeddings`:
   - scalar id: `event_id`
+  - source chính: `features/events/[video_id].npy` + `features/map-event/[video_id].csv` (`event_embedding_index`)
   - vector dim: 512
+
+Annotation ingestion source:
+- quét toàn bộ `annotations/<video_id>/annotations.jsonl` để map `image_path` -> `keyframe_id`, sau đó index sang ES và upsert `frame_annotations`.
 
 ## 6. DQ checks sau mỗi lần import
 
@@ -167,6 +175,9 @@ select count(*) as keyframes_count from keyframes;
 
 -- 2) events count
 select count(*) as events_count from events;
+
+-- expected events from features/map-event
+-- (tham chiếu ingestion report hoặc external count: tổng rows map-event)
 
 -- 3) orphan checks
 select count(*) as orphan_keyframes
@@ -197,4 +208,3 @@ having count(*) > 1;
 ## 8. Contract status
 
 Tài liệu này là schema contract ưu tiên để implement Module 1 và Module 2 trong `docs/tasks/backend_milestones/`.
-

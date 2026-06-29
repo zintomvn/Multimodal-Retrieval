@@ -8,6 +8,17 @@ Mục đích:
 - đảm bảo import dữ liệu từ `demo/` không mất thông tin;
 - giữ contract ổn định để map Elasticsearch và Milvus.
 
+Nguồn dữ liệu ingest mặc định:
+- `demo/per_video_summary.csv`
+- `demo/shot_segments.csv`
+- `demo/annotations/<video_id>/annotations.jsonl`
+- `demo/features/map-keyframes/<video_id>.csv`
+- `demo/features/map-event/<video_id>.csv`
+- `demo/features/vit-ViT-B-32-laion2b_s34b_b79k/<video_id>.npy`
+- `demo/features/events/<video_id>.npy`
+
+Nguồn legacy (không dùng làm source-of-truth): `demo/annotations.jsonl`, `demo/Event Embedding/*`.
+
 ## 1. ERD Tổng Quan
 
 ```mermaid
@@ -206,4 +217,5 @@ create index if not exists idx_event_keyframes_keyframe on event_keyframes(keyfr
 - PostgreSQL: source-of-truth.
 - Elasticsearch: text retrieval index (caption, OCR, objects), id tham chiếu `keyframe_id`.
 - Milvus: ANN vector index, id tham chiếu `keyframe_id` và `event_id`.
-
+  - keyframe vectors: từ `features/vit-.../*.npy` theo mapping `map-keyframes`.
+  - event vectors: từ `features/events/*.npy` theo mapping `map-event.event_embedding_index`.
