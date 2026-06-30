@@ -199,7 +199,7 @@ Mục tiêu: nhóm có quy trình cài model thật, thay model, và mở rộng
 Tasks:
 
 - Rà `configs/model_registry.yaml`.
-- Rà `docs/model_pipeline_guide.md`.
+- Rà `docs/backend/guides/model_pipeline.md`.
 - Tạo checklist cài model cho từng loại:
   - embedding,
   - OCR,
@@ -695,7 +695,7 @@ Trước khi merge:
 - Không commit raw video/dataset thật.
 - Có test hoặc manual test note.
 - API change đã cập nhật `apps/backend/README.md` hoặc `apps/web/src/types.ts`.
-- Nếu đổi model/pipeline, cập nhật `docs/model_pipeline_guide.md`.
+- Nếu đổi model/pipeline, cập nhật `docs/backend/guides/model_pipeline.md`.
 
 ## 7. Definition Of Done Cho Milestone 1
 
@@ -709,7 +709,7 @@ Milestone 1 hoàn thành khi:
 - Export được ZIP đúng format.
 - Có ít nhất 10 unit tests backend cho các module lõi.
 - Có manual E2E test report.
-- `docs/model_pipeline_guide.md` đủ để người 4 cắm model thật đầu tiên.
+- `docs/backend/guides/model_pipeline.md` đủ để người 4 cắm model thật đầu tiên.
 - Mỗi thành viên có module riêng để tối ưu ở milestone sau.
 
 ## 8. Chuẩn Bị Cho Milestone 2

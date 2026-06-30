@@ -2,7 +2,7 @@
 
 Đặt checkpoint model thật trong thư mục này. Không commit model weights lên Git.
 
-Xem hướng dẫn trong `docs/model_pipeline_guide.md`
+Xem hướng dẫn trong `docs/backend/guides/model_pipeline.md`
 
 Ví dụ:
 

@@ -207,4 +207,4 @@ having count(*) > 1;
 
 ## 8. Contract status
 
-Tài liệu này là schema contract ưu tiên để implement Module 1 và Module 2 trong `docs/tasks/backend_milestones/`.
+Tài liệu này là schema contract ưu tiên để implement Module 1 và Module 2 trong `docs/backend/milestones/`.

@@ -1,5 +1,8 @@
 # Runbook vận hành
 
+Runbook đầy đủ cho backend cloud stack:
+- `docs/backend/runbooks/cloud_e2e.md`
+
 ## 1. Khởi động local
 
 ```powershell

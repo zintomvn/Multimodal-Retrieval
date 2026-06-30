@@ -8,7 +8,7 @@
 
 ### Kế hoạch chi tiết theo module
 1. **M0 — Contract & Data Preflight**
-- Thực thi: khóa schema contract theo `docs/database_schema_demo_v1.md` + `docs/database_erd.md` + `db_attribute_mapping.md`, xác nhận nguồn ingest chuẩn (`demo/features/*`, `demo/annotations/*/annotations.jsonl`), đánh dấu rõ nguồn legacy.
+- Thực thi: khóa schema contract theo `docs/backend/specs/database_schema_demo_v1.md` + `docs/backend/specs/database_erd.md` + `db_attribute_mapping.md`, xác nhận nguồn ingest chuẩn (`demo/features/*`, `demo/annotations/*/annotations.jsonl`), đánh dấu rõ nguồn legacy.
 - Interface thay đổi: không đổi API runtime; chuẩn hóa tài liệu để mọi module sau dùng cùng một contract.
 - Test gate:
   - kiểm tra thống kê dữ liệu nguồn (videos/keyframes/events/annotations) được ghi rõ trong docs;
@@ -19,7 +19,7 @@
 - PR title: `docs(chore): module M0 contract and preflight`.
 
 2. **M1 — DB & Storage Foundation**
-- Thực thi: Alembic baseline theo `docs/database_schema_demo_v1.md`, bảng core (`datasets/videos/shots/keyframes/frame_annotations/events/event_keyframes`), index bắt buộc, storage bootstrap (local/S3 key format).
+- Thực thi: Alembic baseline theo `docs/backend/specs/database_schema_demo_v1.md`, bảng core (`datasets/videos/shots/keyframes/frame_annotations/events/event_keyframes`), index bắt buộc, storage bootstrap (local/S3 key format).
 - Interface thay đổi: schema DB chính thức; contract id nghiệp vụ (`video_id/shot_id/keyframe_id/event_id`).
 - Test gate:
   - migration up/down chạy được;

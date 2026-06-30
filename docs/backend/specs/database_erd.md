@@ -1,7 +1,7 @@
 # PostgreSQL ERD (Target Demo-Aligned)
 
 Tài liệu này mô tả ERD mục tiêu cho backend retrieval, đồng bộ với schema contract:
-- `docs/database_schema_demo_v1.md`
+- `docs/backend/specs/database_schema_demo_v1.md`
 
 Mục đích:
 - chốt quan hệ bảng cho Module 1/2;

@@ -24,10 +24,10 @@ graph TD
 *Mục tiêu: Chốt nguồn dữ liệu chuẩn trước khi viết/chỉnh code backend.*
 
 ### 1. Contract tài liệu bắt buộc
-*   `docs/database_schema_demo_v1.md`
-*   `docs/database_erd.md`
-*   `docs/tasks/backend_milestones/db_attribute_mapping.md`
-*   `docs/tasks/backend_milestones/execution_plan.md`
+*   `docs/backend/specs/database_schema_demo_v1.md`
+*   `docs/backend/specs/database_erd.md`
+*   `docs/backend/milestones/db_attribute_mapping.md`
+*   `docs/backend/milestones/execution_plan.md`
 
 ### 2. Nguồn ingest mặc định (đã khóa)
 *   `demo/per_video_summary.csv`
@@ -50,8 +50,8 @@ graph TD
 *Mục tiêu: Xây dựng nền tảng lưu trữ cho toàn bộ hệ thống.*
 
 Schema contract ưu tiên cho Module 1/2:
-- `docs/database_schema_demo_v1.md`
-- `docs/database_erd.md`
+- `docs/backend/specs/database_schema_demo_v1.md`
+- `docs/backend/specs/database_erd.md`
 
 ### 1. PostgreSQL Schema (Relational Data)
 *   **Yêu cầu**: Sử dụng **SQLAlchemy** để định nghĩa các Model và tạo **Alembic migration** để quản lý phiên bản DB.

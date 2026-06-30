@@ -5,8 +5,8 @@ Tài liệu này đặc tả chi tiết **vị trí lưu trữ của từng thu�
 Lập trình viên hoặc Lập trình Agent tiếp theo cần bám sát bảng ánh xạ này để viết các script import dữ liệu nghiệp vụ (`import_pg.py`, `import_es.py`, `import_milvus.py`) và thiết kế các câu lệnh truy vấn.
 
 > Schema contract chot de implement:
-> - `docs/database_schema_demo_v1.md`
-> - `docs/database_erd.md`
+> - `docs/backend/specs/database_schema_demo_v1.md`
+> - `docs/backend/specs/database_erd.md`
 >
 > Neu co bat ky mau thuan nao giua tai lieu nay va code hien tai, uu tien schema contract o tren.
 
