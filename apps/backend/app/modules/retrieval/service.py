@@ -330,11 +330,30 @@ class RetrievalService:
         ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
 
         dataset_video_ids = self._dataset_video_ids(dataset)
-        semantic_scores = self._semantic_scores(variants, ann_top_k, dataset_video_ids)
-        text_scores = self._text_scores(variants, ann_top_k, dataset_video_ids, profile)
+        semantic_scores, semantic_backend_error = self._semantic_scores(variants, ann_top_k, dataset_video_ids)
+        if options.use_metadata:
+            text_scores, text_backend_error = self._text_scores(variants, ann_top_k, dataset_video_ids, profile)
+        else:
+            text_scores, text_backend_error = {}, False
+
+        if options.strict_hybrid and (semantic_backend_error or text_backend_error):
+            failed_backends: list[str] = []
+            if semantic_backend_error:
+                failed_backends.append("semantic (embedder/Milvus)")
+            if text_backend_error:
+                failed_backends.append("metadata (Elasticsearch)")
+            raise ValueError(
+                "strict_hybrid is enabled and backend retrieval failed for: "
+                + ", ".join(failed_backends)
+                + "."
+            )
 
         candidate_ids = set(semantic_scores).union(text_scores)
         if not candidate_ids:
+            if options.strict_hybrid:
+                raise ValueError(
+                    "strict_hybrid is enabled and hybrid retrieval returned no candidates; fallback ranking is disabled."
+                )
             return self._fallback_rank_frames(
                 dataset=dataset,
                 variants=variants,
@@ -424,17 +443,24 @@ class RetrievalService:
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return scored
 
-    def _semantic_scores(self, variants: list[str], top_k: int, dataset_video_ids: set[str]) -> dict[str, float]:
+    def _semantic_scores(self, variants: list[str], top_k: int, dataset_video_ids: set[str]) -> tuple[dict[str, float], bool]:
         if self.vector_client is None:
-            return {}
+            return {}, True
         scores: dict[str, float] = {}
+        backend_error = False
         for variant in variants:
-            query_vector = self.model_registry.embedder.embed_text(variant)
+            try:
+                query_vector = self.model_registry.embedder.embed_text(variant)
+            except Exception:
+                # Keep retrieval available even when embedder runtime is misconfigured.
+                backend_error = True
+                continue
             if not query_vector:
                 continue
             try:
                 hits = self.vector_client.search("keyframe_embeddings", query_vector, top_k=top_k)
             except Exception:
+                backend_error = True
                 continue
             for hit in hits:
                 frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
@@ -446,7 +472,7 @@ class RetrievalService:
                 existing = scores.get(frame_id, 0.0)
                 if score > existing:
                     scores[frame_id] = score
-        return scores
+        return scores, backend_error
 
     def _text_scores(
         self,
@@ -454,9 +480,9 @@ class RetrievalService:
         top_k: int,
         dataset_video_ids: set[str],
         profile: dict[str, Any],
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], bool]:
         if self.text_client is None:
-            return {}
+            return {}, True
         metadata_profile = profile.get("metadata", {})
         boosts = {
             "ocr_texts": float(metadata_profile.get("ocr_boost", 3.0)),
@@ -464,6 +490,7 @@ class RetrievalService:
             "detected_objects": float(metadata_profile.get("object_boost", 1.0)),
         }
         scores: dict[str, float] = {}
+        backend_error = False
         for variant in variants:
             try:
                 hits = self.text_client.search(
@@ -473,6 +500,7 @@ class RetrievalService:
                     boosts=boosts,
                 )
             except Exception:
+                backend_error = True
                 continue
             for hit in hits:
                 frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
@@ -484,7 +512,7 @@ class RetrievalService:
                 existing = scores.get(frame_id, 0.0)
                 if score > existing:
                     scores[frame_id] = score
-        return scores
+        return scores, backend_error
 
     def _fallback_rank_frames(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -35,8 +36,12 @@ class StubVectorClient:
 
 
 class StubTextClient:
+    def __init__(self) -> None:
+        self.search_calls = 0
+
     def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
         _ = (index, query, boosts)
+        self.search_calls += 1
         hits = [
             TextHit(id="L30_V001_F000005", score=10.0, metadata={"keyframe_id": "L30_V001_F000005", "video_id": "L30_V001"}),
             TextHit(id="L30_V002_F000012", score=8.0, metadata={"keyframe_id": "L30_V002_F000012", "video_id": "L30_V002"}),
@@ -271,5 +276,88 @@ def test_m4_filters_remove_out_of_scope_results_and_include_debug_metadata(tmp_p
     assert filter_debug["matched"]["video_code"] == "L30_V001"
     assert "person" in filter_debug["matched"]["objects"]
     assert filter_debug["matched"]["scene"] == "ao do"
+
+    db.close()
+
+
+def test_m4_use_metadata_false_skips_text_backend(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+    counting_text_client = StubTextClient()
+    service.text_client = counting_text_client
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="m4-no-metadata",
+            query_text="nguoi ao do",
+            profile="m4_rrf",
+            top_k=3,
+            options=SearchOptions(use_query_expansion=False, use_metadata=False),
+        )
+    )
+
+    assert counting_text_client.search_calls == 0
+    assert response.results[0].frame_id == "L30_V001_F000020"
+    assert response.results[0].score_breakdown["text_score"] == 0
+
+    db.close()
+
+
+def test_m4_strict_hybrid_returns_error_when_semantic_backend_fails(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+
+    class BrokenVectorClient(StubVectorClient):
+        def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
+            _ = (collection, vector, top_k, filters)
+            raise RuntimeError("milvus unavailable")
+
+    service.vector_client = BrokenVectorClient()
+
+    with pytest.raises(ValueError, match="strict_hybrid is enabled and backend retrieval failed"):
+        service.search(
+            SearchRequest(
+                dataset_id=dataset.dataset_id,
+                query_type="KIS",
+                query_name="m4-strict-hybrid",
+                query_text="nguoi ao do",
+                profile="m4_weighted",
+                top_k=3,
+                options=SearchOptions(use_query_expansion=False, strict_hybrid=True),
+            )
+        )
+
+    db.close()
+
+
+def test_m4_strict_hybrid_disables_fallback_when_no_candidates(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+
+    class EmptyVectorClient(StubVectorClient):
+        def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
+            _ = (collection, vector, top_k, filters)
+            return []
+
+    class EmptyTextClient(StubTextClient):
+        def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+            _ = (index, query, top_k, boosts)
+            self.search_calls += 1
+            return []
+
+    service.vector_client = EmptyVectorClient()
+    service.text_client = EmptyTextClient()
+
+    with pytest.raises(ValueError, match="fallback ranking is disabled"):
+        service.search(
+            SearchRequest(
+                dataset_id=dataset.dataset_id,
+                query_type="KIS",
+                query_name="m4-strict-empty",
+                query_text="nguoi ao do",
+                profile="m4_weighted",
+                top_k=3,
+                options=SearchOptions(use_query_expansion=False, strict_hybrid=True),
+            )
+        )
 
     db.close()

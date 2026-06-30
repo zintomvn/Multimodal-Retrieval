@@ -11,6 +11,7 @@ QueryType = Literal["KIS", "QA", "TRAKE", "IMAGE", "FREEFORM"]
 class SearchOptions(BaseModel):
     use_query_expansion: bool = True
     use_metadata: bool = True
+    strict_hybrid: bool = False
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)
