@@ -2,7 +2,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.5

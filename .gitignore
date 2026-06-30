@@ -211,6 +211,15 @@ models/*
 !models/README.md
 !models/.gitkeep
 
+# Generated data
+apps/backend/data/
+
+# Secrets / credentials (security!)
+apps/secrets/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -224,3 +233,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node modules
+node_modules/

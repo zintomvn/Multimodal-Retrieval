@@ -1,4 +1,15 @@
-import type { Dataset, FrameContext, QueryType, SearchResponse, SubmissionRow } from "../types";
+import type {
+  Dataset,
+  FrameContext,
+  GCSUploadJobRequest,
+  IngestJobPollResponse,
+  IngestJobStartRequest,
+  IngestJobStartResponse,
+  MilvusUploadJobRequest,
+  QueryType,
+  SearchResponse,
+  SubmissionRow
+} from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -80,4 +91,52 @@ export async function createAndExportSubmission(datasetId: string, name: string,
 export function mediaUrl(path: string | null): string | null {
   if (!path) return null;
   return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
+
+export async function startIngestJob(input: IngestJobStartRequest): Promise<IngestJobStartResponse> {
+  return requestJson<IngestJobStartResponse>("/api/ingest/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      dataset_id: input.dataset_id ?? null,
+      manifest_path: input.manifest_path ?? null,
+      mode: input.mode
+    })
+  });
+}
+
+export async function getIngestJob(jobId: string): Promise<IngestJobPollResponse> {
+  return requestJson<IngestJobPollResponse>(`/api/jobs/${jobId}`);
+}
+
+export async function startGCSUpload(input: GCSUploadJobRequest): Promise<IngestJobStartResponse> {
+  return requestJson<IngestJobStartResponse>("/api/ingest/upload/gcs", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function startMilvusUpload(input: MilvusUploadJobRequest): Promise<IngestJobStartResponse> {
+  return requestJson<IngestJobStartResponse>("/api/ingest/upload/milvus", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function uploadFileToGCS(file: File, datasetId?: string): Promise<IngestJobStartResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  if (datasetId) form.append("dataset_id", datasetId);
+  const res = await fetch(`${API_BASE}/api/ingest/upload/file/gcs`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<IngestJobStartResponse>;
+}
+
+export async function uploadFileToMilvus(file: File, collection?: string, datasetId?: string): Promise<IngestJobStartResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  if (collection) form.append("collection", collection);
+  if (datasetId) form.append("dataset_id", datasetId);
+  const res = await fetch(`${API_BASE}/api/ingest/upload/file/milvus`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<IngestJobStartResponse>;
 }
