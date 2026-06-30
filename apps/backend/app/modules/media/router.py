@@ -1,12 +1,63 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.db.models import Frame
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/media", tags=["media"])
+settings = get_settings()
+
+
+def _thumbnail_candidates(frame: Frame) -> list[Path]:
+    candidates: list[Path] = []
+    rel_path_raw = (frame.image_rel_path or "").lstrip("/\\")
+    if rel_path_raw:
+        rel_path = Path(rel_path_raw)
+        candidates.extend(
+            [
+                settings.data_root / "frames" / rel_path,
+                settings.data_root / rel_path,
+                settings.data_root / "keyframes" / rel_path,
+            ]
+        )
+
+    if frame.video and frame.frame_idx is not None:
+        suffix = f"f{int(frame.frame_idx):06d}"
+        for base in (settings.data_root / "frames", settings.data_root / "keyframes"):
+            video_dir = base / frame.video.video_code
+            if not video_dir.is_dir():
+                continue
+            matches = sorted(video_dir.glob(f"*{suffix}.*"))
+            if matches:
+                candidates.extend(matches)
+
+    return candidates
+
+
+def _resolve_thumbnail_path(frame: Frame) -> Path | None:
+    root = settings.data_root.resolve()
+    seen: set[str] = set()
+    for candidate in _thumbnail_candidates(frame):
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        if root not in resolved.parents and resolved != root:
+            continue
+        return resolved
+    return None
 
 
 @router.get("/frames/{frame_id}/context")
@@ -43,6 +94,11 @@ def mock_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
     if not frame:
         raise HTTPException(status_code=404, detail="Frame not found")
+
+    thumbnail = _resolve_thumbnail_path(frame)
+    if thumbnail is not None:
+        return FileResponse(path=str(thumbnail))
+
     title = f"{frame.video.video_code} / {frame.frame_idx}"
     caption = " ".join((annotation.text_value or "")[:80] for annotation in frame.annotations[:1])
     color_seed = abs(hash(frame.video.video_code)) % 360
