@@ -228,11 +228,44 @@ Quy trình chuẩn:
 5. Chạy lại ingest/index.
 6. Benchmark với `scripts/benchmark_retrieval.py`.
 
-Tài liệu chi tiết: `docs/model_pipeline_guide.md`.
+Tài liệu chi tiết: `docs/backend/guides/model_pipeline.md`.
 
 ## 9. Development workflow
 
 ### 9.0 M2 ingestion pipeline (demo data)
+
+Cấu trúc `demo/` backend đang yêu cầu (theo ingest service hiện tại):
+
+```text
+demo/
+├── per_video_summary.csv
+├── shot_segments.csv
+├── model_info.json
+├── features/
+│   ├── map-keyframes/
+│   │   ├── L30_V001.csv
+│   │   └── ... (mỗi video 1 file)
+│   ├── vit-ViT-B-32-laion2b_s34b_b79k/
+│   │   ├── L30_V001.npy
+│   │   └── ... (mỗi video 1 file)
+│   ├── map-event/
+│   │   ├── L30_V001.csv
+│   │   └── ... (mỗi video 1 file)
+│   └── events/
+│       ├── L30_V001.npy
+│       └── ... (mỗi video 1 file)
+├── annotations/
+│   ├── L30_V001/annotations.jsonl
+│   └── ... (mỗi video 1 thư mục)
+└── frames/
+    ├── L30_V001/*.jpg
+    └── ... (mỗi video 1 thư mục)
+```
+
+Ghi chú quan trọng:
+- `annotations.jsonl` ở root `demo/` là legacy context, không phải nguồn ingest mặc định.
+- `demo/Event Embedding/*` cũng là legacy context, không phải nguồn ingest mặc định.
+- Ingest sẽ fail nếu thiếu các nhánh bắt buộc ở trên.
 
 Chạy ingest full:
 
@@ -315,6 +348,12 @@ Nội dung gate:
 - TRAKE sequence có ordering metadata ổn định giữa các lần gọi.
 - Submission validator trả report chi tiết lỗi theo dòng (`violations`).
 - ZIP export đúng cấu trúc `submission/*.csv`, UTF-8, không header.
+
+### 9.8 E2E test qua FastAPI `/docs` (cloud stack thật)
+
+Runbook chi tiết (payload mẫu + pass/fail criteria + SQL verify):
+
+- `docs/backend/milestones/e2e_fastapi_docs_runbook.md`
 
 ### 9.3 Build image
 
