@@ -204,7 +204,7 @@ backend/app/
     └── model_runtime/
 ```
 
-> Sơ đồ ERD PostgreSQL dễ nhìn hơn nằm ở `docs/database_erd.md`.
+> Sơ đồ ERD PostgreSQL dễ nhìn hơn nằm ở `docs/backend/specs/database_erd.md`.
 
 ### 4.1 Module responsibilities
 

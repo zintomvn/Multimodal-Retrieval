@@ -2,9 +2,22 @@ embedders:
   clip_mock:
     task: multimodal_embedding
     provider: mock
-    dim: 768
-    enabled: true
+    dim: 512
+    enabled: false
     description: "Deterministic mock embedder for local development."
+  openai_embedding:
+    task: multimodal_embedding
+    provider: openai_compatible
+    base_url: http://localhost:8001/v1
+    model: ViT-B-32-laion2b_s34b_b79k
+    openclip_model: ViT-B-32
+    openclip_pretrained: laion2b_s34b_b79k
+    openclip_device: cpu
+    openclip_max_batch: 32
+    dim: 512
+    l2_normalize: true
+    enabled: true
+    description: "Must match demo/features/vit-ViT-B-32-laion2b_s34b_b79k embedding space."
   pe_core_bigg:
     task: multimodal_embedding
     provider: huggingface

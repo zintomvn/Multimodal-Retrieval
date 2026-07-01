@@ -29,9 +29,11 @@ class MilvusVectorSearchClient:
         return hits
 
     def upsert(self, collection: str, vectors: list[tuple[str, list[float], dict]]) -> int:
+        if not vectors:
+            return 0
+        self._ensure_collection(collection=collection, dimension=len(vectors[0][1]))
         data = [{"id": item_id, "vector": vector, **metadata} for item_id, vector, metadata in vectors]
-        if data:
-            self.client.upsert(collection_name=collection, data=data)
+        self.client.upsert(collection_name=collection, data=data)
         return len(data)
 
     def ensure_collection(self, name: str, dim: int) -> None:
@@ -63,3 +65,19 @@ class MilvusVectorSearchClient:
             else:
                 parts.append(f"{key} == {value}")
         return " and ".join(parts)
+
+    def _ensure_collection(self, collection: str, dimension: int) -> None:
+        if self.client.has_collection(collection_name=collection):
+            return
+        from pymilvus import DataType
+
+        schema = self.client.create_schema(enable_dynamic_field=True)
+        schema.add_field(field_name="id", datatype=DataType.VARCHAR, is_primary=True, max_length=128)
+        schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=dimension)
+        index_params = self.client.prepare_index_params()
+        index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
+        self.client.create_collection(
+            collection_name=collection,
+            schema=schema,
+            index_params=index_params,
+        )

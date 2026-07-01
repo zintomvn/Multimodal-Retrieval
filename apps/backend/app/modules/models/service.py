@@ -15,14 +15,16 @@ class ModelRegistryService:
         embedder: TextImageEmbedder,
         query_expander: QueryExpander,
         visual_qa: VisualQaModel,
+        registry: dict[str, Any] | None = None,
     ) -> None:
         self.settings = get_settings()
-        self.registry = self._load_yaml(self.settings.model_registry_path)
+        self.registry = registry if registry is not None else self.load_registry(self.settings.model_registry_path)
         self.embedder = embedder
         self.query_expander = query_expander
         self.visual_qa = visual_qa
 
-    def _load_yaml(self, path: Path) -> dict[str, Any]:
+    @staticmethod
+    def load_registry(path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
         with path.open("r", encoding="utf-8") as handle:
@@ -40,3 +42,12 @@ class ModelRegistryService:
                 if isinstance(config, dict) and config.get("enabled"):
                     enabled.append({"group": group, "name": name, **config})
         return enabled
+
+    def first_enabled(self, group: str) -> tuple[str, dict[str, Any]] | None:
+        entries = self.registry.get(group)
+        if not isinstance(entries, dict):
+            return None
+        for name, config in entries.items():
+            if isinstance(config, dict) and config.get("enabled"):
+                return str(name), config
+        return None

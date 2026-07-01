@@ -54,6 +54,7 @@ Multimodal-Retrieval/
 │       └── package.json
 ├── configs/
 │   ├── dataset_manifest.example.yaml
+│   ├── dataset_manifest.real.example.yaml  # Manifest mẫu cho dataset thật
 │   ├── model_registry.yaml       # Bật/tắt model và khai báo checkpoint
 │   └── retrieval_profiles.yaml   # Trọng số ranking/retrieval
 ├── data/
@@ -61,15 +62,16 @@ Multimodal-Retrieval/
 ├── docs/
 │   ├── blueprint/                # Proposal + technical design
 │   ├── tasks/                    # Milestone/phase task plans
+│   ├── database_schema_demo_v1.md # Schema contract bám dữ liệu demo
 │   ├── database_erd.md           # PostgreSQL ERD
 │   ├── model_pipeline_guide.md   # Hướng dẫn cắm model/thay pipeline
 │   └── runbook.md                # Lệnh vận hành thường dùng
 ├── models/                       # Đặt model weights local, không commit
 ├── scripts/
 │   ├── benchmark_retrieval.py
-│   ├── build_index.ps1
 │   ├── export_submission.py
-│   └── ingest_dataset.ps1
+│   ├── test_connections.py        # kiểm tra kết nối PostgreSQL / Milvus / R2
+│   └── upload_kaggle_to_gcs.py   # upload video từ Kaggle lên GCS (chạy trên Kaggle Notebook)
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -170,6 +172,21 @@ npm run build
 
 ## 8. Luồng Sử Dụng Chính
 
+### 8.0 Quan Hệ Giữa Các Store
+
+```
+PostgreSQL (nguồn sự thật)
+  Dataset → Video → Frame (id, image_uri, thumbnail_uri)
+                  ↑               ↑
+             frame_id         GCS key
+                  │               │
+         Milvus collection    GCS bucket
+         id = Frame.id        key = "{dataset_id}/{video_code}/{file}"
+         vector = CLIP emb.
+```
+
+Khi search: Milvus trả về `frame_id` → JOIN vào Postgres → lấy `thumbnail_uri` (GCS URL).
+
 ### 8.1 Ingest/Preprocessing
 
 Giai đoạn hiện tại hỗ trợ mock ingest để kiểm tra pipeline/API/DB trước.
@@ -221,7 +238,56 @@ Kỳ vọng mock mode:
 Top result: L00_V000, frame 1234
 ```
 
-### 8.3 Export Submission
+### 8.3 Upload Dữ Liệu Lên Cloud
+
+Mở modal **Upload to cloud** từ nút trên giao diện web để đẩy dữ liệu lên GCS và Milvus.
+
+**GCS — upload ảnh và video:**
+
+- *Server path*: nhập đường dẫn folder hoặc file ZIP trên server backend.
+- *From machine*: chọn file `.jpg/.jpeg/.png/.mp4/.avi/.mov/.mkv/.zip` trực tiếp từ máy tính — ZIP sẽ được giải nén tự động.
+- Backend nhận file, lưu tạm, chạy background job, và trả về `job_id` để poll tiến trình.
+- API endpoints: `POST /api/ingest/upload/gcs` (path) và `POST /api/ingest/upload/file/gcs` (multipart).
+
+**Milvus — index vector embeddings:**
+
+- *Features file path*: đường dẫn `.npy` hoặc `.npz` trên server.
+- *From machine*: chọn file `.npy/.npz/.zip` từ máy tính — ZIP sẽ được giải nén và file `.npy/.npz` đầu tiên được dùng.
+- Format `.npz` cần hai key: `frame_ids` (mảng string) và `vectors` (mảng 2D float). File `.npy` thuần cần mảng 2D `(N, D)`.
+- API endpoints: `POST /api/ingest/upload/milvus` (path) và `POST /api/ingest/upload/file/milvus` (multipart).
+
+Giới hạn upload từ browser: **2 GB**. File lớn hơn dùng server path hoặc script Kaggle bên dưới.
+
+### 8.4 Upload Video Từ Kaggle Lên GCS (Không Cần Download Về Máy)
+
+Dùng script `scripts/upload_kaggle_to_gcs.py` chạy trực tiếp trên Kaggle Notebook — dataset đã được mount sẵn trên server Kaggle, không có byte nào đi qua máy cá nhân.
+
+**Chuẩn bị trên Kaggle:**
+
+1. Mở dataset → **New Notebook** → dataset tự mount tại `/kaggle/input/ai-challenge-2025/`.
+2. Settings → Internet → **On**.
+3. Add Kaggle Secrets:
+   - `GCS_BUCKET` — tên GCS bucket.
+   - `GCS_CREDENTIALS_JSON` — toàn bộ nội dung JSON của service account key.
+
+**Chạy trong Notebook:**
+
+```python
+# Cell 1
+!pip install google-cloud-storage tqdm -q
+
+# Cell 2 — paste nội dung scripts/upload_kaggle_to_gcs.py vào đây
+# hoặc:
+!python upload_kaggle_to_gcs.py
+```
+
+Chỉnh `GCS_PREFIX`, `VIDEOS_DIR`, và `WORKERS` trong block `CONFIG` đầu file trước khi chạy.
+
+- `SKIP_EXISTING = True` cho phép chạy lại an toàn nếu bị gián đoạn.
+- `upload_from_filename()` streaming — không OOM với video lớn.
+- GCS key format giữ nguyên cấu trúc thư mục gốc: `{GCS_PREFIX}/{video_folder}/{filename}`.
+
+### 8.5 Export Submission
 
 Qua frontend:
 
@@ -276,7 +342,7 @@ Sau khi đổi embedding/OCR/ASR/caption model, cần chạy lại ingest/index.
 
 Xem hướng dẫn chi tiết:
 
-- `docs/model_pipeline_guide.md`
+- `docs/backend/guides/model_pipeline.md`
 - `models/README.md`
 
 ## 10. Test Và Verification
@@ -315,9 +381,10 @@ Test plan chi tiết:
 | --- | --- |
 | `docs/blueprint/proposal.md` | Đề xuất hệ thống, mục tiêu, phạm vi. |
 | `docs/blueprint/design.md` | Thiết kế kỹ thuật, module, schema, ERD. |
-| `docs/database_erd.md` | ERD PostgreSQL riêng để xem nhanh. |
-| `docs/model_pipeline_guide.md` | Cách bỏ model vào và sửa pipeline. |
-| `docs/runbook.md` | Lệnh vận hành thường dùng. |
+| `docs/backend/specs/database_schema_demo_v1.md` | Schema contract mục tiêu cho dữ liệu `demo/`. |
+| `docs/backend/specs/database_erd.md` | ERD PostgreSQL riêng để xem nhanh. |
+| `docs/backend/guides/model_pipeline.md` | Cách bỏ model vào và sửa pipeline. |
+| `docs/backend/runbooks/operations.md` | Lệnh vận hành thường dùng. |
 | `docs/tasks/milestone1.md` | Phân công nhóm và test milestone 1. |
 | `docs/tasks/phase1.md` | Checklist thực thi giai đoạn đầu. |
 | `apps/backend/README.md` | Tài liệu backend service. |
@@ -330,7 +397,7 @@ Test plan chi tiết:
 - Không commit raw dataset/video lớn.
 - Không commit generated submissions.
 - API thay đổi phải cập nhật `apps/backend/README.md` và `apps/web/src/types.ts`.
-- Pipeline/model thay đổi phải cập nhật `docs/model_pipeline_guide.md`.
+- Pipeline/model thay đổi phải cập nhật `docs/backend/guides/model_pipeline.md`.
 - Retrieval profile thay đổi phải ghi lý do trong PR hoặc task note.
 
 ## 13. Troubleshooting Nhanh
@@ -344,4 +411,8 @@ Test plan chi tiết:
 | Port bị chiếm | Dừng stack cũ bằng `docker compose down --remove-orphans`. |
 | Search không đúng | Kiểm tra mock dataset, query text, `score_breakdown`. |
 | Export ZIP lỗi | Gọi `/api/submissions/{id}/validate` để xem lỗi format. |
+| Upload GCS lỗi 413 | File vượt giới hạn 2 GB — dùng server path hoặc Kaggle script. |
+| Upload GCS không tìm thấy file | Backend không mount đường dẫn đó — kiểm tra path tuyệt đối trong container. |
+| Milvus upload lỗi key | File `.npz` cần hai key `frame_ids` và `vectors` — xem `_load_features()`. |
+| GCS_BUCKET chưa cấu hình | Set env var `GCS_BUCKET` và `GCS_CREDENTIALS_FILE` trong `.env`. |
 

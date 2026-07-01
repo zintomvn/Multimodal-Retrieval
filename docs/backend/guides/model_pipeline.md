@@ -150,6 +150,54 @@ Prompt nên trả JSON:
 
 Khi thêm LLM thật, vẫn giữ nút `MV` trên frontend để bật/tắt nhanh vì query expansion không phải lúc nào cũng cải thiện kết quả.
 
+## 5.1 Embedding service chuẩn với demo (khuyến nghị)
+
+Với bộ demo hiện tại, vector keyframe được tạo bằng:
+- `model_name`: `ViT-B-32`
+- `pretrained`: `laion2b_s34b_b79k`
+- `dim`: `512`
+- `l2_normalized`: `true`
+
+Để truy vấn cosine đúng embedding space này, chạy embedding service riêng tại `http://127.0.0.1:8001/v1`:
+
+```bash
+cd apps/backend
+../../venv/bin/pip install -r requirements-embedding-service.txt
+../../venv/bin/python scripts/serve_openclip_embeddings.py
+```
+
+Gợi ý vận hành:
+- Đặt `EMBED_HOST`, `EMBED_PORT` trong `.env` root nếu cần đổi host/port.
+- Đặt `openclip_model`, `openclip_pretrained`, `openclip_device`, `openclip_max_batch` trong `configs/model_registry.yaml`.
+- Script tự load `.env` (fallback `.env.example`) để tìm `MODEL_REGISTRY_PATH`.
+- Có thể override bằng `--env-file /path/to/file.env`.
+
+Kiểm tra endpoint trước khi chạy retrieval:
+
+```bash
+../../venv/bin/python scripts/check_embedding_endpoint.py \
+  --base-url http://127.0.0.1:8001/v1 \
+  --model ViT-B-32-laion2b_s34b_b79k \
+  --expected-dim 512
+```
+
+Nếu pass, giữ `configs/model_registry.yaml` như sau:
+
+```yaml
+embedders:
+  openai_embedding:
+    provider: openai_compatible
+    base_url: http://localhost:8001/v1
+    model: ViT-B-32-laion2b_s34b_b79k
+    openclip_model: ViT-B-32
+    openclip_pretrained: laion2b_s34b_b79k
+    openclip_device: cpu
+    openclip_max_batch: 32
+    dim: 512
+    l2_normalize: true
+    enabled: true
+```
+
 ## 6. Sửa pipeline preprocessing
 
 Pipeline stage list nằm ở:
