@@ -1,0 +1,89 @@
+schema_version: 1
+
+defaults:
+  source_type: kaggle
+  source_version: kaggle_current
+  include_patterns:
+    - "**/*.mp4"
+    - "**/*.avi"
+    - "**/*.mov"
+    - "**/*.mkv"
+    - "**/*.zip"
+  exclude_patterns:
+    - "**/.DS_Store"
+    - "**/__MACOSX/**"
+  gcs:
+    raw_prefix: raw/source=kaggle
+    control_prefix: manifests/pipeline=kaggle_ingest
+    logs_prefix: logs/pipeline=kaggle_ingest
+    quarantine_prefix: quarantine
+
+datasets:
+  - source_id: l21_l30_ai_challenge_2025
+    display_name: AI Challenge 2025 - L21 to L30
+    source_type: kaggle
+    enabled: true
+    dataset_ref: aresusayhi/ai-challenge-2025
+    dataset_url: https://www.kaggle.com/datasets/aresusayhi/ai-challenge-2025
+    kaggle_mount_path: /kaggle/input/ai-challenge-2025
+    dataset_id: ai_challenge_2025
+    expected_batches:
+      - L21
+      - L22
+      - L23
+      - L24
+      - L25
+      - L26
+      - L27
+      - L28
+      - L29
+      - L30
+    batch_detection:
+      strategy: regex
+      pattern: "(?i)(?:^|[/_.-])(L2[1-9]|L30)(?:[/_.-]|$)"
+
+  - source_id: k01_k10_data_video_batch_2_1
+    display_name: Data Video Batch 2.1 - K01 to K10
+    source_type: kaggle
+    enabled: true
+    dataset_ref: tuktuai/data-video-batch-2-1
+    dataset_url: https://www.kaggle.com/datasets/tuktuai/data-video-batch-2-1
+    kaggle_mount_path: /kaggle/input/data-video-batch-2-1
+    dataset_id: data_video_batch_2_1
+    expected_batches:
+      - K01
+      - K02
+      - K03
+      - K04
+      - K05
+      - K06
+      - K07
+      - K08
+      - K09
+      - K10
+    batch_detection:
+      strategy: regex
+      pattern: "(?i)(?:^|[/_.-])(K0[1-9]|K10)(?:[/_.-]|$)"
+
+  - source_id: k11_k20_data_video_batch_2_2
+    display_name: Data Video Batch 2.2 - K11 to K20
+    source_type: kaggle
+    enabled: true
+    dataset_ref: tuktuai/data-video-batch2-2
+    dataset_url: https://www.kaggle.com/datasets/tuktuai/data-video-batch2-2
+    kaggle_mount_path: /kaggle/input/data-video-batch2-2
+    dataset_id: data_video_batch2_2
+    expected_batches:
+      - K11
+      - K12
+      - K13
+      - K14
+      - K15
+      - K16
+      - K17
+      - K18
+      - K19
+      - K20
+    batch_detection:
+      strategy: regex
+      pattern: "(?i)(?:^|[/_.-])(K1[1-9]|K20)(?:[/_.-]|$)"
