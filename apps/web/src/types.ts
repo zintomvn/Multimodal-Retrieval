@@ -63,3 +63,40 @@ export interface SubmissionRow {
   frame_indices: number[];
   answer?: string | null;
 }
+
+// ─── Ingest job ───
+
+export type IngestJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export interface IngestJobStartRequest {
+  dataset_id?: string;
+  manifest_path?: string;
+  mode: "real" | "mock";
+}
+
+export interface IngestJobStartResponse {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface IngestJobPollResponse {
+  id: string;
+  status: IngestJobStatus;
+  progress: number;
+  message: string | null;
+}
+
+// ─── Cloud upload jobs ───
+
+export interface GCSUploadJobRequest {
+  source_path: string;
+  source_type: "folder" | "zip";
+  dataset_id?: string;
+}
+
+export interface MilvusUploadJobRequest {
+  features_file: string;
+  collection?: string;
+  dataset_id?: string;
+}

@@ -36,6 +36,27 @@ class MilvusVectorSearchClient:
         self.client.upsert(collection_name=collection, data=data)
         return len(data)
 
+    def ensure_collection(self, name: str, dim: int) -> None:
+        """Create the collection with HNSW/COSINE index if it does not exist."""
+        from pymilvus import DataType, MilvusClient
+
+        if self.client.has_collection(name):
+            return
+
+        schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=True)
+        schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=64)
+        schema.add_field("vector", DataType.FLOAT_VECTOR, dim=dim)
+
+        index_params = MilvusClient.prepare_index_params()
+        index_params.add_index(
+            field_name="vector",
+            metric_type="COSINE",
+            index_type="HNSW",
+            params={"M": 16, "efConstruction": 200},
+        )
+
+        self.client.create_collection(name, schema=schema, index_params=index_params)
+
     def _to_filter_expr(self, filters: dict) -> str:
         parts = []
         for key, value in filters.items():

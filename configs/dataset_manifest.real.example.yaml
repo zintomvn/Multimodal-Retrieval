@@ -1,0 +1,44 @@
+# Dataset manifest for AIC 2026 — real data ingestion
+# Copy this file, fill in your paths, then run:
+#   POST http://localhost:8000/api/ingest/jobs
+#   {"manifest_path": "configs/dataset_manifest.yaml", "mode": "real"}
+
+# Root directory containing all keyframes and features (absolute or relative to backend working dir)
+root: /absolute/path/to/your/data
+
+dataset:
+  name: aic2026       # must be unique per (name, version) pair
+  version: "1.0"
+
+videos:
+  # Each entry = one video clip from the competition dataset
+  - video_code: L01_V001                          # matches the code used in submission answers
+    fps: 25
+    duration_ms: 120000
+    width: 1920
+    height: 1080
+    keyframes_dir: Keyframes/L01/L01_V001         # relative to root — folder of JPG/PNG frames
+    features_file: Features/L01/L01_V001.npy      # optional: pre-computed CLIP vectors (.npy shape NxD)
+
+  - video_code: L01_V002
+    fps: 25
+    duration_ms: 180000
+    keyframes_dir: Keyframes/L01/L01_V002
+    features_file: Features/L01/L01_V002.npy
+
+  # Add more videos …
+
+# ─── Notes ───────────────────────────────────────────────────────────────────
+# keyframes_dir: folder with frame images named like 0001.jpg, 0002.jpg, …
+#   Frame index is parsed from the filename digits (e.g. "00123.jpg" → idx 123).
+#   Frames are sorted alphabetically, so naming must be zero-padded.
+#
+# features_file: pre-extracted CLIP embedding matrix (.npy, float32, shape [N, D]).
+#   Row i corresponds to the i-th frame in sorted order.
+#   If omitted or file missing → CLIP model runs locally (requires transformers + torch).
+#
+# Pipeline stages executed in order:
+#   dataset_scan  → registers Dataset / Video / Frame rows in PostgreSQL
+#   embedding     → loads .npy or runs CLIP on local images
+#   gcs_upload    → uploads frame images to GCS, updates image_uri → GCS key
+#   milvus_index  → upserts all embedding vectors into Milvus "frames" collection
