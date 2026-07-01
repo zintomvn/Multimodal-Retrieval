@@ -242,6 +242,10 @@ demo
 
 # Env
 .env
+env*
+
+# Local cloud service account keys
+gen-lang-client-*.json
 
 # Agent and Skill
 .agents

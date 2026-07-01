@@ -258,36 +258,160 @@ Mở modal **Upload to cloud** từ nút trên giao diện web để đẩy dữ
 
 Giới hạn upload từ browser: **2 GB**. File lớn hơn dùng server path hoặc script Kaggle bên dưới.
 
-### 8.4 Upload Video Từ Kaggle Lên GCS (Không Cần Download Về Máy)
+### 8.4 Pipeline Ingest GCS Ưu Tiên Kaggle
 
-Dùng script `scripts/upload_kaggle_to_gcs.py` chạy trực tiếp trên Kaggle Notebook — dataset đã được mount sẵn trên server Kaggle, không có byte nào đi qua máy cá nhân.
+Pipeline chính để đẩy 3 bộ data lên Google Cloud Storage là `scripts/upload_kaggle_to_gcs.py`. Script này chạy được ngay trên Kaggle Notebook và tạo run artifacts để giám sát: `manifest.jsonl`, `summary.json`, `errors.jsonl`, `metrics.csv`, `ingest.log`.
 
-**Chuẩn bị trên Kaggle:**
+Nguồn data được khai báo trong `configs/data_ingestion_sources.yaml`; script không còn fallback sang danh sách dataset hardcode trong Python. Mỗi source cần có `source_id`, `dataset_id`, `kaggle_mount_path`, `expected_batches`, `batch_detection`, và có thể override `gcs.raw_prefix`.
 
-1. Mở dataset → **New Notebook** → dataset tự mount tại `/kaggle/input/ai-challenge-2025/`.
-2. Settings → Internet → **On**.
-3. Add Kaggle Secrets:
-   - `GCS_BUCKET` — tên GCS bucket.
-   - `GCS_CREDENTIALS_JSON` — toàn bộ nội dung JSON của service account key.
+| Source id | Kaggle dataset | Batch |
+| --- | --- | --- |
+| `l21_l30_ai_challenge_2025` | `aresusayhi/ai-challenge-2025` | `L21-L30` |
+| `k01_k10_data_video_batch_2_1` | `tuktuai/data-video-batch-2-1` | `K01-K10` |
+| `k11_k20_data_video_batch_2_2` | `tuktuai/data-video-batch2-2` | `K11-K20` |
 
-**Chạy trong Notebook:**
+Chuẩn bị trên Kaggle:
+
+1. Tạo Notebook từ dataset cần ingest và bật **Internet = On**.
+2. Add Kaggle Secrets:
+   - `GCS_BUCKET`: tên bucket GCS.
+   - `GCS_CREDENTIALS_JSON`: nội dung JSON của service account có quyền upload vào bucket.
+3. Đưa code ingest và config lên Kaggle. Script cần đọc được file YAML `configs/data_ingestion_sources.yaml`; nếu chạy từ repo đầy đủ thì không cần truyền `--config`, còn nếu chỉ upload riêng script/YAML thì phải truyền path YAML bằng `--config`.
+4. Cài dependency:
 
 ```python
-# Cell 1
-!pip install google-cloud-storage tqdm -q
-
-# Cell 2 — paste nội dung scripts/upload_kaggle_to_gcs.py vào đây
-# hoặc:
-!python upload_kaggle_to_gcs.py
+!pip install google-cloud-storage pyyaml tqdm -q
 ```
 
-Chỉnh `GCS_PREFIX`, `VIDEOS_DIR`, và `WORKERS` trong block `CONFIG` đầu file trước khi chạy.
+Layout khuyến nghị trên Kaggle nếu upload/clone cả repo:
 
-- `SKIP_EXISTING = True` cho phép chạy lại an toàn nếu bị gián đoạn.
-- `upload_from_filename()` streaming — không OOM với video lớn.
-- GCS key format giữ nguyên cấu trúc thư mục gốc: `{GCS_PREFIX}/{video_folder}/{filename}`.
+```text
+/kaggle/working/Multimodal-Retrieval/
+├── scripts/upload_kaggle_to_gcs.py
+└── configs/data_ingestion_sources.yaml
+```
 
-### 8.5 Export Submission
+Khi đó chạy từ repo root:
+
+```python
+%cd /kaggle/working/Multimodal-Retrieval
+!python scripts/upload_kaggle_to_gcs.py --list-sources
+```
+
+Nếu chỉ upload riêng file script và YAML, truyền config rõ ràng:
+
+```python
+!python /kaggle/working/upload_kaggle_to_gcs.py \
+  --config /kaggle/input/your-config-dataset/data_ingestion_sources.yaml \
+  --list-sources
+```
+
+Kiểm tra source và batch mapping trước khi upload:
+
+```python
+!python scripts/upload_kaggle_to_gcs.py --list-sources
+
+!python scripts/upload_kaggle_to_gcs.py \
+  --source-id l21_l30_ai_challenge_2025 \
+  --batches L21 \
+  --dry-run \
+  --max-files 5
+```
+
+Nếu dùng file env local, truyền trực tiếp file đó:
+
+```powershell
+python scripts\upload_kaggle_to_gcs.py `
+  --env-file "env(Thắng -30_6 updated)" `
+  --source-id l21_l30_ai_challenge_2025 `
+  --batches L21 `
+  --dry-run `
+  --max-files 5
+```
+
+File env cần có các key:
+
+```text
+GCS_BUCKET=aic_ai_2026
+GCS_CREDENTIALS_FILE=apps\secrets\gen-lang-client-0547522732-410672fac05f.json
+GCS_PUBLIC_URL=https://storage.googleapis.com/aic_ai_2026
+```
+
+Nếu `GCS_CREDENTIALS_FILE` là relative path, script sẽ ưu tiên resolve từ thư mục chứa env-file. Đảm bảo file JSON thật sự nằm ở `apps\secrets\...`; folder này đang được `.gitignore` để tránh commit credential.
+
+Upload từng batch:
+
+```python
+!python scripts/upload_kaggle_to_gcs.py \
+  --source-id l21_l30_ai_challenge_2025 \
+  --batches L21,L22 \
+  --workers 4
+
+!python scripts/upload_kaggle_to_gcs.py \
+  --source-id k01_k10_data_video_batch_2_1 \
+  --batches K01 \
+  --workers 4
+
+!python scripts/upload_kaggle_to_gcs.py \
+  --source-id k11_k20_data_video_batch_2_2 \
+  --batches K11 \
+  --workers 4
+```
+
+Tham số quan trọng:
+
+| Tham số | Ý nghĩa |
+| --- | --- |
+| `--batches L21,L22` | Chọn batch cần ingest; dùng `all` để chạy toàn bộ source. |
+| `--input-root /path/to/data` | Override mount path nếu Kaggle mount khác mặc định. |
+| `--gcs-prefix raw/source=kaggle` | Override prefix raw trong bucket. |
+| `--max-files 10` | Smoke test với số file giới hạn. |
+| `--dry-run` | Chỉ tạo manifest/summary, không upload. |
+| `--skip-existing` | Mặc định bật; chạy lại an toàn nếu bị gián đoạn. |
+| `--no-skip-existing --overwrite` | Chỉ dùng khi có chủ ý ghi đè object cũ. |
+
+GCS key mặc định:
+
+```text
+raw/source=kaggle/dataset=<dataset_id>/source_version=<source_version>/batch=<batch_id>/original/<relative_path>
+```
+
+Report vận hành chi tiết: `docs/data processing/cloud/kaggle_to_cloud_report.md`.
+
+Run artifacts local nằm trong `ingestion_runs/<run_id>/`. Khi upload thật, script cũng đẩy artifacts lên:
+
+```text
+manifests/pipeline=kaggle_ingest/run_id=<run_id>/
+logs/pipeline=kaggle_ingest/run_id=<run_id>/
+```
+
+`metrics.csv` có thể dùng để làm dashboard theo `run_id`, `source_id`, `batch_id`, `status`, `size_bytes`, `bytes_uploaded`, `duration_ms`. `errors.jsonl` là danh sách file lỗi để retry riêng.
+
+### 8.5 Skeleton Monitoring Airflow / Cloud Composer
+
+DAG mẫu nằm tại `dags/data_ingestion_kaggle.py`. DAG này gọi cùng script `upload_kaggle_to_gcs.py`, nên format manifest/log/metrics giống Kaggle Notebook.
+
+Trong Cloud Composer, đặt các biến môi trường tùy theo cách deploy repo:
+
+```text
+INGESTION_REPO_ROOT=/home/airflow/gcs/data/Multimodal-Retrieval
+INGESTION_CONFIG_PATH=/home/airflow/gcs/data/Multimodal-Retrieval/configs/data_ingestion_sources.yaml
+INGESTION_RUN_DIR=/home/airflow/gcs/data/ingestion_runs
+```
+
+DAG cũng có param `env_file`; có thể đặt tới file env đã upload vào Composer worker nếu không muốn khai báo `GCS_BUCKET`/credential bằng environment variables.
+
+Dashboard tối thiểu:
+
+- Trạng thái upload theo batch: đếm `uploaded`, `skipped`, `failed`.
+- Số byte đã upload theo batch và run.
+- Thời lượng theo file và theo run.
+- Bảng lỗi từ `errors.jsonl` / Cloud Logging.
+- Trạng thái Airflow DAG run và số lần retry của task.
+
+Cloud Monitoring có thể tạo log-based metrics từ `ingest.log` hoặc dùng `metrics.csv` trong GCS làm nguồn cho Looker Studio/BigQuery sau này.
+
+### 8.6 Export Submission
 
 Qua frontend:
 
