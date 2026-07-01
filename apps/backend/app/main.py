@@ -47,6 +47,11 @@ app.include_router(retrieval_router)
 app.include_router(media_router)
 app.include_router(submissions_router)
 
+if settings.storage_provider == "local":
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/api/media/static", StaticFiles(directory=settings.data_root), name="static")
+
 
 @app.get("/healthz")
 def healthz() -> dict:

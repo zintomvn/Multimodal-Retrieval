@@ -196,7 +196,7 @@ Blueprint đã mô tả cấu trúc này trong `docs/blueprint/design.md`.
 - Result grid phải có score breakdown để searcher hiểu lý do ranking.
 - Context viewer luôn hiển thị frame trước/sau để kiểm chứng nhanh.
 - Selected tray là nguồn dữ liệu duy nhất để export submission.
-- Không đưa text hướng dẫn dài vào UI; tài liệu vận hành nằm trong `docs/runbook.md`.
+- Không đưa text hướng dẫn dài vào UI; tài liệu vận hành nằm trong `docs/backend/runbooks/operations.md`.
 
 ## 10. Validation và build checks
 

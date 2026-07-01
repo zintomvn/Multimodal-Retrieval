@@ -1,0 +1,8 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+httpx==0.28.1
+numpy==2.2.6
+open_clip_torch==2.26.1
+torch>=2.3.0
+python-dotenv==1.0.1
+PyYAML==6.0.2

@@ -65,12 +65,44 @@ apps/backend/
    - tách token,
    - sinh query variants nếu bật multiperspective expansion,
    - nhận diện temporal events nếu có.
-4. Retrieval service rank frame bằng hybrid score:
-   - semantic overlap mock,
-   - metadata score từ annotations,
-   - quality bonus.
+4. Retrieval service chạy flow thật:
+   - `embed_text(query)` từ model runtime,
+   - Milvus ANN trên collection `keyframe_embeddings`,
+   - Elasticsearch multi-match trên index `keyframe_annotations`,
+   - gộp điểm với quality score và xếp hạng final.
 5. Với QA, `VisualQaModel` sinh answer ngắn từ evidence text và answer hint.
-6. Kết quả được lưu vào `retrieval_results`, trả về frontend kèm score breakdown.
+6. Kết quả được lưu vào `retrieval_results`, trả về frontend kèm `score_breakdown`.
+
+`score_breakdown` chuẩn M3 cho `/api/retrieval/search` và `/api/retrieval/qa`:
+
+```json
+{
+  "semantic_score": 0.9342,
+  "text_score": 0.7125,
+  "quality_score": 0.95,
+  "final_score": 0.8266
+}
+```
+
+M4 fusion + filter hỗ trợ thêm trong `SearchRequest.options`:
+
+```json
+{
+  "video_codes": ["L30_V001"],
+  "time_range_start_seconds": 0,
+  "time_range_end_seconds": 120,
+  "objects": ["person", "motorbike"],
+  "scene": "nguoi ao do",
+  "debug_filters": true
+}
+```
+
+- Fusion profile: weighted sum + RRF (theo `configs/retrieval_profiles.yaml`).
+- Mỗi result có `score_breakdown.filter_debug` để debug lý do match filter.
+
+M5 hardening:
+- QA answer luôn được normalize và giới hạn tối đa 100 ký tự.
+- TRAKE response có ordering metadata ổn định trong `score_breakdown.ordering` và `sequence_frames[*].order_index`.
 
 ### 3.3 TRAKE retrieval
 
@@ -160,6 +192,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `RETRIEVAL_PROFILES_PATH` | `configs/retrieval_profiles.yaml` | File trọng số retrieval. |
 | `DATA_ROOT` | `./data` | Nơi ghi submissions/artifacts. |
 | `MOCK_MODE` | `true` | Bật mock mode khi chưa có model thật. |
+| `MOCK_EMBEDDING_DIM` | `512` | Số chiều vector cho mock embedder (đặt khớp dimension Milvus collection). |
 
 ## 7. API surface
 
@@ -170,7 +203,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `GET` | `/api/datasets` | Liệt kê dataset. |
 | `POST` | `/api/datasets` | Tạo dataset draft. |
 | `GET` | `/api/models` | Xem model registry và enabled models. |
-| `POST` | `/api/ingest/jobs` | Tạo ingest job. |
+| `POST` | `/api/ingest/jobs` | Tạo ingest job (demo import pipeline thật hoặc mock). |
 | `GET` | `/api/jobs/{job_id}` | Xem trạng thái job. |
 | `POST` | `/api/retrieval/search` | KIS/freeform search. |
 | `POST` | `/api/retrieval/qa` | QA retrieval + answer. |
@@ -195,9 +228,75 @@ Quy trình chuẩn:
 5. Chạy lại ingest/index.
 6. Benchmark với `scripts/benchmark_retrieval.py`.
 
-Tài liệu chi tiết: `docs/model_pipeline_guide.md`.
+Tài liệu chi tiết: `docs/backend/guides/model_pipeline.md`.
 
 ## 9. Development workflow
+
+### 9.0 M2 ingestion pipeline (demo data)
+
+Cấu trúc `demo/` backend đang yêu cầu (theo ingest service hiện tại):
+
+```text
+demo/
+├── per_video_summary.csv
+├── shot_segments.csv
+├── model_info.json
+├── features/
+│   ├── map-keyframes/
+│   │   ├── L30_V001.csv
+│   │   └── ... (mỗi video 1 file)
+│   ├── vit-ViT-B-32-laion2b_s34b_b79k/
+│   │   ├── L30_V001.npy
+│   │   └── ... (mỗi video 1 file)
+│   ├── map-event/
+│   │   ├── L30_V001.csv
+│   │   └── ... (mỗi video 1 file)
+│   └── events/
+│       ├── L30_V001.npy
+│       └── ... (mỗi video 1 file)
+├── annotations/
+│   ├── L30_V001/annotations.jsonl
+│   └── ... (mỗi video 1 thư mục)
+└── frames/
+    ├── L30_V001/*.jpg
+    └── ... (mỗi video 1 thư mục)
+```
+
+Ghi chú quan trọng:
+- `annotations.jsonl` ở root `demo/` là legacy context, không phải nguồn ingest mặc định.
+- `demo/Event Embedding/*` cũng là legacy context, không phải nguồn ingest mặc định.
+- Ingest sẽ fail nếu thiếu các nhánh bắt buộc ở trên.
+
+Chạy ingest full:
+
+```powershell
+cd apps\backend
+python scripts/import_all.py --dataset-root ..\..\demo
+```
+
+Chạy từng phần:
+
+```powershell
+python scripts/import_pg.py --dataset-root ..\..\demo
+python scripts/import_media.py --dataset-root ..\..\demo
+python scripts/import_milvus.py --dataset-root ..\..\demo
+python scripts/import_es.py --dataset-root ..\..\demo
+```
+
+Test gate M2:
+
+```powershell
+pytest tests/test_ingestion_pipeline.py -q
+```
+
+Test docs với Supabase + Zilliz + Elasticsearch (không dùng mock vector/text):
+
+```powershell
+$env:MOCK_MODE="false"
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Mở `http://localhost:8000/docs` và gọi `POST /api/retrieval/search`.
 
 ### 9.1 Smoke test nhanh trong container
 
@@ -215,10 +314,70 @@ $env:PYTHONDONTWRITEBYTECODE="1"
 python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('apps/backend/app').rglob('*.py')]; print('syntax ok')"
 ```
 
+### 9.5 Test gate M3 (core retrieval)
+
+```powershell
+pytest tests/test_retrieval_pipeline.py -q
+```
+
+Nội dung gate:
+- KIS trả về breakdown chuẩn `semantic_score/text_score/quality_score/final_score`.
+- QA trả về answer hợp lệ.
+- Persist `query_runs` + `retrieval_results` đúng thứ hạng và kiểm tra input validation.
+
+### 9.6 Test gate M4 (fusion and filtering)
+
+```powershell
+pytest tests/test_fusion_filtering.py -q
+```
+
+Nội dung gate:
+- Weighted profile và RRF profile cho thứ tự khác nhau theo fixture.
+- Filter `video_codes/time_range/objects/scene` loại đúng kết quả ngoài phạm vi.
+- `score_breakdown.filter_debug` có metadata debug filter.
+
+### 9.7 Test gate M5 (qa-trake + submission)
+
+```powershell
+pytest tests/test_qa_trake_hardening.py -q
+pytest tests/test_submission_hardening.py -q
+```
+
+Nội dung gate:
+- QA answer được post-process <= 100 ký tự.
+- TRAKE sequence có ordering metadata ổn định giữa các lần gọi.
+- Submission validator trả report chi tiết lỗi theo dòng (`violations`).
+- ZIP export đúng cấu trúc `submission/*.csv`, UTF-8, không header.
+
+### 9.8 E2E test qua FastAPI `/docs` (cloud stack thật)
+
+Runbook chi tiết (payload mẫu + pass/fail criteria + SQL verify):
+
+- `docs/backend/milestones/e2e_fastapi_docs_runbook.md`
+
 ### 9.3 Build image
 
 ```powershell
 docker compose build backend
+```
+
+### 9.4 Migration workflow (M1 db-storage)
+
+```powershell
+cd apps\backend
+alembic upgrade head
+alembic downgrade base
+alembic upgrade head
+```
+
+Kiểm tra nhanh core schema:
+
+```sql
+select count(*) from datasets;
+select count(*) from videos;
+select count(*) from shots;
+select count(*) from keyframes;
+select count(*) from events;
 ```
 
 ## 10. Quy ước code

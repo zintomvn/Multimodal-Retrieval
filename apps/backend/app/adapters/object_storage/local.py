@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+class LocalObjectStorageClient:
+    """Local file system object storage for dev mode."""
+
+    def __init__(self, data_root: Path | str, public_base_url: str = "/api/media/static") -> None:
+        self.data_root = Path(data_root)
+        self.public_base_url = public_base_url.rstrip("/")
+        self.data_root.mkdir(parents=True, exist_ok=True)
+
+    def put_object(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+        file_path = self.data_root / key
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(data)
+        return key
+
+    def get_presigned_url(self, key: str, expires_in: int = 3600) -> str:
+        return self.public_url(key)
+
+    def delete_object(self, key: str) -> None:
+        file_path = self.data_root / key
+        if file_path.exists():
+            file_path.unlink()
+
+    def public_url(self, key: str) -> str:
+        return f"{self.public_base_url}/{key}"

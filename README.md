@@ -62,6 +62,7 @@ Multimodal-Retrieval/
 ├── docs/
 │   ├── blueprint/                # Proposal + technical design
 │   ├── tasks/                    # Milestone/phase task plans
+│   ├── database_schema_demo_v1.md # Schema contract bám dữ liệu demo
 │   ├── database_erd.md           # PostgreSQL ERD
 │   ├── model_pipeline_guide.md   # Hướng dẫn cắm model/thay pipeline
 │   └── runbook.md                # Lệnh vận hành thường dùng
@@ -341,7 +342,7 @@ Sau khi đổi embedding/OCR/ASR/caption model, cần chạy lại ingest/index.
 
 Xem hướng dẫn chi tiết:
 
-- `docs/model_pipeline_guide.md`
+- `docs/backend/guides/model_pipeline.md`
 - `models/README.md`
 
 ## 10. Test Và Verification
@@ -380,9 +381,10 @@ Test plan chi tiết:
 | --- | --- |
 | `docs/blueprint/proposal.md` | Đề xuất hệ thống, mục tiêu, phạm vi. |
 | `docs/blueprint/design.md` | Thiết kế kỹ thuật, module, schema, ERD. |
-| `docs/database_erd.md` | ERD PostgreSQL riêng để xem nhanh. |
-| `docs/model_pipeline_guide.md` | Cách bỏ model vào và sửa pipeline. |
-| `docs/runbook.md` | Lệnh vận hành thường dùng. |
+| `docs/backend/specs/database_schema_demo_v1.md` | Schema contract mục tiêu cho dữ liệu `demo/`. |
+| `docs/backend/specs/database_erd.md` | ERD PostgreSQL riêng để xem nhanh. |
+| `docs/backend/guides/model_pipeline.md` | Cách bỏ model vào và sửa pipeline. |
+| `docs/backend/runbooks/operations.md` | Lệnh vận hành thường dùng. |
 | `docs/tasks/milestone1.md` | Phân công nhóm và test milestone 1. |
 | `docs/tasks/phase1.md` | Checklist thực thi giai đoạn đầu. |
 | `apps/backend/README.md` | Tài liệu backend service. |
@@ -395,7 +397,7 @@ Test plan chi tiết:
 - Không commit raw dataset/video lớn.
 - Không commit generated submissions.
 - API thay đổi phải cập nhật `apps/backend/README.md` và `apps/web/src/types.ts`.
-- Pipeline/model thay đổi phải cập nhật `docs/model_pipeline_guide.md`.
+- Pipeline/model thay đổi phải cập nhật `docs/backend/guides/model_pipeline.md`.
 - Retrieval profile thay đổi phải ghi lý do trong PR hoặc task note.
 
 ## 13. Troubleshooting Nhanh
