@@ -12,8 +12,8 @@ embedders:
     model: ViT-B-32-laion2b_s34b_b79k
     openclip_model: ViT-B-32
     openclip_pretrained: laion2b_s34b_b79k
-    openclip_device: cpu
-    openclip_max_batch: 32
+    openclip_device: auto
+    openclip_max_batch: 8
     dim: 512
     l2_normalize: true
     enabled: true

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -99,6 +99,21 @@ def mock_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
     if thumbnail is not None:
         return FileResponse(path=str(thumbnail))
 
+    # Fallback 1: presigned URL via image_storage_key (reliable, works with private buckets)
+    if frame.image_storage_key:
+        try:
+            from app.core.deps import get_object_storage
+            object_storage = get_object_storage()
+            presigned = object_storage.get_presigned_url(frame.image_storage_key)
+            return RedirectResponse(url=presigned, status_code=307)
+        except Exception:
+            pass
+
+    # Fallback 2: public_url (best-effort, only works if bucket is public)
+    if frame.image_url:
+        return RedirectResponse(url=frame.image_url, status_code=307)
+
+    # Fallback 3: mock SVG
     title = f"{frame.video.video_code} / {frame.frame_idx}"
     caption = " ".join((annotation.text_value or "")[:80] for annotation in frame.annotations[:1])
     color_seed = abs(hash(frame.video.video_code)) % 360

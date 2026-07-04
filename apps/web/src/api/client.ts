@@ -6,6 +6,9 @@ import type {
   IngestJobStartRequest,
   IngestJobStartResponse,
   MilvusUploadJobRequest,
+  PipelineJobPollResponse,
+  PipelineJobStartRequest,
+  PipelineJobStartResponse,
   QueryType,
   SearchResponse,
   SubmissionRow
@@ -97,15 +100,30 @@ export async function startIngestJob(input: IngestJobStartRequest): Promise<Inge
   return requestJson<IngestJobStartResponse>("/api/ingest/jobs", {
     method: "POST",
     body: JSON.stringify({
-      dataset_id: input.dataset_id ?? null,
-      manifest_path: input.manifest_path ?? null,
-      mode: input.mode
+      mode: input.mode,
+      dataset_code: input.dataset_code ?? undefined,
+      dataset_name: input.dataset_name ?? undefined,
+      dataset_version: input.dataset_version ?? undefined,
+      dataset_root: input.dataset_root ?? undefined,
+      targets: input.targets ?? undefined,
+      dry_run: input.dry_run ?? false,
     })
   });
 }
 
 export async function getIngestJob(jobId: string): Promise<IngestJobPollResponse> {
   return requestJson<IngestJobPollResponse>(`/api/jobs/${jobId}`);
+}
+
+export async function startPipelineJob(input: PipelineJobStartRequest): Promise<PipelineJobStartResponse> {
+  return requestJson<PipelineJobStartResponse>("/api/pipeline/jobs", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function getPipelineJob(jobId: string): Promise<PipelineJobPollResponse> {
+  return requestJson<PipelineJobPollResponse>(`/api/jobs/${jobId}`);
 }
 
 export async function startGCSUpload(input: GCSUploadJobRequest): Promise<IngestJobStartResponse> {
