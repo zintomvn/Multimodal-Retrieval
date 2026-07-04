@@ -56,6 +56,21 @@ class R2ObjectStorageClient:
             return f"{self._public_base_url}/{key}"
         return self.get_presigned_url(key)
 
+    def list_objects(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
+        return keys
+
+    def download_to_file(self, key: str, local_path) -> None:
+        from pathlib import Path as _Path
+
+        dest = _Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        self._client.download_file(self._bucket, key, str(dest))
+
 
 @lru_cache(maxsize=1)
 def get_r2_client() -> R2ObjectStorageClient:

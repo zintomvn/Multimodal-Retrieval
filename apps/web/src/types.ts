@@ -69,9 +69,13 @@ export interface SubmissionRow {
 export type IngestJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
 
 export interface IngestJobStartRequest {
-  dataset_id?: string;
-  manifest_path?: string;
-  mode: "real" | "mock";
+  mode: "demo" | "mock";
+  dataset_code?: string;
+  dataset_name?: string;
+  dataset_version?: string;
+  dataset_root?: string;
+  targets?: string[];
+  dry_run?: boolean;
 }
 
 export interface IngestJobStartResponse {
@@ -81,6 +85,32 @@ export interface IngestJobStartResponse {
 }
 
 export interface IngestJobPollResponse {
+  id: string;
+  status: IngestJobStatus;
+  progress: number;
+  message: string | null;
+}
+
+// ─── Video pipeline job ───
+
+export interface PipelineJobStartRequest {
+  source_id: string;
+  source_dataset_id?: string;
+  dataset_code?: string;
+  dataset_name?: string;
+  dataset_version?: string;
+  batch_ids?: string[];
+  video_keys?: string[];
+  force_reprocess?: boolean;
+}
+
+export interface PipelineJobStartResponse {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface PipelineJobPollResponse {
   id: string;
   status: IngestJobStatus;
   progress: number;

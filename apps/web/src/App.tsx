@@ -22,33 +22,8 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { createAndExportSubmission, getFrameContext, getIngestJob, listDatasets, mediaUrl, runSearch, startGCSUpload, startIngestJob, startMilvusUpload, uploadFileToGCS, uploadFileToMilvus } from "./api/client";
-import type { Dataset, FrameContext, IngestJobStatus, QueryType, SearchResult, SubmissionRow } from "./types";
-
-type StageDisplayStatus = "pending" | "running" | "done" | "failed";
-
-const PIPELINE_STAGES = [
-  { id: "dataset_scan", label: "Dataset scan",  badge: null,      badgeLabel: null,    description: "Walks keyframes dir, registers Video/Frame rows in the database." },
-  { id: "embedding",    label: "Embedding",     badge: null,      badgeLabel: null,    description: "Loads pre-computed CLIP .npy vectors or runs CLIP model on frames." },
-  { id: "gcs_upload",  label: "GCS upload",    badge: "gcs",     badgeLabel: "GCS",   description: "Uploads frame JPG thumbnails to Google Cloud Storage." },
-  { id: "milvus_index",label: "Milvus index",  badge: "milvus",  badgeLabel: "Milvus",description: "Upserts CLIP embedding vectors into the Milvus collection for search." }
-] as const;
-
-function resolveStageStatuses(
-  status: IngestJobStatus | null,
-  progress: number
-): Record<string, StageDisplayStatus> {
-  const ids = ["dataset_scan", "embedding", "gcs_upload", "milvus_index"];
-  if (!status) return Object.fromEntries(ids.map((id) => [id, "pending" as const]));
-  if (status === "COMPLETED") return Object.fromEntries(ids.map((id) => [id, "done" as const]));
-  const runningIdx = Math.min(Math.floor(progress * 4), 3);
-  return Object.fromEntries(
-    ids.map((id, i) => [
-      id,
-      i < runningIdx ? "done" : i === runningIdx ? (status === "FAILED" ? "failed" : "running") : "pending"
-    ])
-  );
-}
+import { createAndExportSubmission, getFrameContext, getIngestJob, getPipelineJob, listDatasets, mediaUrl, runSearch, startGCSUpload, startIngestJob, startMilvusUpload, startPipelineJob, uploadFileToGCS, uploadFileToMilvus } from "./api/client";
+import type { Dataset, FrameContext, IngestJobStatus, PipelineJobPollResponse, QueryType, SearchResult, SubmissionRow } from "./types";
 
 const sampleQueries: Record<QueryType, string> = {
   KIS: "The clip shows an exhibition program with a royal-style decorative panel, dragon and cloud motifs, and the text PHU XUAN GIA DINH.",
@@ -97,14 +72,26 @@ export function App() {
 
   // ─── Ingest modal state ───
   const [ingestOpen, setIngestOpen] = useState(false);
-  const [manifestPath, setManifestPath] = useState("");
-  const [ingestMode, setIngestMode] = useState<"real" | "mock">("real");
-  const [targetDatasetId, setTargetDatasetId] = useState("");
+  const [ingestMode, setIngestMode] = useState<"demo" | "mock">("demo");
+  const [datasetRoot, setDatasetRoot] = useState("");
+  const [targetDatasetCode, setTargetDatasetCode] = useState("");
   const [ingestJobId, setIngestJobId] = useState<string | null>(null);
   const [ingestJobStatus, setIngestJobStatus] = useState<IngestJobStatus | null>(null);
   const [ingestJobProgress, setIngestJobProgress] = useState(0);
   const [ingestJobMessage, setIngestJobMessage] = useState("");
   const [ingestError, setIngestError] = useState<string | null>(null);
+
+  // ─── Pipeline modal state ───
+  const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [pipelineSourceId, setPipelineSourceId] = useState("l21_l30_ai_challenge_2025");
+  const [pipelineSourceDatasetId, setPipelineSourceDatasetId] = useState("");
+  const [pipelineBatchIds, setPipelineBatchIds] = useState("");
+  const [pipelineVideoKeys, setPipelineVideoKeys] = useState("");
+  const [pipelineJobId, setPipelineJobId] = useState<string | null>(null);
+  const [pipelineJobStatus, setPipelineJobStatus] = useState<IngestJobStatus | null>(null);
+  const [pipelineJobProgress, setPipelineJobProgress] = useState(0);
+  const [pipelineJobMessage, setPipelineJobMessage] = useState("");
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   useEffect(() => {
     const apply = () => {
@@ -138,7 +125,6 @@ export function App() {
 
   const isIngestRunning = ingestJobStatus === "PENDING" || ingestJobStatus === "RUNNING";
   const isIngestSettled = ingestJobStatus === "COMPLETED" || ingestJobStatus === "FAILED";
-  const stageStatuses = resolveStageStatuses(ingestJobStatus, ingestJobProgress);
 
   useEffect(() => {
     if (!ingestJobId || isIngestSettled) return;
@@ -165,6 +151,35 @@ export function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [ingestOpen, isIngestRunning]);
+
+  const isPipelineRunning = pipelineJobStatus === "PENDING" || pipelineJobStatus === "RUNNING";
+  const isPipelineSettled = pipelineJobStatus === "COMPLETED" || pipelineJobStatus === "FAILED";
+
+  useEffect(() => {
+    if (!pipelineJobId || isPipelineSettled) return;
+    const tick = async () => {
+      try {
+        const job = await getPipelineJob(pipelineJobId);
+        setPipelineJobStatus(job.status);
+        setPipelineJobProgress(job.progress);
+        setPipelineJobMessage(job.message ?? "");
+      } catch (err) {
+        setPipelineError(err instanceof Error ? err.message : "Polling failed");
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 1500);
+    return () => clearInterval(id);
+  }, [pipelineJobId, isPipelineSettled]);
+
+  useEffect(() => {
+    if (!pipelineOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isPipelineRunning) handlePipelineClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [pipelineOpen, isPipelineRunning]);
 
   useEffect(() => {
     if (!gcsJobId || isGcsSettled) return;
@@ -325,12 +340,12 @@ export function App() {
     setIngestJobId(null);
     setIngestJobStatus("PENDING");
     setIngestJobProgress(0);
-    setIngestJobMessage("Starting pipeline...");
+    setIngestJobMessage("Starting demo ingest...");
     try {
       const job = await startIngestJob({
-        dataset_id: targetDatasetId || undefined,
-        manifest_path: manifestPath.trim() || undefined,
-        mode: ingestMode
+        mode: ingestMode,
+        dataset_code: targetDatasetCode.trim() || undefined,
+        dataset_root: datasetRoot.trim() || undefined,
       });
       setIngestJobId(job.job_id);
       setIngestJobStatus(job.status as IngestJobStatus);
@@ -349,6 +364,44 @@ export function App() {
     setIngestJobProgress(0);
     setIngestJobMessage("");
     setIngestError(null);
+  }
+
+  async function handlePipelineStart() {
+    setPipelineError(null);
+    setPipelineJobId(null);
+    setPipelineJobStatus("PENDING");
+    setPipelineJobProgress(0);
+    setPipelineJobMessage("Starting video pipeline...");
+    try {
+      const batchIds = pipelineBatchIds.trim()
+        ? pipelineBatchIds.split(",").map((s) => s.trim()).filter(Boolean)
+        : undefined;
+      const videoKeys = pipelineVideoKeys.trim()
+        ? pipelineVideoKeys.split("\n").map((s) => s.trim()).filter(Boolean)
+        : undefined;
+      const job = await startPipelineJob({
+        source_id: pipelineSourceId.trim(),
+        source_dataset_id: pipelineSourceDatasetId.trim() || undefined,
+        batch_ids: batchIds,
+        video_keys: videoKeys,
+      });
+      setPipelineJobId(job.job_id);
+      setPipelineJobStatus(job.status as IngestJobStatus);
+      setPipelineJobMessage(job.message ?? "");
+    } catch (err) {
+      setPipelineJobStatus("FAILED");
+      setPipelineError(err instanceof Error ? err.message : "Failed to start pipeline");
+    }
+  }
+
+  function handlePipelineClose() {
+    if (isPipelineRunning) return;
+    setPipelineOpen(false);
+    setPipelineJobId(null);
+    setPipelineJobStatus(null);
+    setPipelineJobProgress(0);
+    setPipelineJobMessage("");
+    setPipelineError(null);
   }
 
   const isSearching = status === "Searching";
@@ -383,11 +436,19 @@ export function App() {
           </span>
           <button
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] text-[var(--text-2)] text-xs font-semibold shrink-0 transition-[background,color,border-color,box-shadow] duration-[140ms] hover:bg-[var(--accent-dim)] hover:border-[var(--border-acc)] hover:text-[var(--accent-hi)] hover:shadow-[0_0_0_3px_var(--accent-dim)]"
-            onClick={() => { setTargetDatasetId(datasetId); setIngestOpen(true); }}
-            aria-label="Open ingest data modal"
+            onClick={() => { setTargetDatasetCode(datasetId); setIngestOpen(true); }}
+            aria-label="Open demo ingest modal"
           >
             <Upload size={13} />
-            Ingest
+            Demo ingest
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] text-[var(--text-2)] text-xs font-semibold shrink-0 transition-[background,color,border-color,box-shadow] duration-[140ms] hover:bg-[var(--accent-dim)] hover:border-[var(--border-acc)] hover:text-[var(--accent-hi)] hover:shadow-[0_0_0_3px_var(--accent-dim)]"
+            onClick={() => setPipelineOpen(true)}
+            aria-label="Open video pipeline modal"
+          >
+            <Layers size={13} />
+            Run pipeline
           </button>
           <button
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] text-[var(--text-2)] text-xs font-semibold shrink-0 transition-[background,color,border-color,box-shadow] duration-[140ms] hover:bg-[var(--accent-dim)] hover:border-[var(--border-acc)] hover:text-[var(--accent-hi)] hover:shadow-[0_0_0_3px_var(--accent-dim)]"
@@ -786,15 +847,15 @@ export function App() {
           onClick={(e) => { if (e.target === e.currentTarget) handleIngestClose(); }}
           role="dialog"
           aria-modal="true"
-          aria-label="Ingest data"
+          aria-label="Demo ingest"
         >
           <div className="w-full max-w-[560px] max-h-[calc(100dvh-40px)] overflow-hidden flex flex-col rounded-[14px] border border-[var(--border-hi)] bg-[var(--bg-panel)] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_60px_var(--accent-glow)] animate-fade-up">
 
             {/* Header */}
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--border)] shrink-0">
               <div>
-                <h2 className="m-0 text-[15px] font-bold tracking-tight text-[var(--text-1)]">Ingest data</h2>
-                <p className="m-0 mt-0.5 font-mono text-[11px] text-[var(--text-3)]">Run the 4-stage ingestion pipeline for a dataset</p>
+                <h2 className="m-0 text-[15px] font-bold tracking-tight text-[var(--text-1)]">Demo ingest</h2>
+                <p className="m-0 mt-0.5 font-mono text-[11px] text-[var(--text-3)]">Ingest pre-computed demo data into the database</p>
               </div>
               <button
                 className="w-7 h-7 grid place-items-center rounded-[6px] border border-transparent text-[var(--text-3)] hover:bg-[var(--red-dim)] hover:border-[var(--red-bdr)] hover:text-[var(--red)] transition-[background,color,border-color] duration-[140ms]"
@@ -808,16 +869,14 @@ export function App() {
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-5 py-[18px]">
-
-              {/* Form */}
               <div className="grid gap-[13px]">
                 <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
-                  Manifest YAML path
+                  Dataset root path
                   <input
                     type="text"
-                    value={manifestPath}
-                    onChange={(e) => setManifestPath(e.target.value)}
-                    placeholder="/data/datasets/v3/manifest.yaml"
+                    value={datasetRoot}
+                    onChange={(e) => setDatasetRoot(e.target.value)}
+                    placeholder="/data/demo"
                     disabled={isIngestRunning}
                   />
                 </label>
@@ -826,85 +885,27 @@ export function App() {
                     Mode
                     <select
                       value={ingestMode}
-                      onChange={(e) => setIngestMode(e.target.value as "real" | "mock")}
+                      onChange={(e) => setIngestMode(e.target.value as "demo" | "mock")}
                       disabled={isIngestRunning}
                       className="rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] p-[7px_10px] text-[13px] font-medium text-[var(--text-1)] normal-case tracking-normal transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none"
                     >
-                      <option value="real">Real pipeline</option>
+                      <option value="demo">Demo pipeline</option>
                       <option value="mock">Mock / dry-run</option>
                     </select>
                   </label>
                   <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
-                    Dataset ID
+                    Dataset code
                     <input
                       type="text"
-                      value={targetDatasetId}
-                      onChange={(e) => setTargetDatasetId(e.target.value)}
-                      placeholder="auto-detect"
+                      value={targetDatasetCode}
+                      onChange={(e) => setTargetDatasetCode(e.target.value)}
+                      placeholder="l30-demo"
                       disabled={isIngestRunning}
                     />
                   </label>
                 </div>
               </div>
 
-              {/* Stage rail */}
-              <h3 className="m-0 mt-5 mb-2 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
-                Pipeline stages
-              </h3>
-              <div className="grid gap-0">
-                {PIPELINE_STAGES.map((stage, i) => {
-                  const stStatus = stageStatuses[stage.id] ?? "pending";
-                  const isLast = i === PIPELINE_STAGES.length - 1;
-                  const dotColors: Record<StageDisplayStatus, string> = {
-                    pending: "bg-[var(--border-hi)]",
-                    running: "bg-[var(--accent)] stage-dot-running",
-                    done: "bg-[var(--green)]",
-                    failed: "bg-[var(--red)]"
-                  };
-                  const subProgress = Math.min(Math.max(ingestJobProgress * 4 - i, 0), 1);
-                  return (
-                    <div key={stage.id} className="grid grid-cols-[28px_1fr] gap-x-3">
-                      {/* Rail */}
-                      <div className="flex flex-col items-center pt-[3px]">
-                        <div className={`w-[10px] h-[10px] rounded-full border-2 border-[var(--bg-panel)] shrink-0 ${dotColors[stStatus]}`} />
-                        {!isLast && <div className="w-px flex-1 min-h-3 bg-[var(--border)] my-[3px]" />}
-                      </div>
-                      {/* Body */}
-                      <div className={isLast ? "pb-1" : "pb-4"}>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center min-w-0">
-                            <strong className="text-[12.5px] font-semibold text-[var(--text-1)]">{stage.label}</strong>
-                            {stage.badge === "gcs" && (
-                              <span className="inline-grid place-items-center h-4 px-1.5 ml-[7px] rounded bg-blue-500/10 border border-blue-500/30 font-mono text-[9.5px] font-bold tracking-[0.04em] text-blue-400">
-                                {stage.badgeLabel}
-                              </span>
-                            )}
-                            {stage.badge === "milvus" && (
-                              <span className="inline-grid place-items-center h-4 px-1.5 ml-[7px] rounded bg-purple-500/10 border border-purple-500/30 font-mono text-[9.5px] font-bold tracking-[0.04em] text-purple-400">
-                                {stage.badgeLabel}
-                              </span>
-                            )}
-                          </div>
-                          <span className="shrink-0">
-                            {stStatus === "done"    && <CheckCircle2 size={14} className="text-[var(--green)]" />}
-                            {stStatus === "failed"  && <XCircle size={14} className="text-[var(--red)]" />}
-                            {stStatus === "running" && <Loader2 size={14} className="animate-spin-slow text-[var(--accent)]" />}
-                            {stStatus === "pending" && <Circle size={14} className="text-[var(--text-3)]" />}
-                          </span>
-                        </div>
-                        <p className="m-0 mt-[3px] font-mono text-[11px] text-[var(--text-3)] leading-[1.55]">{stage.description}</p>
-                        {stStatus === "running" && (
-                          <div className="h-[3px] rounded bg-[var(--border)] overflow-hidden mt-2 max-w-[320px]">
-                            <div className="stage-progress-fill" style={{ width: `${subProgress * 100}%` }} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Log line */}
               {(ingestJobMessage || ingestError) && (
                 <div className={`flex items-start gap-2 px-3 py-2 rounded-[7px] border mt-3 ${
                   isIngestSettled && ingestJobStatus === "COMPLETED"
@@ -936,12 +937,139 @@ export function App() {
                 className="primary-action"
                 style={{ width: "auto", paddingInline: "20px" }}
                 onClick={handleIngestStart}
-                disabled={isIngestRunning || !manifestPath.trim()}
+                disabled={isIngestRunning}
               >
                 {isIngestRunning
                   ? <Loader2 size={15} className="animate-spin-slow" />
                   : <Upload size={15} />}
-                {isIngestRunning ? "Running…" : "Start ingest"}
+                {isIngestRunning ? "Running…" : "Start demo ingest"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {pipelineOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[500] bg-black/70 backdrop-blur-md grid place-items-center p-5 animate-fade-up"
+          onClick={(e) => { if (e.target === e.currentTarget) handlePipelineClose(); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Run video pipeline"
+        >
+          <div className="w-full max-w-[560px] max-h-[calc(100dvh-40px)] overflow-hidden flex flex-col rounded-[14px] border border-[var(--border-hi)] bg-[var(--bg-panel)] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_60px_var(--accent-glow)] animate-fade-up">
+
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--border)] shrink-0">
+              <div>
+                <h2 className="m-0 text-[15px] font-bold tracking-tight text-[var(--text-1)]">Run video pipeline</h2>
+                <p className="m-0 mt-0.5 font-mono text-[11px] text-[var(--text-3)]">
+                  {"GCS raw video -> frames -> embeddings -> events"}
+                </p>
+              </div>
+              <button
+                className="w-7 h-7 grid place-items-center rounded-[6px] border border-transparent text-[var(--text-3)] hover:bg-[var(--red-dim)] hover:border-[var(--red-bdr)] hover:text-[var(--red)] transition-[background,color,border-color] duration-[140ms]"
+                onClick={handlePipelineClose}
+                disabled={isPipelineRunning}
+                aria-label="Close modal"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-[18px]">
+              <div className="grid gap-[13px]">
+                <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
+                  Source
+                  <select
+                    value={pipelineSourceId}
+                    onChange={(e) => setPipelineSourceId(e.target.value)}
+                    className="rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] p-[7px_10px] text-[13px] font-medium text-[var(--text-1)] normal-case tracking-normal transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none"
+                    disabled={isPipelineRunning}
+                  >
+                    <option value="l21_l30_ai_challenge_2025">AI Challenge 2025 - L21 to L30</option>
+                    <option value="k01_k10_data_video_batch_2_1">Data Video Batch 2.1 - K01 to K10</option>
+                    <option value="k11_k20_data_video_batch_2_2">Data Video Batch 2.2 - K11 to K20</option>
+                  </select>
+                </label>
+                <details className="rounded-[7px] border border-[var(--border)] bg-[var(--bg-raised)] px-3 py-2">
+                  <summary className="cursor-pointer font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
+                    Advanced
+                  </summary>
+                  <div className="grid gap-[13px] mt-3">
+                    <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
+                      Batch IDs (optional)
+                      <input
+                        type="text"
+                        value={pipelineBatchIds}
+                        onChange={(e) => setPipelineBatchIds(e.target.value)}
+                        placeholder="L21,L22 or leave empty for all"
+                        disabled={isPipelineRunning}
+                      />
+                    </label>
+                    <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
+                      Source dataset ID override
+                      <input
+                        type="text"
+                        value={pipelineSourceDatasetId}
+                        onChange={(e) => setPipelineSourceDatasetId(e.target.value)}
+                        placeholder="auto from source config"
+                        disabled={isPipelineRunning}
+                      />
+                    </label>
+                    <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
+                      Video keys override
+                      <textarea
+                        value={pipelineVideoKeys}
+                        onChange={(e) => setPipelineVideoKeys(e.target.value)}
+                        placeholder="one GCS object key per line"
+                        className="min-h-[80px] resize-y rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-panel)] p-[7px_10px] text-[12.5px] font-normal leading-[1.6] normal-case text-[var(--text-1)] transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none"
+                        disabled={isPipelineRunning}
+                      />
+                    </label>
+                  </div>
+                </details>
+              </div>
+
+              {(pipelineJobMessage || pipelineError) && (
+                <div className={`flex items-start gap-2 px-3 py-2 rounded-[7px] border mt-3 ${
+                  isPipelineSettled && pipelineJobStatus === "COMPLETED"
+                    ? "border-[var(--green-bdr)] bg-[var(--green-dim)]"
+                    : isPipelineSettled
+                    ? "border-[var(--red-bdr)] bg-[var(--red-dim)]"
+                    : "border-[var(--border)] bg-[var(--bg-raised)]"
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
+                    isPipelineSettled && pipelineJobStatus === "COMPLETED"
+                      ? "bg-[var(--green)]"
+                      : isPipelineSettled
+                      ? "bg-[var(--red)]"
+                      : "bg-[var(--accent)]"
+                  }`} />
+                  <p className="m-0 font-mono text-[11px] text-[var(--text-2)] leading-[1.55]">
+                    {pipelineError ?? pipelineJobMessage}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-[14px] shrink-0">
+              <button className="toggle" onClick={handlePipelineClose} disabled={isPipelineRunning && !isPipelineSettled}>
+                {isPipelineSettled ? "Close" : "Cancel"}
+              </button>
+              <button
+                className="primary-action"
+                style={{ width: "auto", paddingInline: "20px" }}
+                onClick={handlePipelineStart}
+                disabled={isPipelineRunning || !pipelineSourceId.trim()}
+              >
+                {isPipelineRunning
+                  ? <Loader2 size={15} className="animate-spin-slow" />
+                  : <Layers size={15} />}
+                {isPipelineRunning ? "Running…" : "Start pipeline"}
               </button>
             </div>
           </div>

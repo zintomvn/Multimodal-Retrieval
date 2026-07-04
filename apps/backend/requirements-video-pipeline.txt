@@ -1,0 +1,9 @@
+# Video pipeline dependencies - Phase 1 (embedding branch only)
+# Phase 2 annotation deps appended later
+torch
+torchvision
+opencv-python
+open_clip_torch
+Pillow
+numpy
+pyyaml

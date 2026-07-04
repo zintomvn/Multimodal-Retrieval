@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 
 class InMemoryObjectStorageClient:
     """In-memory object storage for mock/dev mode. Not safe for concurrent use."""
@@ -20,3 +22,14 @@ class InMemoryObjectStorageClient:
 
     def public_url(self, key: str) -> str:
         return f"{self._public_base_url}/{key}"
+
+    def list_objects(self, prefix: str) -> list[str]:
+        return [key for key in self._store if key.startswith(prefix)]
+
+    def download_to_file(self, key: str, local_path: Path | str) -> None:
+        dest = Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        data = self._store.get(key)
+        if data is None:
+            raise FileNotFoundError(f"Object not found: {key}")
+        dest.write_bytes(data)

@@ -122,6 +122,37 @@ Dừng stack:
 docker compose down
 ```
 
+## 5.1 Short Local Commands
+
+From the repository root, use these wrappers for local development:
+
+Backend:
+
+```powershell
+.\be
+```
+
+This uses the environment from `.env`. If `.env` points to Supabase/GCS, the backend will start against those remote services.
+
+Run DB migrations before starting the backend when the remote schema is not up to date:
+
+```powershell
+.\migrate
+```
+
+Frontend, in a second terminal:
+
+```powershell
+.\fe
+```
+
+URLs:
+
+| Service | URL |
+| --- | --- |
+| Frontend | `http://localhost:5173` |
+| Backend docs | `http://127.0.0.1:8010/docs` |
+
 ## 6. Chạy Backend Local
 
 Dùng SQLite để phát triển nhanh backend mà không cần Postgres:

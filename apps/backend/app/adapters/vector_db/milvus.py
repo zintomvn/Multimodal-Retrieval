@@ -21,7 +21,7 @@ class MilvusVectorSearchClient:
             data=[vector],
             limit=top_k,
             filter=filter_expr,
-            output_fields=["frame_id", "video_id", "frame_idx", "event_id", "model_version"],
+            output_fields=["frame_id", "video_id", "frame_idx", "event_id", "model_version", "keyframe_id", "dataset_id"],
         )
         hits: list[VectorHit] = []
         for hit in raw_hits[0] if raw_hits else []:

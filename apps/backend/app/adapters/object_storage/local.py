@@ -27,3 +27,23 @@ class LocalObjectStorageClient:
 
     def public_url(self, key: str) -> str:
         return f"{self.public_base_url}/{key}"
+
+    def list_objects(self, prefix: str) -> list[str]:
+        base = self.data_root / prefix
+        if not base.is_dir():
+            return []
+        return [
+            str(path.relative_to(self.data_root).as_posix())
+            for path in base.rglob("*")
+            if path.is_file()
+        ]
+
+    def download_to_file(self, key: str, local_path: Path | str) -> None:
+        import shutil
+
+        dest = Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src = self.data_root / key
+        if not src.exists():
+            raise FileNotFoundError(f"Object not found: {key}")
+        shutil.copy2(str(src), str(dest))
