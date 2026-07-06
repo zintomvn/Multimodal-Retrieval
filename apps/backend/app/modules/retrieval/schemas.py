@@ -59,3 +59,22 @@ class SearchResponse(BaseModel):
 class SelectResultsRequest(BaseModel):
     result_ids: list[str]
     selected: bool = True
+
+
+class QueryWeightAnalysisRequest(BaseModel):
+    query_text: str = Field(min_length=1)
+    query_type: QueryType = "KIS"
+    query_name: str | None = None
+    model_alias: str | None = None
+
+
+class QueryWeightAnalysisResponse(BaseModel):
+    query_name: str | None = None
+    query_type: QueryType
+    query_text: str
+    model_alias: str
+    weights: dict[str, float]
+    expanded_queries: list[str] = Field(default_factory=list)
+    resolved_profile: dict[str, float]
+    rationale: dict[str, str] = Field(default_factory=dict)
+    output_file: str

@@ -15,7 +15,18 @@ from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
 from app.modules.models.service import ModelRegistryService
-from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
+from app.modules.retrieval.schemas import (
+    QueryWeightAnalysisRequest,
+    ResultItem,
+    SearchOptions,
+    SearchRequest,
+    SearchResponse,
+)
+from app.modules.retrieval.weight_analysis import (
+    QueryWeightAnalyzerService,
+    heuristic_weight_payload,
+    resolved_profile_from_weights,
+)
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
 
@@ -62,6 +73,7 @@ class RetrievalService:
         self.model_registry = model_registry
         self.vector_client = vector_client
         self.text_client = text_client
+        self.weight_analyzer = QueryWeightAnalyzerService()
         self.settings = get_settings()
         self.profiles = self._load_profiles()
 
@@ -149,9 +161,14 @@ class RetrievalService:
         expansion_profile = profile.get("query_expansion", {})
         max_variants = int(expansion_profile.get("max_variants", 5))
         expansion_default_enabled = bool(expansion_profile.get("enabled_default", True))
+        weight_analysis = self._analyze_query(request, max_variants=max_variants, enabled=expansion_default_enabled)
         variants = [request.query_text]
         if request.options.use_query_expansion and expansion_default_enabled:
-            variants = self.model_registry.query_expander.expand(request.query_text, max_variants=max_variants)
+            expanded_queries = weight_analysis.get("expanded_queries") if isinstance(weight_analysis, dict) else None
+            if isinstance(expanded_queries, list) and expanded_queries:
+                variants = expanded_queries[:max_variants]
+            else:
+                variants = self.model_registry.query_expander.expand(request.query_text, max_variants=max_variants)
         temporal_events = request.options.temporal_events or self._split_temporal_events(request.query_text)
         return {
             "language": "auto",
@@ -159,8 +176,36 @@ class RetrievalService:
             "tokens": normalize_tokens(" ".join(variants)),
             "temporal_events": temporal_events,
             "profile": request.profile,
+            "weight_analysis": weight_analysis,
             "filters": self._normalized_filter_options(request.options),
         }
+
+    def _analyze_query(self, request: SearchRequest, *, max_variants: int, enabled: bool) -> dict[str, Any]:
+        if not request.options.use_query_expansion or not enabled:
+            payload = heuristic_weight_payload(request.query_text, request.query_type)
+            payload["model_alias"] = "heuristic"
+            return payload
+
+        analyzer_request = QueryWeightAnalysisRequest(
+            query_text=request.query_text,
+            query_type=request.query_type,
+            query_name=request.query_name,
+        )
+        try:
+            response = self.weight_analyzer.analyze(analyzer_request)
+        except Exception:
+            payload = heuristic_weight_payload(request.query_text, request.query_type)
+            payload["model_alias"] = "heuristic"
+            return payload
+
+        analysis = response.model_dump(mode="json")
+        expanded_queries = analysis.get("expanded_queries")
+        if isinstance(expanded_queries, list) and expanded_queries:
+            analysis["expanded_queries"] = expanded_queries[:max_variants]
+        else:
+            analysis["expanded_queries"] = [request.query_text]
+        analysis["resolved_profile"] = analysis.get("resolved_profile") or resolved_profile_from_weights(analysis.get("weights") or {})
+        return analysis
 
     def _split_temporal_events(self, query: str) -> list[str]:
         separators = [r"\bthen\b", r"\bafter that\b", r"\bsau đó\b", r"\btiếp theo\b", r";", r"\(e\d+\)\s*:"]
@@ -180,6 +225,7 @@ class RetrievalService:
             variants=normalized["variants"],
             profile_name=request.profile,
             options=request.options,
+            analysis=normalized.get("weight_analysis"),
             top_k=request.top_k,
         )
         items: list[ResultItem] = []
@@ -229,6 +275,7 @@ class RetrievalService:
                 variants=[event_query],
                 profile_name=request.profile,
                 options=request.options,
+                analysis=normalized.get("weight_analysis"),
                 top_k=80,
             )
             candidate_sets.append(
@@ -315,12 +362,17 @@ class RetrievalService:
         variants: list[str],
         profile_name: str,
         options: SearchOptions,
+        analysis: dict[str, Any] | None,
         top_k: int,
     ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
         text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
         quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
+        analysis_profile = (analysis or {}).get("resolved_profile") if isinstance(analysis, dict) else None
+        if isinstance(analysis_profile, dict):
+            semantic_weight = float(analysis_profile.get("semantic_weight", semantic_weight))
+            text_weight = float(analysis_profile.get("metadata_weight", text_weight))
         rrf_config = profile.get("rrf", {})
         rrf_enabled = bool(rrf_config.get("enabled", False))
         rrf_k = max(1.0, float(rrf_config.get("k", 60)))

@@ -1,0 +1,38 @@
+APP_ENV=cloud
+API_HOST=0.0.0.0
+API_PORT=8000
+WEB_PORT=5173
+
+# Supabase PostgreSQL (use SQLite for local mock dev)
+DATABASE_URL=postgresql+psycopg://postgres.uwshikwfehyxuqoldqrl:yLFdUGtIazb1FENW@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres?sslmode=require
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# Zilliz Cloud (managed Milvus)
+MILVUS_URI=https://in03-2d8e1803f1cb35e.serverless.aws-eu-central-1.cloud.zilliz.com
+MILVUS_TOKEN=3b01b4e3a5d496f4bfa70d69ff6eae780a1060e913a7423270dff2d2368885f95a20858e1620217d787efc5e5c24a301a3f1dd2c
+
+# Elasticsearch (local)
+ELASTICSEARCH_URL=http://elasticsearch:9200
+
+# Cloudflare R2
+S3_ENDPOINT=https://22b6a3e9197ee1013afb9fe2e8cddfae.r2.cloudflarestorage.com
+S3_ACCESS_KEY=7765ff05d88cd0739c64839e5cfd4215
+S3_SECRET_KEY=259df1d5bd59de40f93f474086e0e45b6fba0ca60656cf6f688678a4d2dba58e
+S3_BUCKET=aic-assets
+R2_PUBLIC_URL=https://pub-d087a5c1d10d441aab80593b24616b36.r2.dev
+
+STORAGE_PROVIDER=gcs
+
+## GG CLOUD
+GCS_BUCKET=aic_ai_2026
+GCS_CREDENTIALS_FILE=/app/data/demo/secrets/gen-lang-client-0547522732-410672fac05f.json
+GCS_PUBLIC_URL=https://storage.googleapis.com/aic_ai_2026
+
+MODEL_REGISTRY_PATH=/app/configs/model_registry.yaml
+RETRIEVAL_PROFILES_PATH=/app/configs/retrieval_profiles.yaml
+DATA_ROOT=/app/data
+MOCK_MODE=false
+CORS_ORIGINS=*
+
+VITE_API_BASE_URL=http://localhost:8000

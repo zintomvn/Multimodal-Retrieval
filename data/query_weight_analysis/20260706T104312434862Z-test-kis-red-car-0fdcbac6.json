@@ -1,0 +1,26 @@
+{
+  "query_name": "test-kis-red-car",
+  "query_type": "KIS",
+  "query_text": "Find the scene with a red car stopping in front of a building",
+  "model_alias": "heuristic",
+  "weights": {
+    "vector_search": 0.65,
+    "ocr": 0.1,
+    "caption": 0.15,
+    "object": 0.1,
+    "asr": 0.0,
+    "temporal": 0.0
+  },
+  "expanded_queries": [
+    "Find the scene with a red car stopping in front of a building"
+  ],
+  "resolved_profile": {
+    "semantic_weight": 0.65,
+    "metadata_weight": 0.35,
+    "temporal_weight": 0.0
+  },
+  "rationale": {
+    "vector_search": "default visual retrieval signal"
+  },
+  "output_file": "data/query_weight_analysis/20260706T104312434862Z-test-kis-red-car-0fdcbac6.json"
+}

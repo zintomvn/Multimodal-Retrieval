@@ -1,0 +1,27 @@
+{
+  "query_name": "query-1-kis",
+  "query_type": "KIS",
+  "query_text": "tìm ảnh có chữ hello",
+  "model_alias": "heuristic",
+  "weights": {
+    "vector_search": 0.52,
+    "ocr": 0.24,
+    "caption": 0.16,
+    "object": 0.08,
+    "asr": 0.0,
+    "temporal": 0.0
+  },
+  "expanded_queries": [
+    "tìm ảnh có chữ hello"
+  ],
+  "resolved_profile": {
+    "semantic_weight": 0.52,
+    "metadata_weight": 0.48,
+    "temporal_weight": 0.0
+  },
+  "rationale": {
+    "vector_search": "default visual retrieval signal",
+    "ocr": "query mentions visible text, labels, numbers, or screen content"
+  },
+  "output_file": "data/query_weight_analysis/20260706T104334177437Z-query-1-kis-7c332131.json"
+}

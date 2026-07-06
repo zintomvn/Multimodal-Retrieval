@@ -8,10 +8,21 @@ from app.adapters.vector_db.base import VectorSearchClient
 from app.core.deps import get_model_registry_service, get_text_client, get_vector_client
 from app.db.session import get_db
 from app.modules.models.service import ModelRegistryService
-from app.modules.retrieval.schemas import SearchRequest, SearchResponse, SelectResultsRequest
+from app.modules.retrieval.schemas import (
+    QueryWeightAnalysisRequest,
+    QueryWeightAnalysisResponse,
+    SearchRequest,
+    SearchResponse,
+    SelectResultsRequest,
+)
 from app.modules.retrieval.service import RetrievalService
+from app.modules.retrieval.weight_analysis import QueryWeightAnalyzerService
 
 router = APIRouter(prefix="/api/retrieval", tags=["retrieval"])
+
+
+def get_weight_analyzer_service() -> QueryWeightAnalyzerService:
+    return QueryWeightAnalyzerService()
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -77,3 +88,14 @@ def select_results(
     _ = run_id
     updated = RetrievalService(db, model_registry).select_results(request.result_ids, request.selected)
     return {"updated": updated}
+
+
+@router.post("/analyze-weights", response_model=QueryWeightAnalysisResponse)
+def analyze_weights(
+    request: QueryWeightAnalysisRequest,
+    analyzer: QueryWeightAnalyzerService = Depends(get_weight_analyzer_service),
+) -> QueryWeightAnalysisResponse:
+    try:
+        return analyzer.analyze(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

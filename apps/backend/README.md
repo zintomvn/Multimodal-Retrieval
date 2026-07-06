@@ -193,6 +193,12 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `DATA_ROOT` | `./data` | Nơi ghi submissions/artifacts. |
 | `MOCK_MODE` | `true` | Bật mock mode khi chưa có model thật. |
 | `MOCK_EMBEDDING_DIM` | `512` | Số chiều vector cho mock embedder (đặt khớp dimension Milvus collection). |
+| `GROQ_API_KEY` | - | Dùng cho query analyzer/model Groq trong `notebooks/agent/experiments/h1/config/models.yaml`. |
+| `LANGSMITH_TRACING` | `false` | Bật trace analysis query lên LangSmith. |
+| `LANGSMITH_API_KEY` | - | API key cho LangSmith. |
+| `LANGSMITH_PROJECT` | `multimodal-retrieval-weight-analyzer` | Tên project LangSmith. |
+| `MLFLOW_TRACKING_URI` | - | Nếu có, analyzer sẽ log trace sang MLflow. |
+| `MLFLOW_EXPERIMENT_NAME` | `multimodal-retrieval-weight-analyzer` | Tên experiment MLflow. |
 
 ## 7. API surface
 
@@ -208,6 +214,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `POST` | `/api/retrieval/search` | KIS/freeform search. |
 | `POST` | `/api/retrieval/qa` | QA retrieval + answer. |
 | `POST` | `/api/retrieval/trake` | Temporal retrieval. |
+| `POST` | `/api/retrieval/analyze-weights` | Phân tích trọng số query và query expansion. |
 | `GET` | `/api/retrieval/runs/{run_id}` | Lấy lại result của run. |
 | `GET` | `/api/media/frames/{frame_id}/context` | Lấy frame trước/sau. |
 | `GET` | `/api/media/frames/{frame_id}/thumbnail` | Thumbnail mock/S3-ready. |
