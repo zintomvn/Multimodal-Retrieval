@@ -27,6 +27,9 @@ datasets:
     dataset_url: https://www.kaggle.com/datasets/aresusayhi/ai-challenge-2025
     kaggle_mount_path: /kaggle/input/ai-challenge-2025
     dataset_id: ai_challenge_2025
+    relative_path_prefixes_to_strip:
+      - ai-challenge-2025/Videos/Videos
+      - Videos/Videos
     expected_batches:
       - L21
       - L22
