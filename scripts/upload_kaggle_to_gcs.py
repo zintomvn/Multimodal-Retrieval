@@ -208,10 +208,22 @@ def build_gcs_key(
         f"dataset={dataset_id}",
         f"source_version={source_version}",
         f"batch={batch_id}",
-        "original",
         rel_path.strip("/"),
     ]
     return "/".join(part for part in parts if part)
+
+
+def normalize_relative_path(rel_path: str, source: dict[str, Any]) -> str:
+    result = rel_path.replace("\\", "/").strip("/")
+    for raw_prefix in source.get("relative_path_prefixes_to_strip") or []:
+        prefix = str(raw_prefix).replace("\\", "/").strip("/")
+        if not prefix:
+            continue
+        if result.lower() == prefix.lower():
+            return ""
+        if result.lower().startswith(prefix.lower() + "/"):
+            return result[len(prefix) :].lstrip("/")
+    return result
 
 
 def make_run_paths(base_dir: Path, run_id: str) -> RunPaths:
@@ -397,7 +409,8 @@ def discover_manifest(
             filtered_by_batch += 1
             continue
 
-        gcs_key = build_gcs_key(raw_prefix, dataset_id, source_version, batch_id, rel)
+        normalized_rel = normalize_relative_path(rel, source)
+        gcs_key = build_gcs_key(raw_prefix, dataset_id, source_version, batch_id, normalized_rel)
         planned.append(
             {
                 "manifest_schema_version": 1,
@@ -407,7 +420,8 @@ def discover_manifest(
                 "dataset_id": dataset_id,
                 "batch_id": batch_id,
                 "source_version": source_version,
-                "relative_path": rel,
+                "relative_path": normalized_rel,
+                "source_relative_path": rel,
                 "local_path": str(path),
                 "filename": path.name,
                 "extension": path.suffix.lower(),
