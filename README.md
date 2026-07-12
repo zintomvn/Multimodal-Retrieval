@@ -262,7 +262,7 @@ Giới hạn upload từ browser: **2 GB**. File lớn hơn dùng server path ho
 
 Pipeline chính để đẩy 3 bộ data lên Google Cloud Storage là `scripts/upload_kaggle_to_gcs.py`. Script này chạy được ngay trên Kaggle Notebook và tạo run artifacts để giám sát: `manifest.jsonl`, `summary.json`, `errors.jsonl`, `metrics.csv`, `ingest.log`.
 
-Nguồn data được khai báo trong `configs/data_ingestion_sources.yaml`; script không còn fallback sang danh sách dataset hardcode trong Python. Mỗi source cần có `source_id`, `dataset_id`, `kaggle_mount_path`, `expected_batches`, `batch_detection`, và có thể override `gcs.raw_prefix`.
+Nguồn data được khai báo trong `configs/data_ingestion_sources.yaml`; script không còn fallback sang danh sách dataset hardcode trong Python. Mỗi source cần có `source_id`, `dataset_id`, `kaggle_mount_path`, `expected_batches`, `batch_detection`, và có thể override `gcs.raw_prefix`. Nếu Kaggle mount có folder wrapper dư, cấu hình thêm `relative_path_prefixes_to_strip` để chuẩn hóa `relative_path` trước khi tạo GCS key.
 
 | Source id | Kaggle dataset | Batch |
 | --- | --- | --- |
@@ -373,7 +373,13 @@ Tham số quan trọng:
 GCS key mặc định:
 
 ```text
-raw/source=kaggle/dataset=<dataset_id>/source_version=<source_version>/batch=<batch_id>/original/<relative_path>
+raw/source=kaggle/dataset=<dataset_id>/source_version=<source_version>/batch=<batch_id>/<relative_path>
+```
+
+Riêng source `l21_l30_ai_challenge_2025`, script strip các prefix `ai-challenge-2025/Videos/Videos/` hoặc `Videos/Videos/` trước khi upload, nên object không còn segment `original/` và không còn hai folder `Videos` dư. Ví dụ:
+
+```text
+raw/source=kaggle/dataset=ai_challenge_2025/source_version=kaggle_current/batch=L22/Videos_L22_a/video/<file_name>.mp4
 ```
 
 Report vận hành chi tiết: `docs/data processing/cloud/kaggle_to_cloud_report.md`.
