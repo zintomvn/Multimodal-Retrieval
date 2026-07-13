@@ -37,7 +37,7 @@ models:
     model_name: qwen/qwen3.6-27b
     api_key_env: GROQ_API_KEY
     base_url_env: null
-    supports_reasoning_effort: true
+    supports_reasoning_effort: false
 
   zai-glm-4.7:
     alias: zai-glm-4.7

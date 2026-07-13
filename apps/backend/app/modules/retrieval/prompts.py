@@ -21,6 +21,11 @@ for ordinary visual scene descriptions. Increase ocr for visible text and questi
 asking what text/numbers/colors appear on screen. Increase temporal for TRAKE and
 queries with ordered events such as E1/E2/E3, first/then/after. Increase asr when
 the query depends on speech, narration, or what someone says.
+
+Also generate 3 to 5 unique English expanded queries for retrieval. Preserve the
+original meaning, do not invent unsupported entities or answers, and diversify the
+queries across visual description, OCR/text, ASR/subtitle, keyword, and temporal
+angles only when those angles are relevant.
 """
 
 
@@ -34,7 +39,11 @@ def build_weight_analyzer_user_prompt(query_text: str, query_type: QueryType) ->
             "asr": 0.0,
             "temporal": 0.05,
         },
-        "expanded_queries": ["concise English retrieval rewrite"],
+        "expanded_queries": [
+            "concise English visual retrieval rewrite",
+            "keyword-style English retrieval query",
+            "OCR, ASR, or temporal English query when relevant",
+        ],
         "rationale": {
             "vector_search": "why this channel matters",
             "ocr": "why this channel matters",

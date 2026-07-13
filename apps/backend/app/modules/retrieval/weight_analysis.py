@@ -83,15 +83,34 @@ class OpenAICompatibleReasoningClient:
         if config.supports_reasoning_effort:
             payload["reasoning_effort"] = "medium"
 
-        with httpx.Client(timeout=self.timeout_s) as client:
-            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        body = response.json()
+        body = self._post_chat_completion(base_url=base_url, headers=headers, payload=payload)
         choices = body.get("choices") if isinstance(body, dict) else []
         if not choices:
             return "", body if isinstance(body, dict) else {}
         message = (choices[0] or {}).get("message") or {}
         return str(message.get("content") or ""), body
+
+    def _post_chat_completion(self, *, base_url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+        retried_without_reasoning_effort = False
+        with httpx.Client(timeout=self.timeout_s) as client:
+            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+            if response.status_code == 400 and "reasoning_effort" in payload:
+                retry_payload = dict(payload)
+                retry_payload.pop("reasoning_effort", None)
+                retried_without_reasoning_effort = True
+                response = client.post(f"{base_url}/chat/completions", headers=headers, json=retry_payload)
+
+        if response.is_error:
+            raise RuntimeError(self._http_error_message(response))
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Model API returned a non-JSON response") from exc
+        if not isinstance(body, dict):
+            raise RuntimeError("Model API response must be a JSON object")
+        if retried_without_reasoning_effort:
+            body["_client_retry"] = {"without_reasoning_effort": True}
+        return body
 
     def _base_url(self, config: ReasoningModelConfig) -> str:
         if config.base_url_env:
@@ -101,6 +120,18 @@ class OpenAICompatibleReasoningClient:
         if config.provider == "groq":
             return DEFAULT_GROQ_BASE_URL
         raise RuntimeError(f"Missing base URL env var: {config.base_url_env or '<unset>'}")
+
+    def _http_error_message(self, response: httpx.Response) -> str:
+        try:
+            body = json.dumps(response.json(), ensure_ascii=False)
+        except ValueError:
+            body = response.text.strip()
+        if len(body) > 1200:
+            body = body[:1200].rstrip() + "..."
+        return (
+            f"Model API returned {response.status_code} {response.reason_phrase} "
+            f"for {response.request.url}: {body}"
+        )
 
 
 class QueryWeightAnalyzerService:
@@ -121,18 +152,20 @@ class QueryWeightAnalyzerService:
         if not query_text:
             raise ValueError("query_text must not be empty")
 
-        model_config = self._select_model(request.model_alias)
-        model_alias = model_config.alias if model_config else "heuristic"
+        model_candidates = self._select_model_candidates(request.model_alias)
+        model_alias = "heuristic"
         model_error: str | None = None
+        model_errors: dict[str, str] = {}
         model_payload: dict[str, Any] | None = None
+        system_prompt = WEIGHT_ANALYZER_SYSTEM_PROMPT
+        user_prompt = build_weight_analyzer_user_prompt(query_text=query_text, query_type=request.query_type)
 
-        if model_config is not None:
+        for model_config in model_candidates:
             try:
-                system_prompt = WEIGHT_ANALYZER_SYSTEM_PROMPT
-                user_prompt = build_weight_analyzer_user_prompt(query_text=query_text, query_type=request.query_type)
                 content, usage_payload = self.reasoning_client.complete(model_config, system_prompt, user_prompt)
                 parsed = parse_model_json(content)
                 model_payload = self._coerce_payload(parsed, query_text)
+                model_alias = model_config.alias
                 self._log_langsmith(
                     request=request,
                     model_alias=model_alias,
@@ -143,23 +176,35 @@ class QueryWeightAnalyzerService:
                     parsed_payload=model_payload,
                     error=None,
                 )
-                self._log_mlflow(
-                    request=request,
-                    model_alias=model_alias,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    raw_content=content,
-                    raw_payload=usage_payload,
-                    parsed_payload=model_payload,
-                    error=None,
-                )
+                break
             except Exception as exc:  # noqa: BLE001 - fallback is intentional for runtime model instability.
                 model_error = str(exc)
+                model_errors[model_config.alias] = model_error
+                self._log_langsmith(
+                    request=request,
+                    model_alias=model_config.alias,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    raw_content="",
+                    raw_payload={
+                        "error": model_error,
+                        "provider": model_config.provider,
+                        "model_name": model_config.model_name,
+                    },
+                    parsed_payload=None,
+                    error=model_error,
+                )
 
         if model_payload is None:
             model_payload = heuristic_weight_payload(query_text=query_text, query_type=request.query_type)
-            if model_error:
-                model_payload["rationale"]["fallback"] = model_error
+            model_alias = "heuristic"
+            if model_errors:
+                model_payload["rationale"]["fallback"] = " | ".join(
+                    f"{alias}: {error}" for alias, error in model_errors.items()
+                )
+                model_payload["rationale"]["attempted_models"] = ", ".join(model_errors)
+            elif request.model_alias:
+                model_payload["rationale"]["fallback"] = f"model alias not found: {request.model_alias}"
 
         response = self._build_response(
             request=request,
@@ -239,14 +284,15 @@ class QueryWeightAnalyzerService:
         safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", label).strip("-") or "query"
         return f"{timestamp}-{safe_label}-{uuid.uuid4().hex[:8]}.json"
 
-    def _select_model(self, requested_alias: str | None) -> ReasoningModelConfig | None:
+    def _select_model_candidates(self, requested_alias: str | None) -> list[ReasoningModelConfig]:
         models = self._load_models()
+        aliases: list[str] = []
         if requested_alias and requested_alias in models:
-            return models[requested_alias]
+            aliases.append(requested_alias)
         for alias in DEFAULT_MODEL_PRIORITY:
-            if alias in models:
-                return models[alias]
-        return None
+            if alias in models and alias not in aliases:
+                aliases.append(alias)
+        return [models[alias] for alias in aliases]
 
     def _load_models(self) -> dict[str, ReasoningModelConfig]:
         if not self.models_config_path.exists():
@@ -317,56 +363,6 @@ class QueryWeightAnalyzerService:
                 },
                 error=error,
             )
-        except Exception:
-            return
-
-    def _log_mlflow(
-        self,
-        *,
-        request: QueryWeightAnalysisRequest,
-        model_alias: str,
-        system_prompt: str,
-        user_prompt: str,
-        raw_content: str,
-        raw_payload: dict[str, Any],
-        parsed_payload: dict[str, Any] | None,
-        error: str | None,
-    ) -> None:
-        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
-        experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "multimodal-retrieval-weight-analyzer").strip()
-        if not tracking_uri and not experiment_name:
-            return
-        try:
-            import mlflow  # type: ignore
-
-            if tracking_uri:
-                mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_experiment(experiment_name or "multimodal-retrieval-weight-analyzer")
-            with mlflow.start_run(run_name="query_weight_analysis"):
-                mlflow.log_params(
-                    {
-                        "query_type": request.query_type,
-                        "query_name": request.query_name or "",
-                        "model_alias": model_alias,
-                    }
-                )
-                mlflow.log_dict(
-                    {
-                        "query_text": request.query_text,
-                        "system_prompt": system_prompt,
-                        "user_prompt": user_prompt,
-                    },
-                    "inputs.json",
-                )
-                mlflow.log_dict(
-                    {
-                        "raw_content": raw_content,
-                        "raw_payload": raw_payload,
-                        "parsed_payload": parsed_payload,
-                        "error": error,
-                    },
-                    "outputs.json",
-                )
         except Exception:
             return
 

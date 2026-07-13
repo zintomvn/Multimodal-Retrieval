@@ -239,7 +239,8 @@ feature_extraction_notebooks
 
 # Data
 demo
-
+data/demo
+data/query_weight_analysis
 # Env
 .env
 env*
