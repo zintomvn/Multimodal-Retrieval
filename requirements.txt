@@ -1,0 +1,15 @@
+# Root dependencies for data-processing loaders and cloud utilities.
+#
+# Install from the project root:
+#   pip install -r requirements.txt
+
+google-cloud-storage>=2.18.2
+numpy>=1.26,<3
+torch>=2.0
+opencv-python-headless>=4.9
+ffmpeg-python>=0.2.0
+imageio-ffmpeg>=0.5.1
+einops>=0.7.0
+matplotlib>=3.8
+tqdm>=4.66
+PyYAML>=6.0
