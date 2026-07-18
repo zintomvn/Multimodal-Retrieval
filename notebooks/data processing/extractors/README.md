@@ -42,15 +42,36 @@ gs://YOUR_GCS_BUCKET/processed/keyframes/video_id=L21_V001/*.jpg
 
 Frame filenames must contain a token like `f000123`, for example `shot_0007_middle_f000583.jpg`. If you have `shot_segments.csv`, set `SHOT_SEGMENTS_URI` so records include `shot_id`, `frame_sec`, `fps`, and `frame_type`.
 
+## Kaggle Secrets
+
+The notebooks read GCS credentials from Kaggle Secrets. Create these two secrets before running any notebook:
+
+| Secret name | Value |
+| --- | --- |
+| `GCS_BUCKET` | Your bucket name only, for example `aic_ai_2026` |
+| `GCS_SERVICE_ACCOUNT_JSON` | The full Google Cloud service-account JSON string with permission to read/write the bucket |
+
+In Kaggle, open **Add-ons -> Secrets**, add both secrets, and enable notebook access to them. Do not paste service-account JSON directly into notebook cells.
+
+The `Parameters` cell reads those values like this:
+
+```python
+KAGGLE_SECRET_GCS_BUCKET = "GCS_BUCKET"
+KAGGLE_SECRET_GCS_SERVICE_ACCOUNT_JSON = "GCS_SERVICE_ACCOUNT_JSON"
+
+GCS_BUCKET = read_kaggle_secret(KAGGLE_SECRET_GCS_BUCKET)
+GCS_SERVICE_ACCOUNT_JSON = read_kaggle_secret(KAGGLE_SECRET_GCS_SERVICE_ACCOUNT_JSON)
+```
+
+For local testing outside Kaggle, the same code falls back to environment variables named `GCS_BUCKET` and `GCS_SERVICE_ACCOUNT_JSON`. If `GCS_SERVICE_ACCOUNT_JSON` is a file path instead of raw JSON, the notebooks also accept it.
+
 ## How to run on Kaggle
 
-1. Upload your GCP service-account JSON as a private Kaggle Dataset.
+1. Create Kaggle Secrets named `GCS_BUCKET` and `GCS_SERVICE_ACCOUNT_JSON`.
 2. Enable GPU for captioning, OCR, object detection, and vector embedding.
 3. Edit the `Parameters` cell in each notebook:
-   - `GCS_BUCKET`
    - `FRAME_PREFIX`
    - `OUTPUT_PREFIX`
-   - `GCS_SERVICE_ACCOUNT_JSON`
    - `SHOT_SEGMENTS_URI` if available
    - `VIDEO_IDS`, `MAX_FRAMES`, `DEFAULT_FPS`, `PIPELINE_BATCH_SIZE`, `DOWNLOAD_WORKERS`, and task-specific batch sizes.
 4. Run `Install dependencies`.
@@ -200,14 +221,14 @@ The merge job should keep the same vector normalization and metric assumptions a
 Minimal merge/import flow:
 
 ```text
-caption manifest  ┐
-ocr manifest      ├─> merge by keyframe_id ─> Supabase datasets/videos/keyframes/frame_annotations
-objects manifest  ┘
+caption manifest  \
+ocr manifest       > merge by keyframe_id -> Supabase datasets/videos/keyframes/frame_annotations
+objects manifest  /
 
-vector manifest ─────> Zilliz keyframe_embeddings
+vector manifest -----> Zilliz keyframe_embeddings
 
-scene manifest ──────> Supabase events/event_keyframes
-                 └──> Zilliz event_embeddings, optional
+scene manifest ------> Supabase events/event_keyframes
+                  \-> Zilliz event_embeddings, optional
 ```
 
 ## Logging
