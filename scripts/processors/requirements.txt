@@ -1,0 +1,15 @@
+google-cloud-storage>=2.18.2
+numpy>=1.26
+pillow>=10
+PyYAML>=6
+tqdm>=4.66
+SQLAlchemy>=2
+psycopg[binary]>=3.2
+pymilvus>=2.5
+elasticsearch>=8
+torch>=2
+open_clip_torch>=3.3
+transformers>=4.45
+accelerate>=0.34
+opencv-python-headless>=4.9
+ultralytics>=8.3
