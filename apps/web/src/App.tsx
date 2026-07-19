@@ -3,18 +3,20 @@ import { createPortal } from "react-dom";
 import {
   Check,
   CheckCircle2,
-  Circle,
   Clock,
   CloudUpload,
   Database,
   Download,
+  Film,
   FileArchive,
+  ImageOff,
+  Images,
   Layers,
   Loader2,
   Monitor,
   Moon,
+  PlayCircle,
   Search,
-  Settings,
   Sparkles,
   Sun,
   Trash2,
@@ -22,14 +24,106 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { createAndExportSubmission, getFrameContext, getIngestJob, getPipelineJob, listDatasets, mediaUrl, runSearch, startGCSUpload, startIngestJob, startMilvusUpload, startPipelineJob, uploadFileToGCS, uploadFileToMilvus } from "./api/client";
-import type { Dataset, FrameContext, IngestJobStatus, PipelineJobPollResponse, QueryType, SearchResult, SubmissionRow } from "./types";
+import { createAndExportSubmission, firstMediaUrl, getFrameContext, getIngestJob, getPipelineJob, listDatasets, listFrames, mediaUrl, runSearch, startGCSUpload, startIngestJob, startMilvusUpload, startPipelineJob, uploadFileToGCS, uploadFileToMilvus } from "./api/client";
+import type { ContextFrame, Dataset, FrameContext, IngestJobStatus, MediaFrame, QueryType, SearchResult, SubmissionRow } from "./types";
 
 const sampleQueries: Record<QueryType, string> = {
   KIS: "The clip shows an exhibition program with a royal-style decorative panel, dragon and cloud motifs, and the text PHU XUAN GIA DINH.",
   QA: "Identify the name of the world-famous company whose logo was inspired by a castle in Bavaria, Germany.",
   TRAKE: "In a bicycle race, first a cyclist with a pink helmet crosses the finish line, then a cyclist with a blue helmet, then a cyclist with a red helmet."
 };
+const FRAME_GALLERY_LIMIT = 60;
+
+interface VideoPreview {
+  title: string;
+  subtitle: string;
+  url: string;
+  posterUrl: string | null;
+}
+
+function uniqueMediaUrls(paths: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  return paths
+    .map((path) => mediaUrl(path ?? null))
+    .filter((url): url is string => Boolean(url))
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+}
+
+function resultImageCandidates(result: SearchResult): string[] {
+  return uniqueMediaUrls([
+    result.thumbnail_url,
+    result.image_url,
+    result.image_uri,
+    result.image_storage_key
+  ]);
+}
+
+function contextImageCandidates(frame: ContextFrame): string[] {
+  return uniqueMediaUrls([
+    frame.thumbnail_url,
+    frame.image_url,
+    frame.image_uri,
+    frame.image_storage_key
+  ]);
+}
+
+function galleryImageCandidates(frame: MediaFrame): string[] {
+  return uniqueMediaUrls([
+    frame.thumbnail_url,
+    frame.image_url,
+    frame.image_uri,
+    frame.image_storage_key
+  ]);
+}
+
+function withTimeFragment(url: string, timestampMs: number | null): string {
+  if (timestampMs === null) return url;
+  const seconds = Math.max(0, timestampMs / 1000);
+  const [base] = url.split("#", 1);
+  return `${base}#t=${seconds.toFixed(2)}`;
+}
+
+function CloudFrameImage({
+  candidates,
+  alt,
+  eager = false
+}: {
+  candidates: string[];
+  alt: string;
+  eager?: boolean;
+}) {
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const signature = candidates.join("|");
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [signature]);
+
+  const src = candidates[candidateIndex];
+  if (!src) {
+    return (
+      <div className="cloud-image-placeholder" aria-label="No cloud frame available">
+        <ImageOff size={20} />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      fetchPriority={eager ? "high" : "auto"}
+      referrerPolicy="no-referrer"
+      onError={() => setCandidateIndex((index) => Math.min(index + 1, candidates.length))}
+    />
+  );
+}
 
 export function App() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -41,11 +135,18 @@ export function App() {
   const [useExpansion, setUseExpansion] = useState(true);
   const [useMetadata, setUseMetadata] = useState(true);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [viewMode, setViewMode] = useState<"frames" | "results">("frames");
+  const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
+  const [galleryTotal, setGalleryTotal] = useState(0);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [selected, setSelected] = useState<SubmissionRow[]>([]);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
 
   const [theme, setTheme] = useState<"dark" | "light" | "system">(() => {
     try { return (localStorage.getItem("theme") as "dark" | "light" | "system") ?? "system"; } catch { return "system"; }
@@ -116,6 +217,35 @@ export function App() {
       })
       .catch((error) => setStatus(error.message));
   }, []);
+
+  useEffect(() => {
+    if (!datasetId) {
+      setGalleryFrames([]);
+      setGalleryTotal(0);
+      return;
+    }
+    let cancelled = false;
+    setGalleryLoading(true);
+    setGalleryError(null);
+    listFrames({ datasetId, limit: FRAME_GALLERY_LIMIT, offset: 0, presentOnly: true })
+      .then((payload) => {
+        if (cancelled) return;
+        setGalleryFrames(payload.frames);
+        setGalleryTotal(payload.total);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setGalleryFrames([]);
+        setGalleryTotal(0);
+        setGalleryError(error instanceof Error ? error.message : "Frame gallery failed");
+      })
+      .finally(() => {
+        if (!cancelled) setGalleryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [datasetId]);
 
   const isGcsRunning = gcsStatus === "PENDING" || gcsStatus === "RUNNING";
   const isGcsSettled = gcsStatus === "COMPLETED" || gcsStatus === "FAILED";
@@ -216,12 +346,41 @@ export function App() {
   }, [milvusJobId, isMilvusSettled]);
 
   const activeDataset = useMemo(() => datasets.find((item) => item.id === datasetId), [datasets, datasetId]);
+  const firstResultImageUrls = useMemo(
+    () => results.slice(0, 12).map((result) => resultImageCandidates(result)[0]).filter((url): url is string => Boolean(url)),
+    [results]
+  );
+
+  useEffect(() => {
+    const warmups = firstResultImageUrls.map((url) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = url;
+      return image;
+    });
+    return () => {
+      warmups.forEach((image) => {
+        image.src = "";
+      });
+    };
+  }, [firstResultImageUrls]);
+
+  useEffect(() => {
+    if (!videoPreview) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setVideoPreview(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [videoPreview]);
 
   function changeType(type: QueryType) {
     setQueryType(type);
     setQueryText(sampleQueries[type]);
     setQueryName(type === "KIS" ? "query-1-kis" : type === "QA" ? "query-2-qa" : "query-3-trake");
     setResults([]);
+    setViewMode("results");
+    setHasSearched(false);
     setContext(null);
   }
 
@@ -229,6 +388,7 @@ export function App() {
     if (!datasetId) return;
     setStatus("Searching");
     setDownloadUrl(null);
+    setViewMode("results");
     try {
       const response = await runSearch({
         datasetId,
@@ -240,22 +400,68 @@ export function App() {
         useMetadata
       });
       setResults(response.results);
-      setStatus(`${response.results.length} results from ${response.query_run_id.slice(0, 8)}`);
+      setHasSearched(true);
+      setStatus(
+        response.results.length > 0
+          ? `${response.results.length} results from ${response.query_run_id.slice(0, 8)}`
+          : `No results from ${response.query_run_id.slice(0, 8)}`
+      );
       const firstFrame = response.results.find((item) => item.frame_id);
       if (firstFrame?.frame_id) void openContext(firstFrame);
     } catch (error) {
+      setHasSearched(true);
       setStatus(error instanceof Error ? error.message : "Search failed");
     }
   }
 
   async function openContext(result: SearchResult) {
     if (!result.frame_id) return;
-    setActiveResultId(result.id);
+    await openFrameContext(result.frame_id, result.id);
+  }
+
+  async function openFrameContext(frameId: string, activeId = `frame:${frameId}`) {
+    setActiveResultId(activeId);
     try {
-      setContext(await getFrameContext(result.frame_id));
+      setContext(await getFrameContext(frameId));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Context failed");
     }
+  }
+
+  async function loadMoreGalleryFrames() {
+    if (!datasetId || galleryLoading || galleryFrames.length >= galleryTotal) return;
+    setGalleryLoading(true);
+    setGalleryError(null);
+    try {
+      const payload = await listFrames({
+        datasetId,
+        limit: FRAME_GALLERY_LIMIT,
+        offset: galleryFrames.length,
+        presentOnly: true,
+      });
+      setGalleryFrames((current) => [...current, ...payload.frames]);
+      setGalleryTotal(payload.total);
+    } catch (error) {
+      setGalleryError(error instanceof Error ? error.message : "Frame gallery failed");
+    } finally {
+      setGalleryLoading(false);
+    }
+  }
+
+  function openVideoPreview(result: SearchResult) {
+    const fallbackVideoEndpoint = `/api/media/videos/${result.video_id}/preview`;
+    const videoUrl = firstMediaUrl(result.video_url, fallbackVideoEndpoint);
+    if (!videoUrl) {
+      setStatus("Video media is not available");
+      return;
+    }
+    const frameLabel = result.frame_idx === null ? "sequence" : `frame ${result.frame_idx}`;
+    setVideoPreview({
+      title: result.video_code,
+      subtitle: `${frameLabel} · score ${result.score.toFixed(3)}`,
+      url: withTimeFragment(videoUrl, result.timestamp_ms),
+      posterUrl: resultImageCandidates(result)[0] ?? null
+    });
   }
 
   function addResult(result: SearchResult) {
@@ -423,7 +629,18 @@ export function App() {
           </div>
         </div>
         <div className="topbar-actions flex items-center gap-2">
-          <select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} aria-label="Dataset" className="min-w-0 rounded-[7px] border border-[var(--border-hi)] bg-surface-raised p-[7px_10px] text-[13px] font-medium text-txt-1 transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none">
+          <select
+            value={datasetId}
+            onChange={(event) => {
+              setDatasetId(event.target.value);
+              setResults([]);
+              setViewMode("frames");
+              setHasSearched(false);
+              setContext(null);
+            }}
+            aria-label="Dataset"
+            className="min-w-0 rounded-[7px] border border-[var(--border-hi)] bg-surface-raised p-[7px_10px] text-[13px] font-medium text-txt-1 transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none"
+          >
             {datasets.map((dataset) => (
               <option key={dataset.id} value={dataset.id}>
                 {dataset.name}:{dataset.version}
@@ -542,73 +759,170 @@ export function App() {
         <section className="grid grid-rows-[auto_1fr] min-h-0 gap-3 overflow-hidden bg-surface-panel p-[14px]">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-[13px] font-bold tracking-[-0.01em] text-txt-1">Results</h2>
-              <p className="mt-[2px] font-mono text-[10.5px] text-txt-3">{results.length} ranked candidates</p>
+              <h2 className="text-[13px] font-bold tracking-[-0.01em] text-txt-1">{viewMode === "frames" ? "Frames" : "Results"}</h2>
+              <p className="mt-[2px] font-mono text-[10.5px] text-txt-3">
+                {viewMode === "frames"
+                  ? `${galleryFrames.length}/${galleryTotal} cloud frames`
+                  : `${results.length} ranked candidates`}
+              </p>
             </div>
-            <Settings size={16} />
+            <div className="flex items-center gap-[6px]">
+              <button className={viewMode === "results" ? "toggle active" : "toggle"} style={{ height: 30 }} onClick={() => setViewMode("results")}>
+                <Search size={13} />
+                Results
+              </button>
+              <button className={viewMode === "frames" ? "toggle active" : "toggle"} style={{ height: 30 }} onClick={() => setViewMode("frames")}>
+                <Images size={13} />
+                Frames
+              </button>
+            </div>
           </div>
-          {results.length > 0 ? (
+          {viewMode === "results" && results.length > 0 ? (
             <div className="result-grid min-h-0 grid content-start gap-[9px] overflow-auto" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))" }}>
-              {results.map((result, index) => (
-                <article
-                  key={result.id}
-                  className={[
-                    "result-card",
-                    !result.thumbnail_url ? "no-img" : "",
-                    activeResultId === result.id ? "active" : ""
-                  ].filter(Boolean).join(" ")}
-                  style={{ animationDelay: `${index * 35}ms` }}
-                  onClick={() => openContext(result)}
-                >
-                  {result.thumbnail_url && (
-                    <div className="result-img">
-                      <img src={mediaUrl(result.thumbnail_url) ?? ""} alt={`${result.video_code} frame ${result.frame_idx}`} />
-                      <span className="result-rank">#{result.rank}</span>
-                    </div>
-                  )}
-                  <div className="grid gap-[7px] p-[10px] content-start">
-                    <div className="rank-line">
-                      {!result.thumbnail_url && <span>#{result.rank}</span>}
-                      <strong>{result.video_code}</strong>
-                      <code>{result.frame_idx ?? result.sequence_frames.map((item) => item.frame_idx).join(" · ")}</code>
-                    </div>
-                    <div className="score-line">
-                      <Clock size={13} />
-                      {result.score.toFixed(3)}
-                      {result.answer && <em>{result.answer}</em>}
-                    </div>
-                    {result.sequence_frames.length > 0 && (
-                      <div className="sequence-strip">
-                        {result.sequence_frames.map((item) => (
-                          <span key={`${result.id}-${item.frame_idx}`}>{item.frame_idx}</span>
-                        ))}
+              {results.map((result, index) => {
+                const imageCandidates = resultImageCandidates(result);
+                const hasImage = imageCandidates.length > 0;
+                return (
+                  <article
+                    key={result.id}
+                    className={[
+                      "result-card",
+                      !hasImage ? "no-img" : "",
+                      activeResultId === result.id ? "active" : ""
+                    ].filter(Boolean).join(" ")}
+                    style={{ animationDelay: `${index * 35}ms` }}
+                    onClick={() => openContext(result)}
+                  >
+                    {hasImage && (
+                      <div className="result-img">
+                        <CloudFrameImage
+                          candidates={imageCandidates}
+                          alt={`${result.video_code} frame ${result.frame_idx}`}
+                          eager={index < 8}
+                        />
+                        <span className="result-rank">#{result.rank}</span>
                       </div>
                     )}
-                    <div className="score-breakdown">
-                      {Object.entries(result.score_breakdown).map(([key, value]) => (
-                        <span key={key}>
-                          {key.replace("_score", "")}: {String(value)}
-                        </span>
-                      ))}
+                    <div className="grid gap-[7px] p-[10px] content-start">
+                      <div className="rank-line">
+                        {!hasImage && <span>#{result.rank}</span>}
+                        <strong>{result.video_code}</strong>
+                        <code>{result.frame_idx ?? result.sequence_frames.map((item) => item.frame_idx).join(" · ")}</code>
+                      </div>
+                      <div className="score-line">
+                        <Clock size={13} />
+                        {result.score.toFixed(3)}
+                        {result.answer && <em>{result.answer}</em>}
+                      </div>
+                      {result.sequence_frames.length > 0 && (
+                        <div className="sequence-strip">
+                          {result.sequence_frames.map((item) => (
+                            <span key={`${result.id}-${item.frame_idx}`}>{item.frame_idx}</span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="score-breakdown">
+                        {Object.entries(result.score_breakdown).map(([key, value]) => (
+                          <span key={key}>
+                            {key.replace("_score", "")}: {String(value)}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="card-actions">
+                        <button
+                          className="select-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            addResult(result);
+                          }}
+                        >
+                          <Check size={14} />
+                          Select
+                        </button>
+                        <button
+                          className="select-button video-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openVideoPreview(result);
+                          }}
+                        >
+                          <PlayCircle size={14} />
+                          Video
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      className="select-button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        addResult(result);
-                      }}
-                    >
-                      <Check size={14} />
-                      Select
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
+            </div>
+          ) : viewMode === "results" ? (
+            <div className="result-empty">
+              <Search size={38} />
+              <p>
+                {isSearching
+                  ? "Searching..."
+                  : hasSearched
+                    ? "No candidates returned for this dataset. Check that keyframes, annotations, and indexes were imported."
+                    : "Run a query to see ranked candidates"}
+              </p>
+            </div>
+          ) : galleryFrames.length > 0 ? (
+            <div className="result-grid min-h-0 grid content-start gap-[9px] overflow-auto" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))" }}>
+              {galleryFrames.map((frame, index) => {
+                const imageCandidates = galleryImageCandidates(frame);
+                const activeId = `frame:${frame.id}`;
+                const seconds = Math.max(0, frame.timestamp_ms / 1000);
+                return (
+                  <article
+                    key={frame.id}
+                    className={[
+                      "result-card",
+                      imageCandidates.length === 0 ? "no-img" : "",
+                      activeResultId === activeId ? "active" : ""
+                    ].filter(Boolean).join(" ")}
+                    style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
+                    onClick={() => openFrameContext(frame.id, activeId)}
+                  >
+                    {imageCandidates.length > 0 && (
+                      <div className="result-img">
+                        <CloudFrameImage
+                          candidates={imageCandidates}
+                          alt={`${frame.video_code} frame ${frame.frame_idx}`}
+                          eager={index < 12}
+                        />
+                        <span className="result-rank">{frame.video_code}</span>
+                      </div>
+                    )}
+                    <div className="grid gap-[7px] p-[10px] content-start">
+                      <div className="rank-line">
+                        <strong>{frame.video_code}</strong>
+                        <code>{frame.frame_idx}</code>
+                      </div>
+                      <div className="score-line">
+                        <Clock size={13} />
+                        {seconds.toFixed(2)}s
+                        {frame.frame_type && <em>{frame.frame_type}</em>}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+              {galleryFrames.length < galleryTotal && (
+                <button
+                  className="toggle"
+                  style={{ gridColumn: "1 / -1", justifySelf: "center", minWidth: 150 }}
+                  onClick={loadMoreGalleryFrames}
+                  disabled={galleryLoading}
+                >
+                  {galleryLoading ? <Loader2 size={14} className="animate-spin-slow" /> : <Images size={14} />}
+                  {galleryLoading ? "Loading..." : "Load more"}
+                </button>
+              )}
             </div>
           ) : (
             <div className="result-empty">
-              <Search size={38} />
-              <p>{isSearching ? "Searching…" : "Run a query to see ranked candidates"}</p>
+              {galleryLoading ? <Loader2 size={38} className="animate-spin-slow" /> : <Images size={38} />}
+              <p>{galleryLoading ? "Loading frames..." : galleryError ?? "No media-present frames found for this dataset"}</p>
             </div>
           )}
         </section>
@@ -621,18 +935,62 @@ export function App() {
             </div>
           </div>
           <div className="min-h-0 grid content-start gap-[7px] overflow-auto">
-            {context?.frames.map((frame) => (
-              <div key={frame.id} className={frame.id === context.target_frame_id ? "context-frame target" : "context-frame"}>
-                <img src={mediaUrl(frame.thumbnail_url) ?? ""} alt={`Frame ${frame.frame_idx}`} />
-                <div>
-                  <strong>{frame.frame_idx}</strong>
-                  <p>{frame.text}</p>
+            {context?.frames.map((frame) => {
+              const imageCandidates = contextImageCandidates(frame);
+              return (
+                <div key={frame.id} className={frame.id === context.target_frame_id ? "context-frame target" : "context-frame"}>
+                  <CloudFrameImage
+                    candidates={imageCandidates}
+                    alt={`Frame ${frame.frame_idx}`}
+                    eager={frame.id === context.target_frame_id}
+                  />
+                  <div>
+                    <strong>{frame.frame_idx}</strong>
+                    <p>{frame.text}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </aside>
       </section>
+
+      {videoPreview && createPortal(
+        <div
+          className="fixed inset-0 z-[500] bg-black/70 backdrop-blur-md grid place-items-center p-5 animate-fade-up"
+          onClick={(event) => { if (event.target === event.currentTarget) setVideoPreview(null); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Video preview"
+        >
+          <div className="video-modal">
+            <div className="video-modal-header">
+              <div className="min-w-0">
+                <h2>
+                  <Film size={15} />
+                  {videoPreview.title}
+                </h2>
+                <p>{videoPreview.subtitle}</p>
+              </div>
+              <button
+                className="theme-toggle"
+                onClick={() => setVideoPreview(null)}
+                aria-label="Close video preview"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <video
+              className="video-preview-player"
+              src={videoPreview.url}
+              poster={videoPreview.posterUrl ?? undefined}
+              controls
+              preload="metadata"
+            />
+          </div>
+        </div>,
+        document.body
+      )}
 
       {uploadOpen && createPortal(
         <div
