@@ -200,6 +200,53 @@ Run vector indexing first if text/OCR/caption must be delayed:
 python scripts/processors/extract_gcs_annotations.py --profile embedding_only --max-frames 0 --warmup-models
 ```
 
+Run only GCS frame-to-vector ingestion into Zilliz when PostgreSQL metadata has already been imported:
+
+```powershell
+python scripts/processors/extract_gcs_annotations.py `
+  --profile zilliz_embedding_only `
+  --gcs-prefix "processed/keyframes/dataset=ai_challenge_2025/batch=L22/profile=autoshot_v1" `
+  --max-frames 100 `
+  --batch-size 128 `
+  --download-workers 10 `
+  --gcs-timeout 60 `
+  --log-file "scripts/processors/logs/vector_L22_smoke.log" `
+  --annotations-jsonl "data/processor_vector_L22_smoke.jsonl" `
+  --warmup-models
+```
+
+For the full `L22` through `L29` vector ingestion:
+
+```powershell
+$batches = "L22","L23","L24","L25","L26","L27","L28","L29"
+foreach ($b in $batches) {
+  python scripts/processors/extract_gcs_annotations.py `
+    --profile zilliz_embedding_only `
+    --gcs-prefix "processed/keyframes/dataset=ai_challenge_2025/batch=$b/profile=autoshot_v1" `
+    --batch-size 128 `
+    --download-workers 10 `
+    --gcs-timeout 60 `
+    --log-file "scripts/processors/logs/vector_$b.log" `
+    --annotations-jsonl "data/processor_vector_$b.jsonl" `
+    --warmup-models
+}
+```
+
+Use a dry run before the full loop to confirm that the GCS prefix resolves:
+
+```powershell
+$batches = "L22","L23","L24","L25","L26","L27","L28","L29"
+foreach ($b in $batches) {
+  python scripts/processors/extract_gcs_annotations.py `
+    --profile zilliz_embedding_only `
+    --gcs-prefix "processed/keyframes/dataset=ai_challenge_2025/batch=$b/profile=autoshot_v1" `
+    --max-frames 20 `
+    --dry-run
+}
+```
+
+`zilliz_embedding_only` sets `write_pg: false`, `write_milvus: true`, and `write_elasticsearch: false`, so it does not rewrite imported PostgreSQL metadata and does not require Elasticsearch.
+
 Run a single video with the full model stack:
 
 ```powershell
@@ -213,48 +260,3 @@ docker compose up -d elasticsearch
 ```
 
 If Elasticsearch is intentionally offline, set `sinks.write_elasticsearch: false` in YAML or keep `sinks.fail_on_sink_error: false` so PostgreSQL and Milvus can continue.
-
-## Known Constraints
-
-- The `D:` project drive is low on free space. The processor venv and model cache were moved to `C:` to avoid filling the workspace drive.
-- `C:` is also tight after caching BLIP-2. If BLIP-2 is not needed, its cache can be removed later to recover about `13.95 GB`.
-- `Salesforce/blip2-opt-2.7b` is downloaded but not currently loadable due Windows pagefile limits.
-- PaddleOCR runs on CPU in this Windows setup; PyTorch models use CUDA.
-- Hugging Face downloads were unauthenticated, so an `HF_TOKEN` in `.env` can improve rate limits and download speed.
-
-## Disk And Model Download Audit
-
-Snapshot taken on `2026-07-18`. This audit only measured disk usage; no files were deleted.
-
-### Drive Headroom
-
-| Drive | Volume | Total | Free | Used | Note |
-| ----- | ------ | ----- | ---- | ---- | ---- |
-| `C:` | `Windows-SSD` | `395.35 GB` | `22.25 GB` | `373.10 GB` | Current `models.cache_dir` points here via `%USERPROFILE%/.cache/multimodal-retrieval/processor-cache`. |
-| `D:` | `New Volume` | `79.36 GB` | `3.07 GB` | `76.29 GB` | Workspace drive is too tight for another heavy model download without cleanup. |
-
-### Processor Model Disk Budget
-
-| Profile / model set | Models included | Cache needed if missing | Recommended free space | Current state |
-| ------------------- | --------------- | ----------------------- | ---------------------- | ------------- |
-| `embedding_only` | OpenCLIP `ViT-B-32` / `laion2b_s34b_b79k` | `0.56 GB` | `1.5 GB+` | Present in current `C:` cache. |
-| `objects` | Ultralytics `yolo12n.pt` | `0.005 GB` | `0.1 GB+` | Present in current `C:` cache. |
-| Default caption only | `Salesforce/blip-image-captioning-base` | `1.84 GB` | `3 GB+` | Present in current `C:` cache. |
-| OCR only | PaddleOCR `PP-OCRv5_mobile_det` + VietOCR `vgg_seq2seq` | `0.09 GB` | `0.5 GB+` | Present in current `C:` cache. |
-| `full` | OpenCLIP + BLIP base + YOLO + OCR | `~2.50 GB` | `5 GB+` | Present in current `C:` cache; `D:` has only `3.07 GB` free, so avoid using `D:` as the cache target. |
-| `full_blip2` | OpenCLIP + `Salesforce/blip2-opt-2.7b` + YOLO + OCR | `~14.61 GB` | `20 GB+` | Weights are present, but warmup failed earlier because Windows pagefile/RAM headroom was too small. |
-
-### Cleanup Candidates
-
-| Priority | Path / area | Drive | Recoverable space | Delete safety | Note |
-| -------- | ----------- | ----- | ----------------- | ------------- | ---- |
-| 1 | `D:\University\Projects\Individual projects\Multimodal-Retrieval\models\processor-cache` | `D:` | `14.52 GB` | Safe if you do not pass `--model-cache-dir models/processor-cache` or use an old config | Looks like an old processor cache. Current YAML points to the `C:` cache. |
-| 2 | `D:\$RECYCLE.BIN` | `D:` | `5.58 GB` | Safe after reviewing Recycle Bin contents | Emptying the Recycle Bin on `D:` alone gives enough room for the default `full` model stack. |
-| 3 | `C:\Users\Mario\.cache\multimodal-retrieval\processor-cache\models--Salesforce--blip2-opt-2.7b` | `C:` | `13.95 GB` | Safe if BLIP-2 experiments are not needed now | This model is optional and currently not loadable on this machine without pagefile/RAM changes. |
-| 4 | `C:\Users\Mario\AppData\Local\pip\Cache` | `C:` | `6.25 GB` | Usually safe | Pip will re-download packages later if needed. |
-| 5 | `C:\Users\Mario\AppData\Local\npm-cache` | `C:` | `4.27 GB` | Usually safe | NPM will re-download packages later if needed. |
-| 6 | `C:\Users\Mario\.cache\huggingface` | `C:` | `9.79 GB` | Conditional | Contains other Hugging Face models, including `BAAI/bge-m3` at `4.25 GB`; remove only models you know are unused. |
-| 7 | `C:\Users\Mario\AppData\Local\Docker\wsl` | `C:` | `34.41 GB` | Caution | Use Docker Desktop or Docker prune commands; do not manually delete this folder. |
-| 8 | `D:\.pnpm-store` | `D:` | `0.56 GB` | Usually safe via `pnpm store prune` | Small but easy to rebuild. |
-| 9 | `.venv` in this repo | `D:` | `1.44 GB` | Conditional | Remove only if this local Python environment is no longer used. |
-| 10 | `C:\Users\Mario\.venvs\multimodal-processor-py312` | `C:` | `5.50 GB` | Not recommended right now | This is the documented processor environment; deleting it means reinstalling processor dependencies. |

@@ -1,7 +1,7 @@
 competition_default:
-  semantic_weight: 0.60
-  metadata_weight: 0.25
-  temporal_weight: 0.10
+  semantic_weight: 0.85
+  metadata_weight: 0.05
+  temporal_weight: 0.05
   user_boost_weight: 0.05
   rrf:
     enabled: true

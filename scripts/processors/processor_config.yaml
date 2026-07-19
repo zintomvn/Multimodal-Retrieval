@@ -108,6 +108,28 @@ profiles:
       objects:
         enabled: false
 
+  zilliz_embedding_only:
+    run:
+      batch_size: 128
+      download_workers: 10
+      gcs_timeout: 60
+    sinks:
+      write_pg: false
+      write_milvus: true
+      write_elasticsearch: false
+      fail_on_sink_error: true
+      milvus_collection: keyframe_embeddings
+    models:
+      embedding:
+        batch_size: 128
+        precision: fp16
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
   full:
     run:
       batch_size: 16

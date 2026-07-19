@@ -8,7 +8,7 @@ embedders:
   openai_embedding:
     task: multimodal_embedding
     provider: openai_compatible
-    base_url: http://localhost:8001/v1
+    base_url: http://localhost:8002/v1
     model: ViT-B-32-laion2b_s34b_b79k
     openclip_model: ViT-B-32
     openclip_pretrained: laion2b_s34b_b79k
