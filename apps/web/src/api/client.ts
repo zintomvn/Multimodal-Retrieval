@@ -1,5 +1,6 @@
 import type {
   Dataset,
+  FrameListResponse,
   FrameContext,
   GCSUploadJobRequest,
   IngestJobPollResponse,
@@ -15,6 +16,28 @@ import type {
 } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const GCS_BUCKET = import.meta.env.VITE_GCS_BUCKET ?? "";
+const GCS_PUBLIC_BASE_URL = (import.meta.env.VITE_GCS_PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+
+function gcsMediaUrl(path: string): string | null {
+  const raw = path.trim();
+  if (!raw) return null;
+
+  let bucket = GCS_BUCKET;
+  let key = raw.replace(/^\/+/, "");
+  if (raw.startsWith("gs://")) {
+    const [, tail = ""] = raw.split("gs://");
+    const slashIndex = tail.indexOf("/");
+    if (slashIndex < 0) return null;
+    bucket = tail.slice(0, slashIndex);
+    key = tail.slice(slashIndex + 1);
+  }
+
+  if (!bucket || !key) return null;
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  if (GCS_PUBLIC_BASE_URL) return `${GCS_PUBLIC_BASE_URL}/${encodedKey}`;
+  return `https://storage.googleapis.com/${bucket}/${encodedKey}`;
+}
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -68,6 +91,22 @@ export async function getFrameContext(frameId: string): Promise<FrameContext> {
   return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`);
 }
 
+export async function listFrames(input: {
+  datasetId?: string;
+  videoId?: string;
+  limit?: number;
+  offset?: number;
+  presentOnly?: boolean;
+}): Promise<FrameListResponse> {
+  const params = new URLSearchParams();
+  if (input.datasetId) params.set("dataset_id", input.datasetId);
+  if (input.videoId) params.set("video_id", input.videoId);
+  params.set("limit", String(input.limit ?? 60));
+  params.set("offset", String(input.offset ?? 0));
+  params.set("present_only", String(input.presentOnly ?? true));
+  return requestJson<FrameListResponse>(`/api/media/frames?${params.toString()}`);
+}
+
 export async function createAndExportSubmission(datasetId: string, name: string, rows: SubmissionRow[]) {
   const submission = await requestJson<{ id: string; status: string }>("/api/submissions", {
     method: "POST",
@@ -93,7 +132,20 @@ export async function createAndExportSubmission(datasetId: string, name: string,
 
 export function mediaUrl(path: string | null): string | null {
   if (!path) return null;
-  return path.startsWith("http") ? path : `${API_BASE}${path}`;
+  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:") || path.startsWith("data:")) {
+    return path;
+  }
+  if (path.startsWith("/")) return `${API_BASE}${path}`;
+  if (path.startsWith("gs://")) return gcsMediaUrl(path);
+  return gcsMediaUrl(path) ?? path;
+}
+
+export function firstMediaUrl(...paths: Array<string | null | undefined>): string | null {
+  for (const path of paths) {
+    const resolved = mediaUrl(path ?? null);
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 export async function startIngestJob(input: IngestJobStartRequest): Promise<IngestJobStartResponse> {

@@ -27,6 +27,11 @@ export interface SearchResult {
     score: number;
   }>;
   thumbnail_url: string | null;
+  image_url: string | null;
+  image_uri: string | null;
+  image_storage_key: string | null;
+  video_url: string | null;
+  video_uri: string | null;
 }
 
 export interface SearchResponse {
@@ -46,6 +51,9 @@ export interface ContextFrame {
   frame_idx: number;
   timestamp_ms: number;
   thumbnail_url: string;
+  image_url?: string | null;
+  image_uri?: string | null;
+  image_storage_key?: string | null;
   text: string;
 }
 
@@ -53,6 +61,28 @@ export interface FrameContext {
   target_frame_id: string;
   video_code: string;
   frames: ContextFrame[];
+}
+
+export interface MediaFrame {
+  id: string;
+  keyframe_id: string;
+  video_id: string;
+  video_code: string;
+  frame_idx: number;
+  timestamp_ms: number;
+  frame_type: string | null;
+  thumbnail_url: string;
+  image_url: string | null;
+  image_uri: string | null;
+  image_storage_key: string | null;
+  is_media_present: boolean;
+}
+
+export interface FrameListResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  frames: MediaFrame[];
 }
 
 export interface SubmissionRow {

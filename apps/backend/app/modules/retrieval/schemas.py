@@ -46,6 +46,11 @@ class ResultItem(BaseModel):
     score_breakdown: dict
     sequence_frames: list[dict] = Field(default_factory=list)
     thumbnail_url: str | None = None
+    image_url: str | None = None
+    image_uri: str | None = None
+    image_storage_key: str | None = None
+    video_url: str | None = None
+    video_uri: str | None = None
 
 
 class SearchResponse(BaseModel):

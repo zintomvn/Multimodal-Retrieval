@@ -14,6 +14,7 @@ from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
+from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
@@ -744,6 +745,30 @@ class RetrievalService:
             return normalized
         return normalized[:100].rstrip()
 
+    def _browser_image_url(self, frame: Frame | None) -> str | None:
+        if frame is None:
+            return None
+        candidates = [
+            frame.thumbnail_uri,
+            frame.image_url,
+            gcs_public_url(
+                frame.image_uri or "",
+                default_bucket=self.settings.gcs_bucket,
+                public_base_url=self.settings.gcs_public_url,
+            ),
+            gcs_public_url(
+                frame.image_storage_key or "",
+                default_bucket=self.settings.gcs_bucket,
+                public_base_url=self.settings.gcs_public_url,
+            ),
+        ]
+        return next((url for url in candidates if url), None)
+
+    def _browser_video_url(self, video: Video | None) -> str | None:
+        if video is None:
+            return None
+        return f"/api/media/videos/{video.video_id}/preview"
+
     def _result_to_item(self, result: RetrievalResult) -> ResultItem:
         frame = result.frame
         return ResultItem(
@@ -759,4 +784,9 @@ class RetrievalService:
             score_breakdown=result.score_breakdown or {},
             sequence_frames=result.sequence_frames or [],
             thumbnail_url=f"/api/media/frames/{result.frame_id}/thumbnail" if result.frame_id else None,
+            image_url=self._browser_image_url(frame),
+            image_uri=frame.image_uri if frame else None,
+            image_storage_key=frame.image_storage_key if frame else None,
+            video_url=self._browser_video_url(result.video),
+            video_uri=result.video.uri if result.video else None,
         )
