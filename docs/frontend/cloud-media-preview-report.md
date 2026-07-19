@@ -1,5 +1,7 @@
 # Cloud Media Preview Frontend Report
 
+> This is an implementation report for the cloud media preview work. For the current frontend architecture and runtime flow, see [Media Rendering Technical Report](./media-rendering-technical-report.md).
+
 ## Summary
 
 The frontend now displays search result frames from cloud media URLs instead of relying only on the backend thumbnail proxy. Each result card also includes a `Video` button that opens an in-app video preview for the result video, starting near the matched frame timestamp when available.
@@ -22,8 +24,8 @@ The frontend now displays search result frames from cloud media URLs instead of 
 
 Search result cards now try media in this order:
 
-1. `image_url`
-2. `thumbnail_url`
+1. `thumbnail_url`
+2. `image_url`
 3. `image_uri`
 4. `image_storage_key`
 
@@ -34,7 +36,7 @@ The frontend converts supported GCS values into browser URLs:
 - `gs://bucket/path/to/frame.jpg` becomes `https://storage.googleapis.com/bucket/path/to/frame.jpg`.
 - Bare object keys can be resolved when `VITE_GCS_BUCKET` or `VITE_GCS_PUBLIC_BASE_URL` is configured.
 
-If the fastest cloud URL fails, the image component automatically falls back to the next candidate, usually the backend thumbnail endpoint. This keeps public buckets fast while preserving compatibility with private buckets and presigned redirects.
+If the stable backend thumbnail endpoint fails, the image component automatically falls back to the next candidate. This preserves compatibility with local media, private buckets, public buckets, and presigned redirects.
 
 ## Performance Optimizations
 
