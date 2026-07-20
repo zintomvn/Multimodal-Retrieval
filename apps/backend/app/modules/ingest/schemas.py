@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class IngestJobRequest(BaseModel):
-    mode: str = Field(default="demo", description="demo | mock")
+    mode: Literal["demo"] = Field(default="demo", description="demo")
     dataset_code: str = Field(default="l30-demo")
     dataset_name: str = Field(default="aic-2026-l30-demo")
     dataset_version: str = Field(default="v1")

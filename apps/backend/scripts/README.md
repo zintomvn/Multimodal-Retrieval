@@ -35,7 +35,7 @@ cd apps/backend
 - `--dataset-version`: Phiên bản của dataset (mặc định là `v1`).
 - `--dry-run`: Chạy thử nhưng không thực sự ghi vào DB (thường dùng để test/verify trước).
 
-*Lưu ý: Bạn cần chắc chắn các dịch vụ database trong `docker-compose` đã được chạy trước khi gọi script.*
+_Lưu ý: Bạn cần chắc chắn các dịch vụ database trong `docker-compose` đã được chạy trước khi gọi script._
 
 ## Hướng dẫn chạy `import_gcs_frame_metadata.py`
 
@@ -63,6 +63,7 @@ MILVUS_TOKEN=...
 ```
 
 Ghi chú:
+
 - `DATABASE_URL` dùng để ghi metadata vào Supabase PostgreSQL.
 - `GCS_BUCKET` và `GCS_CREDENTIALS_FILE` dùng để đọc `_SUCCESS`, `shot_segments.csv`, và verify object frame.
 - `MILVUS_URI` và `MILVUS_TOKEN` chưa cần cho script metadata này; chúng được dùng ở bước ingest embedding/vector sau.
@@ -100,6 +101,7 @@ python apps/backend/scripts/import_gcs_frame_metadata.py `
 ```
 
 Kết quả mong đợi:
+
 - In JSON report gồm `batches_loaded`, `prepared_rows`, `failures`.
 - Không ghi gì vào PostgreSQL.
 - Nếu batch thiếu `_SUCCESS` hoặc `shot_segments.csv`, report sẽ nói rõ batch nào bị thiếu.
@@ -196,6 +198,7 @@ cd apps/backend
 ```
 
 Best practice:
+
 - Keep `embedders.openai_embedding.base_url` aligned with the service port. This repo currently uses `http://localhost:8002/v1` so the backend can stay on `8001`.
 - Cấu hình model/pretrained/device/batch trong `configs/model_registry.yaml` (entry embedder đang `enabled: true`).
 - Script tự đọc `.env` (fallback `.env.example`) để lấy `MODEL_REGISTRY_PATH` và `EMBED_HOST/EMBED_PORT`.
@@ -213,6 +216,7 @@ cd apps/backend
 ```
 
 Kết quả mong đợi:
+
 - `"ok": true`
 - `"dim": 512`
 - `"norm_close_to_1": true`

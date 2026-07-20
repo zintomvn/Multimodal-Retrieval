@@ -1,10 +1,4 @@
 embedders:
-  clip_mock:
-    task: multimodal_embedding
-    provider: mock
-    dim: 512
-    enabled: false
-    description: "Deterministic mock embedder for local development."
   openai_embedding:
     task: multimodal_embedding
     provider: openai_compatible
@@ -37,10 +31,6 @@ embedders:
     enabled: false
 
 ocr:
-  mock_ocr:
-    task: ocr
-    provider: mock
-    enabled: true
   paddle_vietocr:
     task: ocr
     provider: local
@@ -49,10 +39,6 @@ ocr:
     enabled: false
 
 asr:
-  mock_asr:
-    task: asr
-    provider: mock
-    enabled: true
   whisperx:
     task: asr
     provider: huggingface
@@ -61,10 +47,6 @@ asr:
     enabled: false
 
 vision_language:
-  mock_vlm:
-    task: visual_qa
-    provider: mock
-    enabled: true
   qwen2_5_vl:
     task: visual_qa
     provider: openai_compatible
@@ -73,10 +55,6 @@ vision_language:
     enabled: false
 
 llm:
-  mock_query_expander:
-    task: query_expansion
-    provider: mock
-    enabled: true
   local_qwen:
     task: query_expansion
     provider: openai_compatible

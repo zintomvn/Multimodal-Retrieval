@@ -18,6 +18,7 @@ def _alembic_config(db_url: str) -> Config:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
     config.set_main_option("sqlalchemy.url", db_url)
+    config.attributes["preserve_sqlalchemy_url"] = True
     return config
 
 
@@ -40,7 +41,7 @@ def test_m1_upgrade_creates_core_tables_and_constraints(tmp_path: Path) -> None:
             text(
                 """
                 INSERT INTO datasets (dataset_id, dataset_code, name, version, root_uri, status)
-                VALUES ('d1', 'mock-aic-2026', 'mock-aic-2026', 'v0', 'data/mock', 'READY')
+                VALUES ('d1', 'aic-2026-test', 'aic-ai-challenge-test', 'v1', 'gs://unit-test/processed/keyframes/dataset=ai_challenge_test', 'READY')
                 """
             )
         )
@@ -50,7 +51,7 @@ def test_m1_upgrade_creates_core_tables_and_constraints(tmp_path: Path) -> None:
                 INSERT INTO videos (
                   video_id, dataset_id, video_code, video_name, uri, fps, duration_seconds, duration_ms, extra_metadata
                 ) VALUES (
-                  'L30_V001', 'd1', 'L30_V001', 'L30_V001.mp4', 'data/mock/videos/L30_V001.mp4', 25, 12.0, 12000, '{}'
+                  'L30_V001', 'd1', 'L30_V001', 'L30_V001.mp4', 'gs://unit-test/raw/videos/L30_V001.mp4', 25, 12.0, 12000, '{}'
                 )
                 """
             )
@@ -69,7 +70,7 @@ def test_m1_upgrade_creates_core_tables_and_constraints(tmp_path: Path) -> None:
                 """
                 INSERT INTO keyframes (
                   keyframe_id, video_id, shot_id, frame_idx, frame_seconds, timestamp_ms, image_uri
-                ) VALUES ('L30_V001_F000001', 'L30_V001', 'L30_V001_S0000', 1, 0.04, 40, 'mock://L30_V001/1.jpg')
+                ) VALUES ('L30_V001_F000001', 'L30_V001', 'L30_V001_S0000', 1, 0.04, 40, 'gs://unit-test/processed/keyframes/L30_V001/000001.jpg')
                 """
             )
         )
@@ -81,7 +82,7 @@ def test_m1_upgrade_creates_core_tables_and_constraints(tmp_path: Path) -> None:
                     INSERT INTO videos (
                       video_id, dataset_id, video_code, video_name, uri, fps, duration_seconds, duration_ms, extra_metadata
                     ) VALUES (
-                      'L30_V001_DUP', 'd1', 'L30_V001', 'L30_V001_dup.mp4', 'data/mock/videos/L30_V001_dup.mp4', 25, 12.0, 12000, '{}'
+                      'L30_V001_DUP', 'd1', 'L30_V001', 'L30_V001_dup.mp4', 'gs://unit-test/raw/videos/L30_V001_dup.mp4', 25, 12.0, 12000, '{}'
                     )
                     """
                 )
@@ -93,7 +94,7 @@ def test_m1_upgrade_creates_core_tables_and_constraints(tmp_path: Path) -> None:
                     """
                     INSERT INTO keyframes (
                       keyframe_id, video_id, shot_id, frame_idx, frame_seconds, timestamp_ms, image_uri
-                    ) VALUES ('L30_V001_F000002', 'L30_V001', 'MISSING_SHOT', 2, 0.08, 80, 'mock://L30_V001/2.jpg')
+                    ) VALUES ('L30_V001_F000002', 'L30_V001', 'MISSING_SHOT', 2, 0.08, 80, 'gs://unit-test/processed/keyframes/L30_V001/000002.jpg')
                     """
                 )
             )

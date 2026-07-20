@@ -1,7 +1,7 @@
 param(
   [string]$ApiBase = "http://localhost:8000",
   [string]$DatasetId = "",
-  [string]$Mode = "mock"
+  [string]$Mode = "demo"
 )
 
 $body = @{

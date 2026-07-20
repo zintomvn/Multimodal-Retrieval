@@ -13,11 +13,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.adapters.object_storage.local import LocalObjectStorageClient
-from app.adapters.text_search.mock import InMemoryTextSearchClient
-from app.adapters.vector_db.mock import InMemoryVectorSearchClient
 from app.db.models import Base, Dataset, Event, EventKeyframe, Frame, FrameAnnotation, Shot, Video
 from app.modules.ingest.schemas import IngestJobRequest
 from app.modules.ingest.service import DemoIngestService
+from tests.fakes import InMemoryTextSearchClient, InMemoryVectorSearchClient
 
 
 def _write_demo_fixture(root: Path) -> Path:

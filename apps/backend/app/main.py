@@ -6,8 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.db.bootstrap import init_db, seed_mock_data
-from app.db.session import SessionLocal
+from app.db.bootstrap import init_db
 from app.modules.datasets.router import router as datasets_router
 from app.modules.ingest.router import router as ingest_router
 from app.modules.jobs.router import router as jobs_router
@@ -21,11 +20,6 @@ from app.modules.submissions.router import router as submissions_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    db = SessionLocal()
-    try:
-        seed_mock_data(db)
-    finally:
-        db.close()
     yield
 
 
@@ -57,7 +51,7 @@ if settings.storage_provider == "local":
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "env": settings.app_env, "mock_mode": settings.mock_mode}
+    return {"status": "ok", "env": settings.app_env, "storage_provider": settings.storage_provider}
 
 
 @app.get("/readyz")

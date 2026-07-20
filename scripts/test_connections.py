@@ -22,7 +22,7 @@ results = []
 
 print("=" * 60)
 print("CONNECTION DIAGNOSTIC")
-print(f"Env: {settings.app_env}  |  Mock: {settings.mock_mode}")
+print(f"Env: {settings.app_env}  |  Storage: {settings.storage_provider}")
 print("=" * 60)
 print()
 
@@ -55,7 +55,7 @@ try:
     from pymilvus import MilvusClient
 
     client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token)
-    info = client.get_collection_stats("frame_embeddings_mock_aic_2026_clip_mock")
+    info = client.get_collection_stats("keyframe_embeddings")
     print(f"  [OK] Connection OK - collection exists, stats: {info}")
     results.append(("Milvus", True))
 except Exception:

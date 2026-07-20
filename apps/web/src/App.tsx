@@ -173,7 +173,6 @@ export function App() {
 
   // ─── Ingest modal state ───
   const [ingestOpen, setIngestOpen] = useState(false);
-  const [ingestMode, setIngestMode] = useState<"demo" | "mock">("demo");
   const [datasetRoot, setDatasetRoot] = useState("");
   const [targetDatasetCode, setTargetDatasetCode] = useState("");
   const [ingestJobId, setIngestJobId] = useState<string | null>(null);
@@ -549,7 +548,7 @@ export function App() {
     setIngestJobMessage("Starting demo ingest...");
     try {
       const job = await startIngestJob({
-        mode: ingestMode,
+        mode: "demo",
         dataset_code: targetDatasetCode.trim() || undefined,
         dataset_root: datasetRoot.trim() || undefined,
       });
@@ -1238,19 +1237,7 @@ export function App() {
                     disabled={isIngestRunning}
                   />
                 </label>
-                <div className="grid grid-cols-2 gap-[7px]">
-                  <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
-                    Mode
-                    <select
-                      value={ingestMode}
-                      onChange={(e) => setIngestMode(e.target.value as "demo" | "mock")}
-                      disabled={isIngestRunning}
-                      className="rounded-[7px] border border-[var(--border-hi)] bg-[var(--bg-raised)] p-[7px_10px] text-[13px] font-medium text-[var(--text-1)] normal-case tracking-normal transition-[border-color,box-shadow] duration-[140ms] ease-[cubic-bezier(0.16,1,0.3,1)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-dim)] focus:outline-none"
-                    >
-                      <option value="demo">Demo pipeline</option>
-                      <option value="mock">Mock / dry-run</option>
-                    </select>
-                  </label>
+                <div className="grid gap-[7px]">
                   <label className="grid gap-[6px] font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-3)]">
                     Dataset code
                     <input

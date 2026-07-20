@@ -31,7 +31,7 @@ class Dataset(Base):
 
     dataset_id = Column(String(36), primary_key=True, default=new_id)
     id = synonym("dataset_id")
-    dataset_code = Column(String(128), nullable=False, default="mock-aic-2026", unique=True)
+    dataset_code = Column(String(128), nullable=False, default="aic-2026", unique=True)
     name = Column(String(255), nullable=False)
     version = Column(String(64), nullable=False)
     root_uri = Column(Text, nullable=False)
@@ -156,7 +156,7 @@ class Event(Base):
     title = Column(Text)
     description = Column(Text)
     event_order = Column(Integer, nullable=False)
-    segmentation_version = Column(String(64), nullable=False, default="mock-v0")
+    segmentation_version = Column(String(64), nullable=False, default="unknown")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     video = relationship("Video", back_populates="events")
@@ -197,7 +197,7 @@ class FrameAnnotation(Base):
     text_value = Column(Text)
     json_value = Column(JSON, nullable=False, default=dict)
     confidence = Column(Float, default=1.0)
-    model_version = Column(String(128), nullable=False, default="mock-v0")
+    model_version = Column(String(128), nullable=False, default="unknown")
     caption = Column(Text)
     ocr_texts = Column(JSON, nullable=False, default=list)
     detected_objects = Column(JSON, nullable=False, default=list)
@@ -219,7 +219,7 @@ class ModelRegistryRecord(Base):
     provider = Column(String(128), nullable=False)
     checkpoint_uri = Column(Text)
     config = Column(JSON, nullable=False, default=dict)
-    status = Column(String(32), nullable=False, default="MOCK")
+    status = Column(String(32), nullable=False, default="READY")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("name", "task", name="uq_model_name_task"),)

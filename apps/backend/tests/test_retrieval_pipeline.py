@@ -12,14 +12,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.adapters.model_runtime.mock import MockEmbedder, MockQueryExpander, MockVisualQaModel
-from app.adapters.text_search.mock import InMemoryTextSearchClient
-from app.adapters.vector_db.mock import InMemoryVectorSearchClient
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, QueryRun, RetrievalResult, Shot, Video
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.router import search as search_endpoint
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
+from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel, InMemoryTextSearchClient, InMemoryVectorSearchClient
 
 
 def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset, Frame, Frame]:
@@ -111,11 +109,11 @@ def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService,
     )
     session.commit()
 
-    embedder = MockEmbedder(dim=64)
+    embedder = DeterministicEmbedder(dim=64)
     model_registry = ModelRegistryService(
         embedder=embedder,
-        query_expander=MockQueryExpander(),
-        visual_qa=MockVisualQaModel(),
+        query_expander=ExpandingQueryExpander(),
+        visual_qa=HintVisualQaModel(),
     )
     vector_client = InMemoryVectorSearchClient()
     text_client = InMemoryTextSearchClient()

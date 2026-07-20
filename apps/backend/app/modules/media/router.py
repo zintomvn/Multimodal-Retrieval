@@ -249,7 +249,7 @@ def frame_context(frame_id: str, window: int = 4, db: Session = Depends(get_db))
 
 
 @router.get("/frames/{frame_id}/thumbnail")
-def mock_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
+def frame_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
     if not frame:
         raise HTTPException(status_code=404, detail="Frame not found")
@@ -286,18 +286,7 @@ def mock_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
         if raw_url:
             return RedirectResponse(url=raw_url, status_code=307, headers=CACHE_HEADERS)
 
-    # Fallback 3: mock SVG
-    title = f"{frame.video.video_code} / {frame.frame_idx}"
-    caption = " ".join((annotation.text_value or "")[:80] for annotation in frame.annotations[:1])
-    color_seed = abs(hash(frame.video.video_code)) % 360
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270">
-<rect width="480" height="270" fill="hsl({color_seed},55%,20%)"/>
-<rect x="16" y="16" width="448" height="238" rx="8" fill="hsl({(color_seed + 40) % 360},45%,32%)"/>
-<text x="28" y="56" fill="white" font-family="Arial" font-size="26" font-weight="700">{title}</text>
-<text x="28" y="96" fill="white" font-family="Arial" font-size="15">{caption}</text>
-<text x="28" y="230" fill="rgba(255,255,255,0.72)" font-family="Arial" font-size="14">mock thumbnail</text>
-</svg>"""
-    return Response(content=svg, media_type="image/svg+xml", headers=CACHE_HEADERS)
+    raise HTTPException(status_code=404, detail="Frame media is not available")
 
 
 @router.get("/videos/{video_id}/preview")

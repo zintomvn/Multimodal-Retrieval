@@ -99,7 +99,7 @@ export interface SubmissionRow {
 export type IngestJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
 
 export interface IngestJobStartRequest {
-  mode: "demo" | "mock";
+  mode: "demo";
   dataset_code?: string;
   dataset_name?: string;
   dataset_version?: string;

@@ -17,10 +17,10 @@ FastAPI Backend
    |-- Elasticsearch: OCR/ASR/caption/object text search
    |-- Redis: cache, locks, job state
    |-- MinIO: videos, keyframes, thumbnails, artifacts
-   `-- Model Runtime: mock/local/HF/OpenAI-compatible adapters
+   `-- Model Runtime: local/HF/OpenAI-compatible adapters
 ```
 
-Bản hiện tại chạy được bằng mock data/mock model. Các adapter thật được đặt sẵn để sau này gắn PE/OpenCLIP, BEiT-3, PaddleOCR, WhisperX, VLM hoặc LLM.
+Backend hiện dùng metadata thật trong PostgreSQL, vector search qua Milvus/Zilliz, text search qua Elasticsearch và media từ object storage. Model runtime được cấu hình bằng registry để gắn OpenCLIP, VLM hoặc LLM qua adapter thật.
 
 ## 2. Cấu trúc thư mục
 
@@ -29,9 +29,9 @@ apps/backend/
 ├── app/
 │   ├── main.py                     # FastAPI app, routers, startup bootstrap
 │   ├── core/                       # Settings, logging/observability hooks
-│   ├── db/                         # SQLAlchemy models, session, seed mock data
+│   ├── db/                         # SQLAlchemy models, session, schema bootstrap
 │   ├── adapters/
-│   │   ├── model_runtime/          # Model interfaces + mock adapter
+│   │   ├── model_runtime/          # Model interfaces + runtime adapters
 │   │   ├── vector_db/              # Milvus + in-memory vector clients
 │   │   └── text_search/            # Elasticsearch + in-memory text clients
 │   ├── modules/
@@ -54,8 +54,7 @@ apps/backend/
 
 1. FastAPI khởi động trong `app.main`.
 2. `init_db()` tạo schema nếu chưa có.
-3. `seed_mock_data()` tạo dataset `mock-aic-2026`, video, frames, annotations và index build mock.
-4. Routers được mount dưới `/api/*`.
+3. Routers được mount dưới `/api/*`.
 
 ### 3.2 KIS / QA retrieval
 
@@ -173,7 +172,9 @@ $env:DATABASE_URL="sqlite:///./data/dev.db"
 $env:MODEL_REGISTRY_PATH="../../configs/model_registry.yaml"
 $env:RETRIEVAL_PROFILES_PATH="../../configs/retrieval_profiles.yaml"
 $env:DATA_ROOT="../../data"
-$env:MOCK_MODE="true"
+$env:STORAGE_PROVIDER="gcs"
+$env:GCS_BUCKET="<bucket-name>"
+$env:GCS_CREDENTIALS_FILE="apps/secrets/<service-account>.json"
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -191,8 +192,9 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `MODEL_REGISTRY_PATH` | `configs/model_registry.yaml` | File khai báo model. |
 | `RETRIEVAL_PROFILES_PATH` | `configs/retrieval_profiles.yaml` | File trọng số retrieval. |
 | `DATA_ROOT` | `./data` | Nơi ghi submissions/artifacts. |
-| `MOCK_MODE` | `true` | Bật mock mode khi chưa có model thật. |
-| `MOCK_EMBEDDING_DIM` | `512` | Số chiều vector cho mock embedder (đặt khớp dimension Milvus collection). |
+| `STORAGE_PROVIDER` | `gcs` | Provider media/object storage: `local`, `gcs` hoặc `r2`. |
+| `GCS_BUCKET` | unset | Bucket chứa keyframes khi dùng GCS. |
+| `GCS_CREDENTIALS_FILE` | unset | Service account JSON để ký signed URL GCS. |
 
 ## 7. API surface
 
@@ -203,14 +205,14 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `GET` | `/api/datasets` | Liệt kê dataset. |
 | `POST` | `/api/datasets` | Tạo dataset draft. |
 | `GET` | `/api/models` | Xem model registry và enabled models. |
-| `POST` | `/api/ingest/jobs` | Tạo ingest job (demo import pipeline thật hoặc mock). |
+| `POST` | `/api/ingest/jobs` | Tạo ingest job demo/import pipeline. |
 | `GET` | `/api/jobs/{job_id}` | Xem trạng thái job. |
 | `POST` | `/api/retrieval/search` | KIS/freeform search. |
 | `POST` | `/api/retrieval/qa` | QA retrieval + answer. |
 | `POST` | `/api/retrieval/trake` | Temporal retrieval. |
 | `GET` | `/api/retrieval/runs/{run_id}` | Lấy lại result của run. |
 | `GET` | `/api/media/frames/{frame_id}/context` | Lấy frame trước/sau. |
-| `GET` | `/api/media/frames/{frame_id}/thumbnail` | Thumbnail mock/S3-ready. |
+| `GET` | `/api/media/frames/{frame_id}/thumbnail` | Redirect thumbnail qua signed URL từ object storage. |
 | `POST` | `/api/submissions` | Tạo draft submission. |
 | `POST` | `/api/submissions/{id}/items` | Ghi rows vào submission. |
 | `POST` | `/api/submissions/{id}/validate` | Validate CSV rules. |
@@ -223,7 +225,7 @@ Quy trình chuẩn:
 
 1. Copy checkpoint vào `models/`.
 2. Sửa `configs/model_registry.yaml`.
-3. Bật `enabled: true` cho model thật, tắt model mock tương ứng nếu cần.
+3. Bật `enabled: true` cho model thật cần dùng.
 4. Implement adapter trong `app/adapters/model_runtime/` nếu model chưa có adapter.
 5. Chạy lại ingest/index.
 6. Benchmark với `scripts/benchmark_retrieval.py`.
@@ -289,10 +291,10 @@ Test gate M2:
 pytest tests/test_ingestion_pipeline.py -q
 ```
 
-Test docs với Supabase + Zilliz + Elasticsearch (không dùng mock vector/text):
+Test docs với Supabase + Zilliz + Elasticsearch:
 
 ```powershell
-$env:MOCK_MODE="false"
+$env:STORAGE_PROVIDER="gcs"
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -396,7 +398,7 @@ select count(*) from events;
 | --- | --- |
 | `ModuleNotFoundError` khi chạy local | Kiểm tra đã activate venv và `pip install -r requirements.txt`. |
 | Backend không connect PostgreSQL | Chạy `docker compose ps`, đảm bảo `postgres` healthy. |
-| Search không có dataset | Gọi `GET /api/datasets`; nếu rỗng, restart backend để seed mock hoặc tạo dataset. |
+| Search không có dataset | Gọi `GET /api/datasets`; nếu rỗng, import metadata từ GCS hoặc tạo dataset. |
 | Export ZIP invalid | Gọi `/api/submissions/{id}/validate` để xem `errors`. |
 | Model thật không load | Kiểm tra `checkpoint_uri`, `device`, dependency GPU và adapter init. |
-| Milvus/Elasticsearch chưa dùng dữ liệu thật | Hiện scaffold rank bằng DB/mock; implement index worker rồi bật adapter thật. |
+| Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
