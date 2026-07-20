@@ -84,6 +84,8 @@ class RetrievalService:
         )
         self.db.add(run)
         self.db.flush()
+        run_id = run.id
+        self.db.commit()
 
         try:
             if request.query_type == "TRAKE":
@@ -98,8 +100,14 @@ class RetrievalService:
             run.options = {**(run.options or {}), "latency_ms": latency_ms}
             self.db.commit()
         except Exception:
-            run.status = "FAILED"
-            self.db.commit()
+            self.db.rollback()
+            try:
+                failed_run = self.db.get(QueryRun, run_id)
+                if failed_run is not None:
+                    failed_run.status = "FAILED"
+                    self.db.commit()
+            except Exception:
+                self.db.rollback()
             raise
 
         return SearchResponse(

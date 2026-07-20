@@ -9,6 +9,25 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_repo_path(raw: str, *, fallback_base: Path = REPO_ROOT) -> Path:
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+
+    candidates = [
+        BACKEND_ROOT / path,
+        REPO_ROOT / path,
+        Path.cwd() / path,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return (fallback_base / path).resolve()
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -29,9 +48,9 @@ class Settings:
     gcs_credentials_file: str = os.getenv("GCS_CREDENTIALS_FILE", "")
     gcs_public_url: str = os.getenv("GCS_PUBLIC_URL", "")
     storage_provider: str = os.getenv("STORAGE_PROVIDER", "gcs")  # "local" | "r2" | "gcs"
-    data_root: Path = Path(os.getenv("DATA_ROOT", "./data"))
-    model_registry_path: Path = Path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
-    retrieval_profiles_path: Path = Path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
+    data_root: Path = _resolve_repo_path(os.getenv("DATA_ROOT", "./data"))
+    model_registry_path: Path = _resolve_repo_path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
+    retrieval_profiles_path: Path = _resolve_repo_path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
 
     @property
     def cors_origins(self) -> list[str]:
