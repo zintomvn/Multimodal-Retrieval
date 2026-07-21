@@ -11,13 +11,13 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.adapters.model_runtime.mock import MockEmbedder, MockQueryExpander, MockVisualQaModel
 from app.adapters.text_search.base import TextHit
 from app.adapters.vector_db.base import VectorHit
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, Shot, Video
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
+from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel
 
 
 class StubVectorClient:
@@ -186,9 +186,9 @@ def _build_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset]:
     session.commit()
 
     model_registry = ModelRegistryService(
-        embedder=MockEmbedder(dim=64),
-        query_expander=MockQueryExpander(),
-        visual_qa=MockVisualQaModel(),
+        embedder=DeterministicEmbedder(dim=64),
+        query_expander=ExpandingQueryExpander(),
+        visual_qa=HintVisualQaModel(),
     )
     service = RetrievalService(
         db=session,

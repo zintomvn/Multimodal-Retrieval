@@ -20,15 +20,6 @@ class PipelineStage(Protocol):
         ...
 
 
-class MockStage:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def run(self, context: PipelineContext) -> PipelineContext:
-        context.stats[self.name] = "mock-completed"
-        return context
-
-
 DEFAULT_STAGE_ORDER = [
     "dataset_scan",
     "shot_detection",
@@ -44,7 +35,3 @@ DEFAULT_STAGE_ORDER = [
     "milvus_index",
     "text_index",
 ]
-
-
-def build_mock_pipeline() -> list[PipelineStage]:
-    return [MockStage(name) for name in DEFAULT_STAGE_ORDER]

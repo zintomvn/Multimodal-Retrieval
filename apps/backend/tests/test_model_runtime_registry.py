@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core import deps
 from app.core.deps import get_model_registry_service
 from app.modules.models.service import ModelRegistryService
 
@@ -45,7 +46,6 @@ def test_model_runtime_uses_openai_compatible_entries_when_enabled(monkeypatch) 
         },
     }
     monkeypatch.setattr(ModelRegistryService, "load_registry", staticmethod(lambda _: registry))
-    monkeypatch.setattr(deps, "logger", deps.logger)
     get_model_registry_service.cache_clear()
 
     svc = get_model_registry_service()
@@ -56,7 +56,7 @@ def test_model_runtime_uses_openai_compatible_entries_when_enabled(monkeypatch) 
     assert svc.visual_qa.__class__.__name__ == "OpenAICompatibleVisualQaModel"
 
 
-def test_model_runtime_falls_back_to_mock_when_enabled_embedder_is_invalid(monkeypatch) -> None:
+def test_model_runtime_raises_when_enabled_embedder_is_invalid(monkeypatch) -> None:
     registry = {
         "embedders": {
             "broken_embedder": {
@@ -65,13 +65,22 @@ def test_model_runtime_falls_back_to_mock_when_enabled_embedder_is_invalid(monke
                 "base_url": "http://localhost:8001/v1",
                 "enabled": True,
             }
-        },
-        "llm": {"mock_query": {"task": "query_expansion", "provider": "mock", "enabled": True}},
-        "vision_language": {"mock_vqa": {"task": "visual_qa", "provider": "mock", "enabled": True}},
+        }
     }
+    monkeypatch.setattr(ModelRegistryService, "load_registry", staticmethod(lambda _: registry))
+    get_model_registry_service.cache_clear()
+
+    with pytest.raises(RuntimeError, match="missing base_url/model"):
+        get_model_registry_service()
+
+
+def test_model_runtime_uses_non_model_fallbacks_when_optional_services_are_disabled(monkeypatch) -> None:
+    registry = {}
     monkeypatch.setattr(ModelRegistryService, "load_registry", staticmethod(lambda _: registry))
     get_model_registry_service.cache_clear()
 
     svc = get_model_registry_service()
 
-    assert svc.embedder.__class__.__name__ == "MockEmbedder"
+    assert svc.embedder.__class__.__name__ == "UnavailableTextImageEmbedder"
+    assert svc.query_expander.__class__.__name__ == "PassthroughQueryExpander"
+    assert svc.visual_qa.__class__.__name__ == "UnavailableVisualQaModel"

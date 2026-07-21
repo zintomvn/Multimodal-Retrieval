@@ -247,17 +247,15 @@ def test_ingest_job_request_demo_mode():
     assert req.dataset_code == "test"
 
 
-def test_ingest_job_request_mock_mode():
+def test_ingest_job_request_rejects_unsupported_mode():
     from app.modules.ingest.schemas import IngestJobRequest
 
-    req = IngestJobRequest(mode="mock")
-    assert req.mode == "mock"
-    assert req.dry_run is False
+    with pytest.raises(ValidationError):
+        IngestJobRequest(mode="legacy")
 
 
 def test_ingest_job_request_no_real_mode():
-    """'real' mode should still be accepted by schema but not by router."""
     from app.modules.ingest.schemas import IngestJobRequest
 
-    req = IngestJobRequest(mode="real")
-    assert req.mode == "real"
+    with pytest.raises(ValidationError):
+        IngestJobRequest(mode="real")

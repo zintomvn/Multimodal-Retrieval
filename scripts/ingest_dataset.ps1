@@ -1,8 +1,12 @@
 param(
   [string]$ApiBase = "http://localhost:8000",
-  [string]$ManifestPath = "configs/dataset_manifest.example.yaml",
-  [string]$Mode = "mock"
+  [string]$ManifestPath = "",
+  [string]$Mode = "demo"
 )
+
+if ($ManifestPath -eq "") {
+  throw "Set -ManifestPath to a real dataset manifest path."
+}
 
 $body = @{
   manifest_path = $ManifestPath

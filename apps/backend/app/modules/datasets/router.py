@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.models import Dataset
+from app.db.models import Dataset, Video
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -19,6 +20,11 @@ class DatasetCreate(BaseModel):
 @router.get("")
 def list_datasets(db: Session = Depends(get_db)) -> dict:
     datasets = db.query(Dataset).order_by(Dataset.created_at.desc()).all()
+    video_counts = dict(
+        db.query(Video.dataset_id, func.count(Video.video_id))
+        .group_by(Video.dataset_id)
+        .all()
+    )
     return {
         "datasets": [
             {
@@ -27,7 +33,7 @@ def list_datasets(db: Session = Depends(get_db)) -> dict:
                 "version": item.version,
                 "root_uri": item.root_uri,
                 "status": item.status,
-                "video_count": len(item.videos),
+                "video_count": int(video_counts.get(item.id, 0)),
             }
             for item in datasets
         ]

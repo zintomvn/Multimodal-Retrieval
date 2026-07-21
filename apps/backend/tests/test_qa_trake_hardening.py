@@ -11,12 +11,12 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.adapters.model_runtime.base import VisualQaModel
-from app.adapters.model_runtime.mock import MockEmbedder, MockQueryExpander, MockVisualQaModel
 from app.adapters.text_search.base import TextHit
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, RetrievalResult, Shot, Video
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
+from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel
 
 
 class LongAnswerQaModel(VisualQaModel):
@@ -123,8 +123,8 @@ def test_m5_qa_answer_is_postprocessed_to_max_100_chars(tmp_path: Path) -> None:
     _seed_video_with_frames(db, dataset, "L30_V001", [10])
 
     model_registry = ModelRegistryService(
-        embedder=MockEmbedder(dim=64),
-        query_expander=MockQueryExpander(),
+        embedder=DeterministicEmbedder(dim=64),
+        query_expander=ExpandingQueryExpander(),
         visual_qa=LongAnswerQaModel(),
     )
     service = RetrievalService(db=db, model_registry=model_registry, vector_client=None, text_client=TextClientForQa())
@@ -160,9 +160,9 @@ def test_m5_trake_returns_stable_ordering_metadata(tmp_path: Path) -> None:
     _seed_video_with_frames(db, dataset, "L30_V002", [15, 25])
 
     model_registry = ModelRegistryService(
-        embedder=MockEmbedder(dim=64),
-        query_expander=MockQueryExpander(),
-        visual_qa=MockVisualQaModel(),
+        embedder=DeterministicEmbedder(dim=64),
+        query_expander=ExpandingQueryExpander(),
+        visual_qa=HintVisualQaModel(),
     )
     service = RetrievalService(db=db, model_registry=model_registry, vector_client=None, text_client=TextClientForTrake())
 

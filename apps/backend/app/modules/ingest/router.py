@@ -32,7 +32,6 @@ def create_ingest_job(
     request: IngestJobRequest,
     db: Session = Depends(get_db),
 ) -> IngestJobResponse:
-    settings = get_settings()
     job = Job(
         kind="INGEST",
         status="RUNNING",
@@ -43,23 +42,6 @@ def create_ingest_job(
     db.add(job)
     db.commit()
     db.refresh(job)
-
-    if request.mode == "mock":
-        job.status = "COMPLETED"
-        job.progress = 1.0
-        job.message = "Mock ingest completed."
-        job.payload = {
-            **request.model_dump(mode="json"),
-            "report": {
-                "mode": "mock",
-                "dataset_root": str(settings.data_root),
-                "targets": request.targets,
-                "dry_run": request.dry_run,
-            },
-        }
-        db.commit()
-        db.refresh(job)
-        return IngestJobResponse(job_id=job.id, status=job.status, message=job.message or "", report=job.payload.get("report", {}))
 
     selected_targets = set(request.targets)
     object_storage = get_object_storage() if {"pg", "media"} & selected_targets else None

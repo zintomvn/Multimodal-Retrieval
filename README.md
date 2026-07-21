@@ -2,7 +2,7 @@
 
 Trợ lý truy xuất multimedia cho AI Challenge 2026. Hệ thống hỗ trợ ingest dữ liệu video/hình ảnh/âm thanh/văn bản, preprocessing metadata, tìm kiếm KIS/QA/TRAKE, xem context frame, chọn kết quả và export `submission.zip` đúng format Codabench.
 
-Backend hiện chạy được bằng mock data/mock model để nhóm phát triển song song trước khi có dataset và model thật. Kiến trúc đã chuẩn bị sẵn PostgreSQL, Milvus, Elasticsearch, MinIO, Redis và model adapters để nâng cấp dần.
+Backend hiện chạy với metadata trong PostgreSQL, vector embeddings trong Milvus/Zilliz, text index trong Elasticsearch và media trên object storage như GCS/S3. Luồng dữ liệu chính đi từ frame đã xử lý trên cloud sang PostgreSQL/Zilliz, không dùng dữ liệu mẫu local.
 
 ## 1. Mục Tiêu Hệ Thống
 
@@ -11,7 +11,7 @@ Backend hiện chạy được bằng mock data/mock model để nhóm phát tri
 - **TRAKE**: tìm chuỗi frame theo thứ tự sự kiện thời gian.
 - **Human-in-the-loop**: người thi xem ranked results, kiểm tra context và chọn đáp án.
 - **Submission builder**: xuất CSV/ZIP đúng cấu trúc `submission/`.
-- **Model-ready**: có registry để thay mock model bằng model thật.
+- **Model-ready**: có registry để bật/tắt embedding, VLM và LLM thật theo môi trường.
 
 ## 2. Kiến Trúc Tổng Quan
 
@@ -29,7 +29,7 @@ apps/backend
         |-- Elasticsearch: OCR/ASR/caption/object text index
         |-- MinIO: media artifacts
         |-- Redis: cache/job state
-        `-- Model adapters: mock/local/HF/OpenAI-compatible
+        `-- Model adapters: local/HF/OpenAI-compatible
 ```
 
 ## 3. Cấu Trúc Thư Mục
@@ -53,12 +53,10 @@ Multimodal-Retrieval/
 │       ├── README.md             # Frontend-specific documentation
 │       └── package.json
 ├── configs/
-│   ├── dataset_manifest.example.yaml
 │   ├── dataset_manifest.real.example.yaml  # Manifest mẫu cho dataset thật
 │   ├── model_registry.yaml       # Bật/tắt model và khai báo checkpoint
 │   └── retrieval_profiles.yaml   # Trọng số ranking/retrieval
-├── data/
-│   └── mock/                     # Query/data mẫu cho mock mode
+├── data/                         # Báo cáo xử lý, artifacts nhỏ và output tạm
 ├── docs/
 │   ├── blueprint/                # Proposal + technical design
 │   ├── tasks/                    # Milestone/phase task plans
@@ -85,7 +83,7 @@ Khuyến nghị:
 - PowerShell trên Windows.
 - Node.js 22+ nếu chạy frontend không qua Docker.
 - Python 3.11+ nếu chạy backend không qua Docker.
-- GPU CUDA chỉ cần khi bật model thật; mock mode không cần GPU.
+- GPU CUDA cần cho các bước embedding/extraction chạy local; cloud model runtime có thể chạy qua endpoint riêng.
 
 ## 5. Chạy Nhanh Bằng Docker
 
@@ -167,7 +165,9 @@ $env:DATABASE_URL="sqlite:///./data/dev.db"
 $env:MODEL_REGISTRY_PATH="../../configs/model_registry.yaml"
 $env:RETRIEVAL_PROFILES_PATH="../../configs/retrieval_profiles.yaml"
 $env:DATA_ROOT="../../data"
-$env:MOCK_MODE="true"
+$env:STORAGE_PROVIDER="gcs"
+$env:GCS_BUCKET="<bucket-name>"
+$env:GCS_CREDENTIALS_FILE="apps/secrets/<service-account>.json"
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -220,7 +220,7 @@ Khi search: Milvus trả về `frame_id` → JOIN vào Postgres → lấy `thumb
 
 ### 8.1 Ingest/Preprocessing
 
-Giai đoạn hiện tại hỗ trợ mock ingest để kiểm tra pipeline/API/DB trước.
+Luồng hiện tại import metadata frame từ GCS vào PostgreSQL, sau đó ingest vector vào Milvus/Zilliz bằng processor.
 
 ```powershell
 .\scripts\ingest_dataset.ps1
@@ -263,10 +263,10 @@ Invoke-RestMethod -Method Post `
   -Body $body
 ```
 
-Kỳ vọng mock mode:
+Kỳ vọng khi đã ingest dữ liệu thật:
 
 ```text
-Top result: L00_V000, frame 1234
+Top result trả về `video_code`, `frame_idx` và thumbnail qua `/api/media/frames/{frame_id}/thumbnail`.
 ```
 
 ### 8.3 Upload Dữ Liệu Lên Cloud
@@ -488,14 +488,11 @@ Ví dụ:
 
 ```yaml
 embedders:
-  clip_mock:
-    provider: mock
-    enabled: false
-  pe_core_bigg:
-    provider: huggingface
-    checkpoint_uri: models/pe-core-bigg
-    device: cuda:0
-    dtype: fp16
+  openai_embedding:
+    provider: openai_compatible
+    base_url: http://localhost:8002/v1
+    model: openclip-ViT-B-32
+    dimension: 512
     enabled: true
 ```
 
@@ -514,13 +511,13 @@ Xem hướng dẫn chi tiết:
 docker compose run --rm --no-deps `
   -e DATABASE_URL=sqlite:////tmp/multimodal_smoke.db `
   -e DATA_ROOT=/tmp/data `
-  backend python -c "from app.db.bootstrap import init_db, seed_mock_data; from app.db.session import SessionLocal; from app.db.models import Dataset; from app.modules.retrieval.service import RetrievalService; from app.modules.retrieval.schemas import SearchRequest; init_db(); db=SessionLocal(); seed_mock_data(db); ds=db.query(Dataset).first(); resp=RetrievalService(db).search(SearchRequest(dataset_id=ds.id, query_name='query-1-kis', query_type='KIS', query_text='royal decorative panel dragon cloud PHU XUAN GIA DINH', top_k=3)); print(resp.results[0].video_code, resp.results[0].frame_idx); db.close()"
+  backend python -c "from app.db.bootstrap import init_db; init_db(); print('db ok')"
 ```
 
 Kỳ vọng:
 
 ```text
-L00_V000 1234
+db ok
 ```
 
 ### 10.2 Frontend build test
@@ -570,7 +567,7 @@ Test plan chi tiết:
 | Elasticsearch không phản hồi | `Invoke-RestMethod http://localhost:9200` |
 | Frontend không load dataset | Kiểm tra `VITE_API_BASE_URL` và backend `/healthz`. |
 | Port bị chiếm | Dừng stack cũ bằng `docker compose down --remove-orphans`. |
-| Search không đúng | Kiểm tra mock dataset, query text, `score_breakdown`. |
+| Search không đúng | Kiểm tra dataset đã import, query text, vector collection và `score_breakdown`. |
 | Export ZIP lỗi | Gọi `/api/submissions/{id}/validate` để xem lỗi format. |
 | Upload GCS lỗi 413 | File vượt giới hạn 2 GB — dùng server path hoặc Kaggle script. |
 | Upload GCS không tìm thấy file | Backend không mount đường dẫn đó — kiểm tra path tuyệt đối trong container. |
