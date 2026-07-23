@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, VisualQaModel
+from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, TextReranker, VisualQaModel
 
 
 class PassthroughQueryExpander(QueryExpander):
@@ -26,3 +26,10 @@ class UnavailableVisualQaModel(VisualQaModel):
 
     def answer(self, question: str, evidence_text: str, answer_hint: str | None = None) -> str:
         raise RuntimeError("No visual QA model is configured.")
+
+
+class UnavailableTextReranker(TextReranker):
+    """Return neutral rerank scores when no reranker service is configured."""
+
+    def rerank(self, query: str, passages: list[str]) -> list[float]:
+        return [0.0 for _ in passages]

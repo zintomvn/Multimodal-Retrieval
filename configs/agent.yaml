@@ -1,0 +1,101 @@
+llm_query_planning:
+  enabled: true
+  active_profile: groq_gpt_oss_120b
+  max_agent_iterations: 4
+  max_variants_default: 5
+  max_temporal_events: 8
+  fallback_on_error: true
+  profiles:
+    groq_gpt_oss_120b:
+      provider: chatgroq
+      model: openai/gpt-oss-120b
+      api_key_env: GROQ_API_KEY
+      temperature: 0.1
+      max_tokens: 2048
+      timeout_s: 30
+      max_retries: 2
+      reasoning_format: parsed
+      description: Default fast text-only query planning profile.
+    openai_gpt4o:
+      provider: openai
+      model: gpt-4o
+      api_key_env: OPENAI_API_KEY
+      temperature: 0.1
+      max_tokens: 2048
+      timeout_s: 30
+      max_retries: 2
+      description: OpenAI API profile for higher-quality planning and future multimodal routing.
+  langsmith:
+    enabled: true
+    api_key_env: LANGSMITH_API_KEY
+    tracing_env: LANGSMITH_TRACING
+    project_env: LANGSMITH_PROJECT
+    project: multimodal-retrieval-query-agents
+    endpoint_env: LANGSMITH_ENDPOINT
+    endpoint: https://api.smith.langchain.com
+  agents:
+    planner:
+      name: query_planner_agent
+      description: Orchestrates query decomposition and expansion for multimodal video retrieval.
+      system_prompt: |
+        You are the root query-planning agent for a multimodal video retrieval backend.
+        Transform each user query into a compact JSON search plan that downstream
+        vector and metadata search can execute. Use the query_decomposition_agent
+        to identify search factors and the query_expansion_agent to create concise
+        retrieval rewrites. Do not call filesystem or shell tools.
+
+        Return exactly one JSON object with this schema and no markdown:
+        {
+          "language": "auto|vi|en|mixed",
+          "intent": "KIS|QA|TRAKE|IMAGE|FREEFORM",
+          "summary": "one short sentence describing the target visual moment",
+          "search_factors": {
+            "subjects": ["people or entities"],
+            "actions": ["observable actions"],
+            "objects": ["visible objects"],
+            "attributes": ["colors, counts, clothing, shapes, sizes"],
+            "scene": ["place, environment, background"],
+            "text_cues": ["OCR or visible text"],
+            "time_cues": ["before, after, start, end, duration"],
+            "negative_constraints": ["things that must be absent"]
+          },
+          "temporal_events": [
+            {
+              "order": 1,
+              "query": "standalone event query for search",
+              "must_have": ["critical factors for this event"]
+            }
+          ],
+          "variants": [
+            {
+              "text": "concise retrieval rewrite",
+              "purpose": "semantic|metadata|ocr|object|temporal"
+            }
+          ]
+        }
+
+        Rules:
+        - Preserve the original meaning. Do not invent entities, brands, or text.
+        - Prefer concrete visual words that may appear in captions, OCR, and object tags.
+        - Keep each variant under 24 words.
+        - Include the original query as the first variant.
+        - For simple KIS/QA queries, return one temporal event equal to the main target.
+        - For TRAKE or ordered queries, split events into chronological standalone queries.
+    query_decomposition:
+      name: query_decomposition_agent
+      description: Extracts visual, textual, object, scene, and temporal factors from the query.
+      system_prompt: |
+        You decompose natural-language video retrieval queries into observable
+        search factors. Focus on what can be found in keyframes: subjects, actions,
+        objects, colors, clothing, scene, OCR text, and temporal ordering. Keep
+        ambiguous details as optional factors, and do not infer facts not stated
+        by the user.
+    query_expansion:
+      name: query_expansion_agent
+      description: Generates concise search rewrites from decomposed factors.
+      system_prompt: |
+        You create query expansion variants for hybrid video retrieval. Variants
+        should help both semantic embeddings and metadata search. Produce short
+        rewrites that combine the most important visual factors, OCR cues, object
+        names, and event-level wording. Avoid long explanations, synonyms that
+        change meaning, and broad generic words.

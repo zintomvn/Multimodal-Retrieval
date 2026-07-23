@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
+from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
@@ -48,6 +49,8 @@ class FrameScore:
     weighted_score: float
     rrf_score: float
     final_score: float
+    rerank_score: float = 0.0
+    rerank_detail: dict[str, Any] = field(default_factory=dict)
     filter_debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -65,6 +68,7 @@ class RetrievalService:
         self.text_client = text_client
         self.settings = get_settings()
         self.profiles = self._load_profiles()
+        self.query_planner = AgentQueryPlanner.from_config(self.settings.agent_config_path)
 
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
@@ -158,18 +162,50 @@ class RetrievalService:
         expansion_profile = profile.get("query_expansion", {})
         max_variants = int(expansion_profile.get("max_variants", 5))
         expansion_default_enabled = bool(expansion_profile.get("enabled_default", True))
-        variants = [request.query_text]
+        query_text = request.query_text.strip()
+        variants = [query_text]
+        agent_plan = None
         if request.options.use_query_expansion and expansion_default_enabled:
-            variants = self.model_registry.query_expander.expand(request.query_text, max_variants=max_variants)
-        temporal_events = request.options.temporal_events or self._split_temporal_events(request.query_text)
-        return {
-            "language": "auto",
+            if request.options.use_agent_query_planning:
+                agent_plan = self.query_planner.plan(
+                    query=query_text,
+                    query_type=request.query_type,
+                    max_variants=max_variants,
+                )
+                if agent_plan.source == "langchain_deep_agent" and agent_plan.variants:
+                    variants = agent_plan.variants
+                else:
+                    variants = self._expand_query_variants(query_text, max_variants=max_variants)
+            else:
+                variants = self._expand_query_variants(query_text, max_variants=max_variants)
+        temporal_events = (
+            request.options.temporal_events
+            or (agent_plan.temporal_events if agent_plan and agent_plan.temporal_events else [])
+            or self._split_temporal_events(query_text)
+        )
+        normalized = {
+            "language": agent_plan.language if agent_plan else "auto",
             "variants": variants,
             "tokens": normalize_tokens(" ".join(variants)),
             "temporal_events": temporal_events,
             "profile": request.profile,
             "filters": self._normalized_filter_options(request.options),
         }
+        if agent_plan is not None:
+            normalized["agent_query_plan"] = agent_plan.as_normalized_query()
+        return normalized
+
+    def _expand_query_variants(self, query: str, max_variants: int) -> list[str]:
+        try:
+            variants = self.model_registry.query_expander.expand(query, max_variants=max_variants)
+        except Exception:
+            variants = []
+        deduped: list[str] = []
+        for item in [query, *variants]:
+            value = str(item).strip()
+            if value and value not in deduped:
+                deduped.append(value)
+        return deduped[: max(1, max_variants)]
 
     def _split_temporal_events(self, query: str) -> list[str]:
         separators = [r"\bthen\b", r"\bafter that\b", r"\bsau đó\b", r"\btiếp theo\b", r";", r"\(e\d+\)\s*:"]
@@ -187,6 +223,7 @@ class RetrievalService:
         candidates = self._rank_frames(
             dataset=dataset,
             variants=normalized["variants"],
+            query_text=request.query_text,
             profile_name=request.profile,
             options=request.options,
             top_k=request.top_k,
@@ -213,6 +250,8 @@ class RetrievalService:
                     "quality_score": round(candidate.quality_score, 6),
                     "weighted_score": round(candidate.weighted_score, 6),
                     "rrf_score": round(candidate.rrf_score, 6),
+                    "rerank_score": round(candidate.rerank_score, 6),
+                    "rerank_detail": candidate.rerank_detail,
                     "final_score": round(candidate.final_score, 6),
                     "filter_debug": candidate.filter_debug,
                 },
@@ -236,6 +275,7 @@ class RetrievalService:
             ranked = self._rank_frames(
                 dataset=dataset,
                 variants=[event_query],
+                query_text=event_query,
                 profile_name=request.profile,
                 options=request.options,
                 top_k=80,
@@ -322,6 +362,7 @@ class RetrievalService:
         self,
         dataset: Dataset,
         variants: list[str],
+        query_text: str,
         profile_name: str,
         options: SearchOptions,
         top_k: int,
@@ -366,6 +407,8 @@ class RetrievalService:
             return self._fallback_rank_frames(
                 dataset=dataset,
                 variants=variants,
+                query_text=query_text,
+                profile=profile,
                 semantic_weight=semantic_weight,
                 text_weight=text_weight,
                 quality_weight=quality_weight,
@@ -450,7 +493,7 @@ class RetrievalService:
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        return scored
+        return self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
 
     def _semantic_scores(self, variants: list[str], top_k: int, dataset_video_ids: set[str]) -> tuple[dict[str, float], bool]:
         if self.vector_client is None:
@@ -527,6 +570,8 @@ class RetrievalService:
         self,
         dataset: Dataset,
         variants: list[str],
+        query_text: str,
+        profile: dict[str, Any],
         semantic_weight: float,
         text_weight: float,
         quality_weight: float,
@@ -602,7 +647,97 @@ class RetrievalService:
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        return scored
+        return self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
+
+    def _apply_reranking(
+        self,
+        query_text: str,
+        scored: list[FrameScore],
+        profile: dict[str, Any],
+        options: SearchOptions,
+    ) -> list[FrameScore]:
+        raw_rerank_profile = profile.get("reranking", {})
+        rerank_profile = raw_rerank_profile if isinstance(raw_rerank_profile, dict) else {}
+        if not options.use_reranker or not bool(rerank_profile.get("enabled", False)) or not scored:
+            return scored
+
+        reranker = getattr(self.model_registry, "reranker", None)
+        if reranker is None:
+            return scored
+
+        top_k = min(len(scored), max(1, int(rerank_profile.get("top_k", min(50, len(scored))))))
+        blend = min(1.0, max(0.0, float(rerank_profile.get("blend", 0.35))))
+        cross_weight = float(rerank_profile.get("cross_encoder_weight", 0.8))
+        mllm_weight = float(rerank_profile.get("mllm_weight", 0.2))
+        raw_mllm_cfg = rerank_profile.get("mllm", {})
+        mllm_cfg = raw_mllm_cfg if isinstance(raw_mllm_cfg, dict) else {}
+        mllm_enabled = bool(mllm_cfg.get("enabled", False))
+        mllm_top_k = min(top_k, max(1, int(mllm_cfg.get("top_k", min(10, top_k)))))
+
+        top_items = scored[:top_k]
+        passages = [self._frame_text(item.frame) or item.frame.video.video_code for item in top_items]
+        try:
+            cross_scores = reranker.rerank(query_text, passages)
+        except Exception:
+            cross_scores = [0.0 for _ in top_items]
+        cross_scores = self._normalize_signal(cross_scores)
+
+        mllm_scores = [0.0 for _ in top_items]
+        if mllm_enabled:
+            for index, item in enumerate(top_items[:mllm_top_k]):
+                evidence = passages[index]
+                answer_hint = self._answer_hint(item.frame)
+                try:
+                    answer = self.model_registry.visual_qa.answer(query_text, evidence, answer_hint)
+                except Exception:
+                    answer = ""
+                mllm_scores[index] = self._alignment_score(query_text, answer or evidence, evidence)
+        mllm_scores = self._normalize_signal(mllm_scores)
+
+        reranked_top: list[FrameScore] = []
+        for index, item in enumerate(top_items):
+            rerank_signal = (cross_weight * cross_scores[index]) + (mllm_weight * mllm_scores[index])
+            final_score = (1.0 - blend) * item.final_score + blend * rerank_signal
+            reranked_top.append(
+                FrameScore(
+                    frame=item.frame,
+                    semantic_score=item.semantic_score,
+                    text_score=item.text_score,
+                    quality_score=item.quality_score,
+                    weighted_score=item.weighted_score,
+                    rrf_score=item.rrf_score,
+                    final_score=final_score,
+                    rerank_score=rerank_signal,
+                    rerank_detail={
+                        "cross_encoder": round(cross_scores[index], 6),
+                        "cross_encoder_weight": cross_weight,
+                        "mllm": round(mllm_scores[index], 6),
+                        "mllm_weight": mllm_weight,
+                        "blend": blend,
+                        "backend": getattr(reranker, "backend", reranker.__class__.__name__),
+                    },
+                    filter_debug=item.filter_debug,
+                )
+            )
+
+        reranked = reranked_top + scored[top_k:]
+        reranked.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
+        return reranked
+
+    def _normalize_signal(self, scores: list[float]) -> list[float]:
+        if not scores:
+            return []
+        high = max(scores)
+        low = min(scores)
+        if math.isclose(high, low):
+            return [1.0 if high > 0 else 0.0 for _ in scores]
+        span = high - low
+        return [(score - low) / span for score in scores]
+
+    def _alignment_score(self, query_text: str, answer_text: str, evidence_text: str) -> float:
+        answer_score = cosine_like_overlap(query_text, answer_text)
+        evidence_score = cosine_like_overlap(query_text, evidence_text)
+        return max(answer_score, evidence_score)
 
     def _normalized_filter_options(self, options: SearchOptions) -> dict[str, Any]:
         video_codes = sorted({code.strip() for code in options.video_codes if code.strip()})
