@@ -42,6 +42,7 @@ EVENT_ID_RE = re.compile(r"^(.*_E)(\d+)$")
 @dataclass
 class SourceConfig:
     source_id: str
+    source_type: str
     source_dataset_id: str
     display_name: str
     source_version: str
@@ -57,16 +58,19 @@ def _load_source_config(source_id: str) -> SourceConfig:
 
     defaults = config.get("defaults", {})
     gcs_defaults = defaults.get("gcs", {})
-    raw_prefix_base = gcs_defaults.get("raw_prefix", "raw/source=kaggle")
 
     for ds in config.get("datasets", []):
         if ds.get("source_id") == source_id:
             dataset_id = ds.get("dataset_id", source_id)
+            source_type = ds.get("source_type", defaults.get("source_type", "kaggle"))
+            source_defaults = defaults.get(source_type, {})
+            raw_prefix_base = ds.get("raw_prefix") or source_defaults.get("raw_prefix") or gcs_defaults.get("raw_prefix", f"raw/source={source_type}")
             return SourceConfig(
                 source_id=source_id,
+                source_type=source_type,
                 source_dataset_id=dataset_id,
                 display_name=ds.get("display_name", source_id),
-                source_version=defaults.get("source_version", "kaggle_current"),
+                source_version=ds.get("source_version", defaults.get("source_version", "kaggle_current")),
                 raw_prefix=f"{raw_prefix_base}/dataset={dataset_id}",
                 expected_batches=ds.get("expected_batches", []),
             )

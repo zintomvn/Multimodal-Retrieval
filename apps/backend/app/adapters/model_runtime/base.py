@@ -34,3 +34,9 @@ class VisualQaModel(ABC):
     @abstractmethod
     def answer(self, question: str, evidence_text: str, answer_hint: str | None = None) -> str:
         raise NotImplementedError
+
+
+class TextReranker(ABC):
+    @abstractmethod
+    def rerank(self, query: str, passages: list[str]) -> list[float]:
+        raise NotImplementedError

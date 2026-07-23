@@ -14,10 +14,28 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, QueryRun, RetrievalResult, Shot, Video
 from app.modules.models.service import ModelRegistryService
+from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.router import search as search_endpoint
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
 from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel, InMemoryTextSearchClient, InMemoryVectorSearchClient
+
+
+class PreferenceReranker:
+    def __init__(self, preferred_token: str) -> None:
+        self.preferred_token = preferred_token.lower()
+        self.backend = "fake"
+
+    def rerank(self, query: str, passages: list[str]) -> list[float]:
+        scores: list[float] = []
+        for passage in passages:
+            score = 0.1
+            if self.preferred_token in passage.lower():
+                score = 0.95
+            elif query.lower().split()[0] in passage.lower():
+                score = 0.5
+            scores.append(score)
+        return scores
 
 
 def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset, Frame, Frame]:
@@ -208,6 +226,114 @@ def test_m3_search_returns_hybrid_scores_and_persists_run(tmp_path: Path) -> Non
     assert isinstance(loaded_run.normalized_query.get("latency_ms"), int)
 
     db.close()
+
+
+def test_m3_cross_encoder_reranker_can_reorder_results(tmp_path: Path) -> None:
+    db, service, dataset, _frame_a, frame_b = _build_retrieval_fixture(tmp_path)
+    service.model_registry.reranker = PreferenceReranker("xe may")
+    service.profiles["rerank_smoke"] = {
+        "semantic_weight": 0.1,
+        "metadata_weight": 0.9,
+        "temporal_weight": 0.0,
+        "user_boost_weight": 0.0,
+        "rrf": {"enabled": False, "k": 60},
+        "query_expansion": {"enabled_default": False, "max_variants": 1},
+        "reranking": {
+            "enabled": True,
+            "top_k": 2,
+            "blend": 1.0,
+            "cross_encoder_weight": 1.0,
+            "mllm_weight": 0.0,
+            "mllm": {"enabled": False, "top_k": 1},
+        },
+    }
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="m3-rerank-smoke",
+            query_text="nguoi ao do",
+            top_k=2,
+            profile="rerank_smoke",
+            options=SearchOptions(use_query_expansion=False, use_reranker=True),
+        )
+    )
+
+    assert response.results[0].frame_id == frame_b.keyframe_id
+    assert response.results[0].score_breakdown["rerank_score"] > response.results[1].score_breakdown["rerank_score"]
+
+    db.close()
+
+
+def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_LLM_PROFILE", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="m4-agent-fallback-smoke",
+            query_text="nguoi ao do",
+            top_k=1,
+        )
+    )
+
+    assert response.results
+    assert response.results[0].frame_id == frame_a.keyframe_id
+    assert response.normalized_query["variants"][0] == "nguoi ao do"
+    agent_plan = response.normalized_query["agent_query_plan"]
+    assert agent_plan["source"] == "fallback"
+    assert "missing GROQ_API_KEY" in agent_plan["error"]
+
+    db.close()
+
+
+def test_m4_agent_query_planning_openai_profile_falls_back_when_key_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="m4-agent-openai-fallback-smoke",
+            query_text="nguoi ao do",
+            top_k=1,
+        )
+    )
+
+    assert response.results
+    assert response.results[0].frame_id == frame_a.keyframe_id
+    agent_plan = response.normalized_query["agent_query_plan"]
+    assert agent_plan["source"] == "fallback"
+    assert agent_plan["error"] == "missing OPENAI_API_KEY"
+    assert agent_plan["agent_metadata"]["active_profile"] == "openai_gpt4o"
+    assert agent_plan["agent_metadata"]["provider"] == "openai"
+    assert agent_plan["agent_metadata"]["model"] == "gpt-4o"
+
+    db.close()
+
+
+def test_m4_agent_profile_env_override_resolves_provider_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_path = Path(__file__).resolve().parents[3] / "configs" / "agent.yaml"
+    planner = AgentQueryPlanner.from_config(config_path)
+
+    result = planner.plan("nguoi ao do", "KIS", 5)
+
+    assert result.source == "fallback"
+    assert result.error == "missing OPENAI_API_KEY"
+    assert result.agent_metadata["active_profile"] == "openai_gpt4o"
+    assert result.agent_metadata["provider"] == "openai"
+    assert result.agent_metadata["model"] == "gpt-4o"
 
 
 def test_m3_qa_smoke_returns_answer(tmp_path: Path) -> None:

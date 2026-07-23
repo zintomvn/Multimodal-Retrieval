@@ -5,10 +5,12 @@ from functools import lru_cache
 from typing import Any
 
 from app.adapters.object_storage.base import ObjectStorageClient
+from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, TextReranker, VisualQaModel
 from app.adapters.text_search.base import TextSearchClient
-from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, VisualQaModel
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import get_settings
+
+
 @lru_cache(maxsize=1)
 def get_vector_client() -> VectorSearchClient:
     settings = get_settings()
@@ -57,8 +59,10 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     from app.adapters.model_runtime.fallback import (
         PassthroughQueryExpander,
         UnavailableTextImageEmbedder,
+        UnavailableTextReranker,
         UnavailableVisualQaModel,
     )
+    from app.adapters.model_runtime.cross_encoder import CrossEncoderTextReranker
     from app.adapters.model_runtime.openai_compatible import (
         OpenAICompatibleQueryExpander,
         OpenAICompatibleTextEmbedder,
@@ -97,6 +101,7 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     embedder: TextImageEmbedder
     query_expander: QueryExpander
     visual_qa: VisualQaModel
+    reranker: TextReranker
 
     embedder_entry = first_enabled_entry("embedders")
     if embedder_entry:
@@ -161,9 +166,31 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     else:
         visual_qa = UnavailableVisualQaModel()
 
+    reranker_entry = first_enabled_entry("rerankers") or first_enabled_entry("reranker")
+    if reranker_entry:
+        reranker_name, reranker_cfg = reranker_entry
+        provider = str(reranker_cfg.get("provider", "")).lower()
+        if provider in {"sentence_transformers", "cross_encoder"}:
+            model = str(reranker_cfg.get("model") or reranker_cfg.get("checkpoint_uri") or "").strip()
+            if model:
+                reranker = CrossEncoderTextReranker(
+                    model=model,
+                    device=str(reranker_cfg.get("device", "")).strip() or None,
+                    max_length=int(reranker_cfg.get("max_length", 0) or 0) or None,
+                    batch_size=int(reranker_cfg.get("batch_size", 0) or 0) or None,
+                    fallback_to_overlap=bool_value(reranker_cfg.get("fallback_to_overlap"), default=True),
+                )
+            else:
+                raise RuntimeError(f"Enabled reranker '{reranker_name}' is missing model/checkpoint_uri.")
+        else:
+            raise RuntimeError(f"Enabled reranker '{reranker_name}' uses unsupported provider '{provider}'.")
+    else:
+        reranker = UnavailableTextReranker()
+
     return ModelRegistryService(
         embedder=embedder,
         query_expander=query_expander,
         visual_qa=visual_qa,
+        reranker=reranker,
         registry=registry,
     )

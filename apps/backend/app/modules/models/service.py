@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, VisualQaModel
+from app.adapters.model_runtime.base import QueryExpander, TextImageEmbedder, TextReranker, VisualQaModel
 from app.core.config import get_settings
 
 
@@ -15,6 +15,7 @@ class ModelRegistryService:
         embedder: TextImageEmbedder,
         query_expander: QueryExpander,
         visual_qa: VisualQaModel,
+        reranker: TextReranker | None = None,
         registry: dict[str, Any] | None = None,
     ) -> None:
         self.settings = get_settings()
@@ -22,6 +23,7 @@ class ModelRegistryService:
         self.embedder = embedder
         self.query_expander = query_expander
         self.visual_qa = visual_qa
+        self.reranker = reranker
 
     @staticmethod
     def load_registry(path: Path) -> dict[str, Any]:

@@ -51,6 +51,7 @@ class Settings:
     data_root: Path = _resolve_repo_path(os.getenv("DATA_ROOT", "./data"))
     model_registry_path: Path = _resolve_repo_path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
     retrieval_profiles_path: Path = _resolve_repo_path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
+    agent_config_path: Path = _resolve_repo_path(os.getenv("AGENT_CONFIG_PATH", "../../configs/agent.yaml"))
 
     @property
     def cors_origins(self) -> list[str]:
