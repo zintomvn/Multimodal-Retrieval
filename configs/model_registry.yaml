@@ -1,4 +1,32 @@
 embedders:
+  pe_core_bigg_14_448:
+    task: multimodal_embedding
+    provider: openclip
+    checkpoint_uri: hf-hub:timm/PE-Core-bigG-14-448
+    model: hf-hub:timm/PE-Core-bigG-14-448
+    openclip_model: hf-hub:timm/PE-Core-bigG-14-448
+    openclip_pretrained: ""
+    openclip_device: auto
+    openclip_max_batch: 16
+    dim: 1280
+    l2_normalize: true
+    collection: keyframe_embeddings_pe_core_bigG_14_448
+    enabled: true
+    description: "Primary visual embedding for competition ingest."
+  openclip_vith14:
+    task: multimodal_embedding
+    provider: openclip
+    checkpoint_uri: openclip:ViT-H-14/laion2b_s32b_b79k
+    model: ViT-H-14-laion2b_s32b_b79k
+    openclip_model: ViT-H-14
+    openclip_pretrained: laion2b_s32b_b79k
+    openclip_device: auto
+    openclip_max_batch: 24
+    dim: 1024
+    l2_normalize: true
+    collection: keyframe_embeddings_openclip_vith14
+    enabled: false
+    description: "Secondary visual embedding for ensemble/RRF."
   openai_embedding:
     task: multimodal_embedding
     provider: openai_compatible
@@ -31,6 +59,14 @@ embedders:
     enabled: false
 
 ocr:
+  easyocr_craft_vi_en:
+    task: ocr
+    provider: easyocr
+    languages: [vi, en]
+    detector: CRAFT
+    recognizer: easyocr
+    device: auto
+    enabled: true
   paddle_vietocr:
     task: ocr
     provider: local
@@ -39,6 +75,13 @@ ocr:
     enabled: false
 
 asr:
+  faster_whisper_small:
+    task: asr
+    provider: faster_whisper
+    checkpoint_uri: faster-whisper:small
+    device: auto
+    language: vi
+    enabled: true
   whisperx:
     task: asr
     provider: huggingface
@@ -47,6 +90,18 @@ asr:
     enabled: false
 
 vision_language:
+  gemini_shot_context:
+    task: shot_captioning
+    provider: gemini
+    model: gemini-1.5-flash
+    enabled: false
+    description: "Optional shot-context captioning when API access is available."
+  qwen_vl_shot_context:
+    task: shot_captioning
+    provider: huggingface
+    model: Qwen/Qwen2.5-VL-3B-Instruct
+    enabled: false
+    description: "Optional local VLM caption/rerank for top candidates."
   qwen2_5_vl:
     task: visual_qa
     provider: openai_compatible
@@ -54,10 +109,33 @@ vision_language:
     model: qwen2.5-vl-7b-instruct
     enabled: false
 
+rerankers:
+  cross_encoder_ms_marco_minilm_l6_v2:
+    task: reranking
+    provider: sentence_transformers
+    checkpoint_uri: cross-encoder/ms-marco-MiniLM-L-6-v2
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    device: auto
+    batch_size: 16
+    max_length: 256
+    fallback_to_overlap: true
+    enabled: true
+    description: "Primary text reranker for top candidates."
+
 llm:
   local_qwen:
     task: query_expansion
     provider: openai_compatible
     base_url: http://localhost:8001/v1
     model: qwen2.5-7b-instruct
+    enabled: false
+
+text_embedders:
+  vietnamese_embedding:
+    task: text_embedding
+    provider: sentence_transformers
+    checkpoint_uri: dangvantuan/vietnamese-embedding
+    model: dangvantuan/vietnamese-embedding
+    device: auto
+    collection: text_embeddings_vietnamese
     enabled: false

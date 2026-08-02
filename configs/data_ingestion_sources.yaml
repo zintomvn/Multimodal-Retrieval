@@ -17,6 +17,11 @@ defaults:
     control_prefix: manifests/pipeline=kaggle_ingest
     logs_prefix: logs/pipeline=kaggle_ingest
     quarantine_prefix: quarantine
+  drive:
+    raw_prefix: raw/source=drive
+    control_prefix: manifests/pipeline=drive_ingest
+    logs_prefix: logs/pipeline=drive_ingest
+    quarantine_prefix: quarantine
 
 datasets:
   - source_id: l21_l30_ai_challenge_2025
@@ -30,6 +35,30 @@ datasets:
     relative_path_prefixes_to_strip:
       - ai-challenge-2025/Videos/Videos
       - Videos/Videos
+    expected_batches:
+      - L21
+      - L22
+      - L23
+      - L24
+      - L25
+      - L26
+      - L27
+      - L28
+      - L29
+      - L30
+    batch_detection:
+      strategy: regex
+      pattern: "(?i)(?:^|[/_.-])(L2[1-9]|L30)(?:[/_.-]|$)"
+
+  - source_id: l21_l30_ai_challenge_2025_drive
+    display_name: AI Challenge 2025 - L21 to L30 (Drive)
+    source_type: drive
+    enabled: false
+    dataset_id: ai_challenge_2025
+    dataset_ref: gdrive:ai-challenge-2025
+    drive_mount_path: /content/drive/MyDrive/ai-challenge-2025
+    source_version: drive_current
+    raw_prefix: raw/source=drive
     expected_batches:
       - L21
       - L22

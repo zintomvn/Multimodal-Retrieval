@@ -17,6 +17,15 @@ competition_default:
     asr_boost: 2.5
     object_boost: 1.8
     caption_boost: 1.5
+  reranking:
+    enabled: false
+    top_k: 50
+    blend: 0.35
+    cross_encoder_weight: 0.8
+    mllm_weight: 0.2
+    mllm:
+      enabled: false
+      top_k: 8
   temporal:
     delta_t_max_ms: 180000
     min_match_ratio: 0.67
@@ -43,3 +52,70 @@ semantic_fast:
   temporal:
     delta_t_max_ms: 120000
     min_match_ratio: 0.67
+
+competition_mvp_v1:
+  semantic_weight: 0.70
+  metadata_weight: 0.20
+  temporal_weight: 0.07
+  user_boost_weight: 0.03
+  rrf:
+    enabled: true
+    k: 60
+  visual_models:
+    primary:
+      collection: keyframe_embeddings_pe_core_bigG_14_448
+      weight: 0.60
+    secondary:
+      collection: keyframe_embeddings_openclip_vith14
+      weight: 0.25
+    legacy:
+      collection: keyframe_embeddings
+      weight: 0.15
+  query_type_weights:
+    kis:
+      visual: 0.50
+      caption: 0.15
+      objects: 0.12
+      ocr: 0.13
+      asr: 0.07
+      text_embedding: 0.03
+    qa:
+      visual: 0.25
+      caption: 0.17
+      objects: 0.04
+      ocr: 0.27
+      asr: 0.22
+      text_embedding: 0.05
+    trake:
+      visual: 0.40
+      caption: 0.13
+      objects: 0.08
+      ocr: 0.08
+      asr: 0.06
+      text_embedding: 0.05
+      temporal: 0.20
+  query_expansion:
+    enabled_default: true
+    max_variants: 5
+    decompose_temporal: true
+  milvus:
+    top_k_per_model: 500
+    final_top_k: 100
+  metadata:
+    ocr_boost: 3.2
+    asr_boost: 2.8
+    object_boost: 1.8
+    caption_boost: 1.6
+  reranking:
+    enabled: true
+    top_k: 80
+    blend: 0.30
+    cross_encoder_weight: 0.85
+    mllm_weight: 0.15
+    mllm:
+      enabled: false
+      top_k: 10
+  temporal:
+    delta_t_max_ms: 180000
+    min_match_ratio: 0.67
+    grouping: two_pointer
