@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
+
+from .config_paths import PROCESSORS_ROOT
 
 
 def load_project_env() -> None:
     """Load the repository .env file without overriding existing variables."""
-    env_path = Path(__file__).resolve().parents[2] / ".env"
+    env_path = PROCESSORS_ROOT.parents[1] / ".env"
     if not env_path.exists():
         return
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
@@ -50,4 +51,3 @@ def get_processor_settings() -> ProcessorSettings:
         milvus_token=os.getenv("MILVUS_TOKEN", ""),
         elasticsearch_url=os.getenv("ELASTICSEARCH_URL", "http://localhost:9200"),
     )
-

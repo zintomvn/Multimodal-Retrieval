@@ -5,11 +5,11 @@ from typing import Any
 
 import numpy as np
 
-from cloud_sinks.config import SinkConfig
-from cloud_sinks.elasticsearch import ElasticsearchAnnotationSink
-from cloud_sinks.milvus import MilvusEmbeddingSink
-from cloud_sinks.postgres import PostgresAnnotationSink
-from gcs_source import FrameItem
+from ..gcs_source import FrameItem
+from .config import SinkConfig
+from .elasticsearch import ElasticsearchAnnotationSink
+from .milvus import MilvusEmbeddingSink
+from .postgres import PostgresAnnotationSink
 
 
 LOGGER = logging.getLogger(__name__)

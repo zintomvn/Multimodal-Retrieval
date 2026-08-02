@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from extractors.runtime import ModelRuntime
+from .runtime import ModelRuntime
 
 
 class YoloObjectDetector:
@@ -30,10 +30,13 @@ class YoloObjectDetector:
             paths = [str(path) for path in image_paths[start : start + batch_size]]
             results = self.model(paths, batch=len(paths), imgsz=image_size, conf=confidence, verbose=False)
             for result in results:
+                height, width = _result_shape(result)
                 detections = [
                     {
                         "label": self.model.names[int(box.cls.item())],
                         "confidence": round(float(box.conf.item()), 4),
+                        "bbox_xyxy_px": _round_box(box.xyxy[0].detach().cpu().tolist()),
+                        "bbox_xyxy_norm": _normalize_box(box.xyxy[0].detach().cpu().tolist(), width, height),
                     }
                     for box in result.boxes
                 ]
@@ -61,3 +64,29 @@ class YoloObjectDetector:
             self.model.fuse()
         except Exception:
             pass
+
+
+def _result_shape(result: Any) -> tuple[int, int]:
+    """Return result image shape as (height, width)."""
+    shape = getattr(result, "orig_shape", None)
+    if isinstance(shape, tuple) and len(shape) >= 2:
+        return int(shape[0]), int(shape[1])
+    return 1, 1
+
+
+def _round_box(values: list[float]) -> list[float]:
+    """Round a YOLO xyxy box for compact JSON output."""
+    return [round(float(value), 2) for value in values[:4]]
+
+
+def _normalize_box(values: list[float], width: int, height: int) -> list[float]:
+    """Normalize a YOLO xyxy box into [0, 1] coordinates."""
+    safe_width = max(int(width), 1)
+    safe_height = max(int(height), 1)
+    x1, y1, x2, y2 = [float(value) for value in values[:4]]
+    return [
+        round(max(0.0, min(1.0, x1 / safe_width)), 6),
+        round(max(0.0, min(1.0, y1 / safe_height)), 6),
+        round(max(0.0, min(1.0, x2 / safe_width)), 6),
+        round(max(0.0, min(1.0, y2 / safe_height)), 6),
+    ]

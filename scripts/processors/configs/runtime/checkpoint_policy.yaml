@@ -1,0 +1,18 @@
+schema_version: 1
+
+default:
+  checkpoint_root: gs://aic_ai_2026/checkpoints/pipeline=feature_ingest
+  lease_ttl_seconds: 2700
+  heartbeat_seconds: 120
+  checkpoint_every_batches: 1
+  max_runtime_seconds:
+    kaggle: 28800
+    colab: 18000
+  resume:
+    enabled: true
+    skip_completed_shards: true
+    cursor_field: next_index
+  output:
+    mode: append_only_part_files
+    terminal_marker: _SUCCESS.json
+    part_pattern: part-00000.jsonl

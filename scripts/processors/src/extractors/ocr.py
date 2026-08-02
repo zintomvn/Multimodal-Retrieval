@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from extractors.runtime import ModelRuntime
+from .runtime import ModelRuntime
 
 
 class VietOcrExtractor:
@@ -99,6 +99,58 @@ class VietOcrExtractor:
 
         _download_with_progress(weights_url, weights_path)
         return weights_path
+
+
+class EasyOcrExtractor:
+    """EasyOCR extractor using CRAFT detection and Vietnamese-capable recognition."""
+
+    def __init__(self, runtime: ModelRuntime, config: dict[str, Any]) -> None:
+        self.runtime = runtime
+        self.config = config
+        self.reader = None
+
+    def warmup(self) -> None:
+        """Download and initialize EasyOCR models."""
+        self._ensure_model()
+
+    def extract(self, image_paths: list[Path]) -> list[list[str]]:
+        """Extract visible text lines for each image path."""
+        self._ensure_model()
+        outputs: list[list[str]] = []
+        detail = int(self.config.get("detail", 1))
+        paragraph = bool(self.config.get("paragraph", False))
+        min_confidence = float(self.config.get("min_confidence", 0.2))
+        for path in image_paths:
+            results = self.reader.readtext(str(path), detail=detail, paragraph=paragraph)
+            texts: list[str] = []
+            for result in results:
+                if detail == 0:
+                    text = str(result).strip()
+                    if text:
+                        texts.append(text)
+                    continue
+                if not isinstance(result, (list, tuple)) or len(result) < 2:
+                    continue
+                text = str(result[1]).strip()
+                confidence = float(result[2]) if len(result) > 2 else 1.0
+                if text and confidence >= min_confidence:
+                    texts.append(text)
+            outputs.append(texts)
+        return outputs
+
+    def _ensure_model(self) -> None:
+        if self.reader is not None:
+            return
+        import easyocr
+
+        languages = self.config.get("languages") or ["vi", "en"]
+        gpu = self.runtime.device.startswith("cuda")
+        self.reader = easyocr.Reader(
+            list(languages),
+            gpu=gpu,
+            model_storage_directory=str(self.runtime.cache_dir / "easyocr"),
+            download_enabled=bool(self.config.get("download_enabled", True)),
+        )
 
 
 def _extract_polys(det_result: object) -> list[np.ndarray]:

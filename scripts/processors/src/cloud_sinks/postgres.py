@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import sys
 import uuid
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from cloud_sinks.config import SinkConfig
-from gcs_source import FrameItem
+from ..config_paths import PROCESSORS_ROOT
+from ..gcs_source import FrameItem
+from .config import SinkConfig
 
 
 class PostgresAnnotationSink:
@@ -176,6 +176,6 @@ class PostgresAnnotationSink:
         return f"https://storage.googleapis.com/{bucket}/{blob_name}"
 
     def _ensure_backend_path(self) -> None:
-        backend_root = Path(__file__).resolve().parents[3] / "apps" / "backend"
+        backend_root = PROCESSORS_ROOT.parents[1] / "apps" / "backend"
         if str(backend_root) not in sys.path:
             sys.path.insert(0, str(backend_root))

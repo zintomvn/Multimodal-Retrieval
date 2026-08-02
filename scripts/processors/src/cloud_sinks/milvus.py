@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from cloud_sinks.config import SinkConfig
-from gcs_source import FrameItem
+from ..gcs_source import FrameItem
+from .config import SinkConfig
 
 
 class MilvusEmbeddingSink:
@@ -58,4 +58,3 @@ class MilvusEmbeddingSink:
             schema=schema,
             index_params=index_params,
         )
-

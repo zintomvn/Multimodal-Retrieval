@@ -6,11 +6,11 @@ from typing import Any
 
 import numpy as np
 
-from extractors.caption import Blip2Captioner
-from extractors.embedding import OpenClipImageEmbedder
-from extractors.objects import YoloObjectDetector
-from extractors.ocr import VietOcrExtractor
-from extractors.runtime import ModelRuntime
+from .caption import Blip2Captioner, OpenAiCompatibleVlmCaptioner
+from .embedding import OpenClipImageEmbedder
+from .objects import YoloObjectDetector
+from .ocr import EasyOcrExtractor, VietOcrExtractor
+from .runtime import ModelRuntime
 
 
 class FrameFeatureExtractor:
@@ -30,9 +30,14 @@ class FrameFeatureExtractor:
             if component is not None:
                 component.warmup()
 
-    def process_batch(self, image_paths: list[Path]) -> tuple[list[dict[str, Any]], np.ndarray | None, dict[str, float]]:
+    def process_batch(
+        self,
+        image_paths: list[Path],
+        contexts: list[dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], np.ndarray | None, dict[str, float]]:
         """Process one batch and return annotation rows, embeddings and timings."""
         started = time.perf_counter()
+        contexts = contexts or [{} for _ in image_paths]
         timings: dict[str, float] = {}
         captions = ["" for _ in image_paths]
         texts_by_image = [[] for _ in image_paths]
@@ -45,7 +50,7 @@ class FrameFeatureExtractor:
             timings["embedding"] = time.perf_counter() - t0
         if self.captioner is not None:
             t0 = time.perf_counter()
-            captions = self.captioner.caption(image_paths)
+            captions = self.captioner.caption(image_paths, contexts=contexts)
             timings["caption"] = time.perf_counter() - t0
         if self.ocr is not None:
             t0 = time.perf_counter()
@@ -80,21 +85,27 @@ class FrameFeatureExtractor:
             raise ValueError(f"Unsupported embedding provider: {config.get('provider')}")
         return OpenClipImageEmbedder(self.runtime, config)
 
-    def _build_captioner(self) -> Blip2Captioner | None:
+    def _build_captioner(self) -> Blip2Captioner | OpenAiCompatibleVlmCaptioner | None:
         config = dict(self.config.get("caption") or {})
         if not config.get("enabled", False):
             return None
-        if str(config.get("provider", "blip")) not in {"blip", "blip2"}:
-            raise ValueError(f"Unsupported caption provider: {config.get('provider')}")
-        return Blip2Captioner(self.runtime, config)
+        provider = str(config.get("provider", "blip")).lower()
+        if provider in {"blip", "blip2"}:
+            return Blip2Captioner(self.runtime, config)
+        if provider in {"openai_compatible_vlm", "qwen_vl", "gemini_proxy"}:
+            return OpenAiCompatibleVlmCaptioner(self.runtime, config)
+        raise ValueError(f"Unsupported caption provider: {config.get('provider')}")
 
-    def _build_ocr(self) -> VietOcrExtractor | None:
+    def _build_ocr(self) -> VietOcrExtractor | EasyOcrExtractor | None:
         config = dict(self.config.get("ocr") or {})
         if not config.get("enabled", False):
             return None
-        if str(config.get("provider", "vietocr")) != "vietocr":
-            raise ValueError(f"Unsupported OCR provider: {config.get('provider')}")
-        return VietOcrExtractor(self.runtime, config)
+        provider = str(config.get("provider", "vietocr")).lower()
+        if provider in {"vietocr", "paddle_vietocr"}:
+            return VietOcrExtractor(self.runtime, config)
+        if provider in {"easyocr", "craft_easyocr"}:
+            return EasyOcrExtractor(self.runtime, config)
+        raise ValueError(f"Unsupported OCR provider: {config.get('provider')}")
 
     def _build_object_detector(self) -> YoloObjectDetector | None:
         config = dict(self.config.get("objects") or {})

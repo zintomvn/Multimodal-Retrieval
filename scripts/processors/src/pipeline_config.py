@@ -7,7 +7,8 @@ from typing import Any
 
 import yaml
 
-from config import ProcessorSettings, get_processor_settings
+from .config import ProcessorSettings, get_processor_settings
+from .config_paths import resolve_config_path
 
 
 @dataclass(frozen=True)
@@ -31,7 +32,7 @@ class PipelineConfig:
 
 def load_pipeline_config(path: str | Path, profile: str = "smoke") -> PipelineConfig:
     """Load YAML config, deep-merge the selected profile, and attach env settings."""
-    config_path = Path(path)
+    config_path = resolve_config_path(path)
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     merged = copy.deepcopy(raw)
     profile_patch = (raw.get("profiles") or {}).get(profile, {})

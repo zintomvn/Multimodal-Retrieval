@@ -7,6 +7,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Iterable
 
+from .artifact_io import gcs_client
+
 
 FRAME_IDX_RE = re.compile(r"f(\d+)", re.IGNORECASE)
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
@@ -45,12 +47,7 @@ class GCSFrameSource:
     """List and download frame images from Google Cloud Storage."""
 
     def __init__(self, bucket_name: str, credentials_file: str = "", timeout_seconds: float = 20.0) -> None:
-        from google.cloud import storage
-
-        if credentials_file:
-            self.client = storage.Client.from_service_account_json(credentials_file)
-        else:
-            self.client = storage.Client()
+        self.client = gcs_client(credentials_file)
         self.bucket = self.client.bucket(bucket_name)
         self.bucket_name = bucket_name
         self.timeout_seconds = timeout_seconds
@@ -93,10 +90,10 @@ class GCSFrameSource:
                     video_id=video_id,
                     image_name=image_name,
                     frame_idx=frame_idx,
-                    frame_seconds=_to_float(row.get("frame_sec"), 0.0),
-                    fps=_to_optional_float(row.get("fps")),
-                    shot_index=_to_optional_int(row.get("shot_id")),
-                    frame_type=str(row.get("frame_type") or "").strip() or None,
+                    frame_seconds=_optional_float_from_row(row, ("frame_sec", "frame_seconds", "timestamp_sec"), default=0.0),
+                    fps=_optional_float_from_row(row, ("fps", "frames_per_second"), default=None),
+                    shot_index=_shot_index_from_row(row),
+                    frame_type=_optional_text_from_row(row, ("frame_type", "frame_kind", "frame_label")),
                 )
             )
             if limit and len(frames) >= limit:
@@ -125,9 +122,21 @@ class GCSFrameSource:
         text = self._read_text_path(shot_segments_path)
         rows: dict[tuple[str, str], dict[str, str]] = {}
         for row in csv.DictReader(StringIO(text)):
-            image_path = str(row.get("image_path") or row.get("image_name") or "")
+            image_path = str(
+                row.get("image_path")
+                or row.get("image_rel_path")
+                or row.get("image_name")
+                or row.get("image_storage_key")
+                or row.get("image_uri")
+                or ""
+            )
             image_name = Path(image_path).name
-            video_id = str(row.get("video_id") or Path(image_path).parent.name or "").strip()
+            video_id = str(
+                row.get("video_id")
+                or Path(str(row.get("video_name") or "")).stem
+                or Path(image_path).parent.name
+                or ""
+            ).strip()
             if video_id and image_name:
                 rows[(video_id, image_name)] = dict(row)
         return rows
@@ -184,13 +193,48 @@ def _to_float(raw: object, default: float) -> float:
     return float(raw)
 
 
-def _to_optional_float(raw: object) -> float | None:
-    if raw in (None, ""):
-        return None
-    return float(raw)
+def _optional_text_from_row(row: dict[str, str], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        raw = str(row.get(key) or "").strip()
+        if raw:
+            return raw
+    return None
 
 
-def _to_optional_int(raw: object) -> int | None:
-    if raw in (None, ""):
+def _optional_float_from_row(row: dict[str, str], keys: tuple[str, ...], default: float | None) -> float | None:
+    for key in keys:
+        raw = row.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _shot_index_from_row(row: dict[str, str]) -> int | None:
+    for key in ("shot_id_local", "shot_index", "shot_idx"):
+        raw = row.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            continue
+
+    raw = str(row.get("shot_id") or "").strip()
+    if not raw:
         return None
-    return int(float(raw))
+
+    match = re.search(r"(?:^|[_-])S(\d+)", raw, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    match = re.search(r"shot[_-]?(\d+)", raw, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    if raw.isdigit():
+        return int(raw)
+    return None

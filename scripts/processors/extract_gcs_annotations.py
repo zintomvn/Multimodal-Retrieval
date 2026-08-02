@@ -9,15 +9,16 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from cloud_sinks import CloudAnnotationSink
-from cloud_sinks.config import SinkConfig
-from extractors import FrameFeatureExtractor
-from gcs_source import GCSFrameSource, chunked
-from pipeline_config import apply_cli_overrides, load_pipeline_config
+from src.cloud_sinks import CloudAnnotationSink
+from src.cloud_sinks.config import SinkConfig
+from src.config_paths import DEFAULT_PROCESSOR_CONFIG
+from src.extractors import FrameFeatureExtractor
+from src.gcs_source import GCSFrameSource, chunked
+from src.pipeline_config import apply_cli_overrides, load_pipeline_config
 
 
 LOGGER = logging.getLogger("gcs_frame_processor")
-DEFAULT_CONFIG = Path(__file__).resolve().with_name("processor_config.yaml")
+DEFAULT_CONFIG = DEFAULT_PROCESSOR_CONFIG
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,9 +122,9 @@ def main() -> None:
             dataset_version=str(dataset_config.get("version", "v1")),
             dataset_root_uri=f"gs://{bucket}/{gcs_prefix}",
             gcs_public_url=pipeline_config.settings.gcs_public_url,
-            milvus_collection=str(sink_config.get("milvus_collection", "keyframe_embeddings")),
+            milvus_collection=str(sink_config.get("milvus_collection", "keyframe_embeddings_pe_core_bigG_14_448")),
             elasticsearch_index=str(sink_config.get("elasticsearch_index", "keyframe_annotations")),
-            model_version=str(sink_config.get("model_version", "openclip-vit-b-32-laion2b_s34b_b79k")),
+            model_version=str(sink_config.get("model_version", "pe-core-bigG-14-448")),
             write_pg=bool(sink_config.get("write_pg", True)),
             write_milvus=bool(sink_config.get("write_milvus", True)),
             write_elasticsearch=bool(sink_config.get("write_elasticsearch", True)),

@@ -1,0 +1,78 @@
+schema_version: 1
+
+run_defaults:
+  dataset_id: ai_challenge_2025
+  frame_profile: autoshot_v1
+  feature_profile: mvp_v1
+  exclude_batches: [L26]
+  keyframes_prefix: processed/keyframes
+  manifest_output_root: gs://aic_ai_2026/manifests/dataset=ai_challenge_2025/pipeline=feature_ingest
+  feature_output_prefix: gs://aic_ai_2026/features/dataset=ai_challenge_2025/frame_profile=autoshot_v1/feature_profile=mvp_v1
+  checkpoint_root: gs://aic_ai_2026/checkpoints/pipeline=feature_ingest
+
+notebook_roles:
+  kaggle_l21_primary_visual:
+    runtime: kaggle
+    batch: L21
+    processor_profile: visual_primary_pe_core
+    stage: visual_primary
+    features: embedding
+    frames_per_shard: 512
+    suggested_batch_size: 16
+    milvus_collection: keyframe_embeddings_pe_core_bigG_14_448
+
+  kaggle_l21_secondary_visual:
+    runtime: kaggle
+    batch: L21
+    processor_profile: visual_secondary_openclip_vith14
+    stage: visual_secondary
+    features: embedding
+    frames_per_shard: 512
+    suggested_batch_size: 24
+    milvus_collection: keyframe_embeddings_openclip_vith14
+
+  kaggle_l21_objects:
+    runtime: kaggle
+    batch: L21
+    processor_profile: objects_only
+    stage: objects
+    features: objects
+    frames_per_shard: 512
+    suggested_batch_size: 32
+
+  colab_l21_ocr:
+    runtime: colab
+    batch: L21
+    processor_profile: craft_easyocr_only
+    stage: ocr
+    features: ocr
+    frames_per_shard: 128
+    suggested_batch_size: 8
+
+  colab_l21_caption:
+    runtime: colab
+    batch: L21
+    processor_profile: shot_context_caption_qwen_vl
+    stage: caption
+    features: caption
+    frames_per_shard: 128
+    suggested_batch_size: 1
+
+  colab_l21_asr:
+    runtime: colab
+    batch: L21
+    processor_profile: asr
+    stage: asr
+    raw_video_prefix: raw/source=kaggle/dataset=ai_challenge_2025/source_version=kaggle_current/batch=L21
+    model: faster-whisper-small
+
+scale_out:
+  first_batch: L21
+  next_batches: [L22, L23, L24, L25, L27, L28, L29, L30]
+  shard_policy:
+    visual_primary: 512
+    visual_secondary: 512
+    objects: 512
+    ocr: 128
+    caption: 128
+    asr: 1 video

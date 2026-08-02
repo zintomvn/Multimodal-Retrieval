@@ -1,0 +1,432 @@
+run:
+  gcs_prefix: processed/keyframes
+  shot_segments: ""
+  batch_size: 8
+  download_workers: 8
+  gcs_timeout: 20
+  max_frames: 0
+  video_ids: []
+  annotations_jsonl: data/processor_annotations_audit.jsonl
+  log_file: scripts/processors/logs/processor.log
+  continue_on_batch_error: true
+
+dataset:
+  code: aic-2026
+  name: aic-2026
+  version: v1
+
+sinks:
+  write_pg: true
+  write_milvus: true
+  write_elasticsearch: true
+  postgres_disable_prepared_statements: true
+  fail_on_sink_error: false
+  elasticsearch_request_timeout: 2
+  elasticsearch_max_retries: 0
+  elasticsearch_probe_timeout: 1
+  elasticsearch_disable_after_error: true
+  milvus_collection: keyframe_embeddings_pe_core_bigG_14_448
+  elasticsearch_index: keyframe_annotations
+  model_version: pe-core-bigG-14-448
+
+models:
+  cache_dir: "%USERPROFILE%/.cache/multimodal-retrieval/processor-cache"
+  device: auto
+  enable_tf32: true
+
+  embedding:
+    enabled: true
+    provider: openclip
+    model_name: hf-hub:timm/PE-Core-bigG-14-448
+    pretrained: ""
+    batch_size: 16
+    precision: fp16
+    l2_normalize: true
+
+  caption:
+    enabled: false
+    provider: blip2
+    model_class: Blip2ForConditionalGeneration
+    model_name: Salesforce/blip2-opt-2.7b
+    batch_size: 1
+    dtype: fp16
+    low_cpu_mem_usage: true
+    device_map: auto
+    max_gpu_memory: 6GiB
+    max_cpu_memory: 10GiB
+    offload_folder: "%USERPROFILE%/.cache/multimodal-retrieval/processor-cache/blip2-offload"
+    prompt: a photo of
+    generation:
+      max_new_tokens: 80
+      min_new_tokens: 10
+      num_beams: 1
+      repetition_penalty: 1.2
+      length_penalty: 1.1
+
+  ocr:
+    enabled: false
+    provider: vietocr
+    recognizer_model: vgg_seq2seq
+    recognizer_weights_url: https://vocr.vn/data/vietocr/vgg_seq2seq.pth
+    recognizer_weights_path: "%USERPROFILE%/.cache/multimodal-retrieval/processor-cache/vietocr/vgg_seq2seq.pth"
+    detector_model: PP-OCRv5_mobile_det
+    detector_limit_side_len: 960
+    detector_limit_type: max
+    line_y_threshold: 35
+    line_x_gap_threshold: 180
+    crop_padding: 12
+    recognition_batch_size: 1
+
+  objects:
+    enabled: true
+    provider: yolo
+    model_name: yolo12n.pt
+    image_size: 640
+    batch_size: 8
+    confidence: 0.25
+
+  text_embedding:
+    enabled: true
+    provider: sentence_transformers
+    model_name: dangvantuan/vietnamese-embedding
+    batch_size: 32
+    normalize: true
+
+profiles:
+  smoke:
+    run:
+      batch_size: 4
+      max_frames: 8
+    models:
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: true
+        model_name: yolo12n.pt
+
+  embedding_only:
+    models:
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  zilliz_embedding_only:
+    run:
+      batch_size: 128
+      download_workers: 10
+      gcs_timeout: 60
+    sinks:
+      write_pg: false
+      write_milvus: true
+      write_elasticsearch: false
+      fail_on_sink_error: true
+      milvus_collection: keyframe_embeddings_pe_core_bigG_14_448
+      model_version: pe-core-bigG-14-448
+    models:
+      embedding:
+        batch_size: 16
+        precision: fp16
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  full:
+    run:
+      batch_size: 16
+    models:
+      caption:
+        enabled: true
+      ocr:
+        enabled: true
+      objects:
+        enabled: true
+
+  full_blip2:
+    run:
+      batch_size: 8
+    models:
+      caption:
+        enabled: true
+        provider: blip2
+        model_class: Blip2ForConditionalGeneration
+        model_name: Salesforce/blip2-opt-2.7b
+        batch_size: 1
+        dtype: fp16
+        low_cpu_mem_usage: true
+        device_map: auto
+        max_gpu_memory: 6GiB
+        max_cpu_memory: 10GiB
+        offload_folder: "%USERPROFILE%/.cache/multimodal-retrieval/processor-cache/blip2-offload"
+        generation:
+          max_new_tokens: 80
+          min_new_tokens: 10
+          num_beams: 1
+          repetition_penalty: 1.2
+          length_penalty: 1.1
+      ocr:
+        enabled: true
+      objects:
+        enabled: true
+
+  blip2_caption_verification:
+    run:
+      batch_size: 1
+      download_workers: 4
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: blip2-opt-2.7b-verification
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: true
+        provider: blip2
+        model_class: Blip2ForConditionalGeneration
+        model_name: Salesforce/blip2-opt-2.7b
+        batch_size: 1
+        dtype: fp16
+        low_cpu_mem_usage: true
+        device_map: auto
+        max_gpu_memory: 6GiB
+        max_cpu_memory: 10GiB
+        offload_folder: "%USERPROFILE%/.cache/multimodal-retrieval/processor-cache/blip2-offload"
+        generation:
+          max_new_tokens: 80
+          min_new_tokens: 10
+          num_beams: 1
+          repetition_penalty: 1.2
+          length_penalty: 1.1
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  visual_primary_pe_core:
+    run:
+      batch_size: 16
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: false
+      write_milvus: true
+      write_elasticsearch: false
+      fail_on_sink_error: true
+      milvus_collection: keyframe_embeddings_pe_core_bigG_14_448
+      model_version: pe-core-bigG-14-448
+    models:
+      embedding:
+        enabled: true
+        provider: openclip
+        model_name: hf-hub:timm/PE-Core-bigG-14-448
+        pretrained: ""
+        batch_size: 16
+        precision: fp16
+        l2_normalize: true
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  visual_secondary_openclip_vith14:
+    run:
+      batch_size: 24
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: false
+      write_milvus: true
+      write_elasticsearch: false
+      fail_on_sink_error: true
+      milvus_collection: keyframe_embeddings_openclip_vith14
+      model_version: openclip-vit-h-14-laion2b_s32b_b79k
+    models:
+      embedding:
+        enabled: true
+        provider: openclip
+        model_name: ViT-H-14
+        pretrained: laion2b_s32b_b79k
+        batch_size: 24
+        precision: fp16
+        l2_normalize: true
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  objects_only:
+    run:
+      batch_size: 32
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: yolo12n
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: false
+      ocr:
+        enabled: false
+      objects:
+        enabled: true
+
+  ocr_only:
+    run:
+      batch_size: 8
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: paddleocr-ppocrv5-mobile-det+vietocr-vgg_seq2seq
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: false
+      ocr:
+        enabled: true
+      objects:
+        enabled: false
+
+  craft_easyocr_only:
+    run:
+      batch_size: 8
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: easyocr-craft-vi-en
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: false
+      ocr:
+        enabled: true
+        provider: craft_easyocr
+        languages: [vi, en]
+        min_confidence: 0.2
+      objects:
+        enabled: false
+
+  caption_only:
+    run:
+      batch_size: 1
+      download_workers: 4
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: blip2-opt-2.7b-verification
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: true
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  shot_context_caption_qwen_vl:
+    run:
+      batch_size: 1
+      download_workers: 4
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: qwen-vl-shot-context
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: true
+        provider: openai_compatible_vlm
+        model_name: Qwen/Qwen2.5-VL-3B-Instruct
+        base_url: "${VLM_BASE_URL}"
+        api_key_env: VLM_API_KEY
+        batch_size: 1
+        request_timeout: 120
+        temperature: 0.1
+        max_tokens: 120
+        system_prompt: "You create concise, search-oriented video keyframe captions."
+        prompt: "Describe this keyframe with shot context for Vietnamese video retrieval. Mention visible people, actions, objects, scene text, place, and any temporal cue. Use Vietnamese when helpful."
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  shot_context_caption_gemini:
+    run:
+      batch_size: 1
+      download_workers: 4
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: gemini-shot-context
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: true
+        provider: openai_compatible_vlm
+        model_name: gemini-1.5-flash
+        base_url: "${GEMINI_OPENAI_BASE_URL}"
+        api_key_env: GEMINI_API_KEY
+        batch_size: 1
+        request_timeout: 120
+        temperature: 0.1
+        max_tokens: 120
+        system_prompt: "You create concise, search-oriented video keyframe captions."
+        prompt: "Describe this keyframe with shot context for Vietnamese video retrieval. Mention visible people, actions, objects, scene text, place, and any temporal cue. Use Vietnamese when helpful."
+      ocr:
+        enabled: false
+      objects:
+        enabled: false
+
+  full_text_features:
+    run:
+      batch_size: 8
+      download_workers: 8
+      gcs_timeout: 60
+    sinks:
+      write_pg: true
+      write_milvus: false
+      write_elasticsearch: true
+      model_version: text_features_v1
+    models:
+      embedding:
+        enabled: false
+      caption:
+        enabled: true
+      ocr:
+        enabled: true
+      objects:
+        enabled: true

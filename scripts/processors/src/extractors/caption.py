@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib import request as urlrequest
 
 from PIL import Image
 
-from extractors.runtime import ModelRuntime
+from .runtime import ModelRuntime
 
 
 class Blip2Captioner:
@@ -23,7 +26,7 @@ class Blip2Captioner:
         """Download and initialize the caption model."""
         self._ensure_model()
 
-    def caption(self, image_paths: list[Path]) -> list[str]:
+    def caption(self, image_paths: list[Path], contexts: list[dict[str, Any]] | None = None) -> list[str]:
         """Generate captions for image paths."""
         self._ensure_model()
         torch = self.runtime.torch
@@ -76,6 +79,67 @@ class Blip2Captioner:
         if not device_map:
             self.model = self.model.to(self.runtime.device)
         self.input_device = _input_device(self.model, self.runtime.device)
+
+
+class OpenAiCompatibleVlmCaptioner:
+    """Shot-context captioner for Qwen-VL, Gemini proxies, or other OpenAI-compatible VLM servers."""
+
+    def __init__(self, runtime: ModelRuntime, config: dict[str, Any]) -> None:
+        self.runtime = runtime
+        self.config = config
+        self.base_url = _env_expanded(str(config.get("base_url", "") or "")).rstrip("/")
+        self.api_key = os.getenv(str(config.get("api_key_env", "VLM_API_KEY") or "VLM_API_KEY"), "")
+        self.model_name = str(config.get("model_name") or config.get("model") or "Qwen/Qwen2.5-VL-3B-Instruct")
+
+    def warmup(self) -> None:
+        """Validate endpoint configuration without making a remote request."""
+        if not self.base_url:
+            raise RuntimeError("Set caption.base_url or VLM_BASE_URL for openai_compatible_vlm captioning.")
+
+    def caption(self, image_paths: list[Path], contexts: list[dict[str, Any]] | None = None) -> list[str]:
+        """Generate one shot-aware caption for each image via a VLM chat-completions endpoint."""
+        self.warmup()
+        contexts = contexts or [{} for _ in image_paths]
+        return [self._caption_one(path, context) for path, context in zip(image_paths, contexts)]
+
+    def _caption_one(self, image_path: Path, context: dict[str, Any]) -> str:
+        endpoint = f"{self.base_url}/chat/completions"
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": str(self.config.get("system_prompt") or "You caption video keyframes for retrieval.")},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": self._prompt(context)},
+                        {"type": "image_url", "image_url": {"url": _data_uri(image_path)}},
+                    ],
+                },
+            ],
+            "temperature": float(self.config.get("temperature", 0.1)),
+            "max_tokens": int(self.config.get("max_tokens", 96)),
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = urlrequest.Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urlrequest.urlopen(req, timeout=float(self.config.get("request_timeout", 120))) as response:  # noqa: S310 - user-configured endpoint.
+            raw = json.loads(response.read().decode("utf-8"))
+        return _extract_chat_content(raw).strip()
+
+    def _prompt(self, context: dict[str, Any]) -> str:
+        template = str(
+            self.config.get("prompt")
+            or "Describe this video keyframe for retrieval. Include visible people, objects, actions, scene text, place, and temporal context. Answer in Vietnamese when useful."
+        )
+        context_lines = [
+            f"video_id={context.get('video_id', '')}",
+            f"shot_id={context.get('shot_id', '')}",
+            f"frame_idx={context.get('frame_idx', '')}",
+            f"frame_seconds={context.get('frame_seconds', '')}",
+            f"frame_type={context.get('frame_type', '')}",
+        ]
+        return template + "\n\nShot context:\n" + "\n".join(line for line in context_lines if not line.endswith("="))
 
 
 def _torch_dtype(torch, raw_dtype: str, device: str):  # noqa: ANN001 - torch module type varies.
@@ -132,3 +196,38 @@ def _input_device(model: Any, fallback_device: str) -> str:
         if isinstance(device, str) and device not in {"cpu", "disk"}:
             return device
     return "cpu"
+
+
+def _env_expanded(raw: str) -> str:
+    value = os.path.expandvars(raw).strip()
+    if value == raw and (
+        (value.startswith("${") and value.endswith("}"))
+        or (value.startswith("$") and "/" not in value)
+        or (value.startswith("%") and value.endswith("%"))
+    ):
+        return ""
+    return value
+
+
+def _data_uri(image_path: Path) -> str:
+    suffix = image_path.suffix.lower().lstrip(".") or "jpeg"
+    mime = "image/jpeg" if suffix in {"jpg", "jpeg"} else f"image/{suffix}"
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _extract_chat_content(raw: dict[str, Any]) -> str:
+    choices = raw.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return " ".join(parts)
+    return str(content or "")

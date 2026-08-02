@@ -4,8 +4,8 @@ import socket
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from cloud_sinks.config import SinkConfig
-from gcs_source import FrameItem
+from ..gcs_source import FrameItem
+from .config import SinkConfig
 
 
 class ElasticsearchAnnotationSink:

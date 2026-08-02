@@ -6,7 +6,11 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from extractors.runtime import ModelRuntime
+from .runtime import ModelRuntime
+
+
+DEFAULT_OPENCLIP_MODEL_NAME = "hf-hub:timm/PE-Core-bigG-14-448"
+DEFAULT_OPENCLIP_PRETRAINED = ""
 
 
 class OpenClipImageEmbedder:
@@ -42,12 +46,15 @@ class OpenClipImageEmbedder:
             return
         import open_clip
 
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            str(self.config.get("model_name", "ViT-B-32")),
-            pretrained=str(self.config.get("pretrained", "laion2b_s34b_b79k")),
-            cache_dir=str(self.runtime.cache_dir),
-            device=self.runtime.device,
-        )
+        model_name = str(self.config.get("model_name", DEFAULT_OPENCLIP_MODEL_NAME))
+        create_kwargs: dict[str, object] = {
+            "cache_dir": str(self.runtime.cache_dir),
+            "device": self.runtime.device,
+        }
+        pretrained = str(self.config.get("pretrained", DEFAULT_OPENCLIP_PRETRAINED) or "").strip()
+        if pretrained:
+            create_kwargs["pretrained"] = pretrained
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, **create_kwargs)
         self.model = model.eval()
         self.preprocess = preprocess
 
@@ -65,4 +72,3 @@ class _NullContext:
 
     def __exit__(self, exc_type, exc, tb):  # noqa: ANN001 - context manager protocol.
         return False
-
