@@ -4,11 +4,12 @@ import argparse
 import logging
 from pathlib import Path
 
-from extractors import FrameFeatureExtractor
-from pipeline_config import apply_cli_overrides, load_pipeline_config
+from src.config_paths import DEFAULT_PROCESSOR_CONFIG
+from src.extractors import FrameFeatureExtractor
+from src.pipeline_config import apply_cli_overrides, load_pipeline_config
 
 
-DEFAULT_CONFIG = Path(__file__).resolve().with_name("processor_config.yaml")
+DEFAULT_CONFIG = DEFAULT_PROCESSOR_CONFIG
 LOGGER = logging.getLogger("model_downloader")
 
 
@@ -51,4 +52,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
