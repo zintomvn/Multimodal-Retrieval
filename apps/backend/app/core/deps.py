@@ -22,6 +22,13 @@ def get_vector_client() -> VectorSearchClient:
 @lru_cache(maxsize=1)
 def get_text_client() -> TextSearchClient:
     settings = get_settings()
+    backend = os.getenv("TEXT_SEARCH_BACKEND", "").strip().lower()
+    if not backend:
+        backend = "postgres" if settings.database_url.startswith("postgresql") else "elasticsearch"
+    if backend in {"postgres", "postgresql", "supabase"}:
+        from app.adapters.text_search.postgres import PostgresTextSearchClient
+
+        return PostgresTextSearchClient(database_url=settings.database_url)
     from app.adapters.text_search.elasticsearch import ElasticsearchTextSearchClient
 
     return ElasticsearchTextSearchClient(url=settings.elasticsearch_url)
@@ -68,18 +75,23 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
         OpenAICompatibleTextEmbedder,
         OpenAICompatibleVisualQaModel,
     )
+    from app.adapters.model_runtime.siglip2 import Siglip2TextEmbedder
     from app.modules.models.service import ModelRegistryService
 
     settings = get_settings()
     registry = ModelRegistryService.load_registry(settings.model_registry_path)
 
-    def first_enabled_entry(group: str) -> tuple[str, dict[str, Any]] | None:
+    def first_enabled_entry(group: str, supported_providers: set[str] | None = None) -> tuple[str, dict[str, Any]] | None:
         entries = registry.get(group)
         if not isinstance(entries, dict):
             return None
         for name, config in entries.items():
-            if isinstance(config, dict) and config.get("enabled"):
-                return str(name), config
+            if not isinstance(config, dict) or not config.get("enabled"):
+                continue
+            provider = str(config.get("provider", "")).lower()
+            if supported_providers is not None and provider not in supported_providers:
+                continue
+            return str(name), config
         return None
 
     def api_key(config: dict[str, Any]) -> str:
@@ -103,7 +115,8 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     visual_qa: VisualQaModel
     reranker: TextReranker
 
-    embedder_entry = first_enabled_entry("embedders")
+    siglip2_providers = {"siglip2", "transformers_siglip2", "huggingface_siglip2"}
+    embedder_entry = first_enabled_entry("embedders", {"openai_compatible", *siglip2_providers})
     if embedder_entry:
         embedder_name, embedder_cfg = embedder_entry
         provider = str(embedder_cfg.get("provider", "")).lower()
@@ -121,12 +134,25 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
                 )
             else:
                 raise RuntimeError(f"Enabled embedder '{embedder_name}' is missing base_url/model.")
+        elif provider in siglip2_providers:
+            model = str(embedder_cfg.get("model") or embedder_cfg.get("checkpoint_uri") or "").strip()
+            if model:
+                embedder = Siglip2TextEmbedder(
+                    model_name=model,
+                    device=str(embedder_cfg.get("device", "")).strip() or None,
+                    cache_dir=str(embedder_cfg.get("cache_dir", "")).strip() or None,
+                    local_files_only=bool_value(embedder_cfg.get("local_files_only"), default=True),
+                    expected_dim=configured_dim if configured_dim > 0 else None,
+                    l2_normalize=bool_value(embedder_cfg.get("l2_normalize"), default=True),
+                )
+            else:
+                raise RuntimeError(f"Enabled embedder '{embedder_name}' is missing model/checkpoint_uri.")
         else:
             raise RuntimeError(f"Enabled embedder '{embedder_name}' uses unsupported provider '{provider}'.")
     else:
         embedder = UnavailableTextImageEmbedder()
 
-    llm_entry = first_enabled_entry("llm")
+    llm_entry = first_enabled_entry("llm", {"openai_compatible"})
     if llm_entry:
         llm_name, llm_cfg = llm_entry
         provider = str(llm_cfg.get("provider", "")).lower()
@@ -146,7 +172,7 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
     else:
         query_expander = PassthroughQueryExpander()
 
-    vlm_entry = first_enabled_entry("vision_language")
+    vlm_entry = first_enabled_entry("vision_language", {"openai_compatible"})
     if vlm_entry:
         vlm_name, vlm_cfg = vlm_entry
         provider = str(vlm_cfg.get("provider", "")).lower()

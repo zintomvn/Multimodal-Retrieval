@@ -1,4 +1,4 @@
-# Blueprint ingest ưu tiên Kaggle/Colab
+# Blueprint ingest
 
 > Ngày cập nhật: 2026-07-23  
 > Phạm vi: pipeline L21-L30 hiện tại và dữ liệu mới do ban tổ chức upload lên Drive/Kaggle
@@ -63,35 +63,35 @@ Quy tắc:
 
 ### 4.1 Code
 
-| Khu vực | File / thư mục | Vai trò |
-| --- | --- | --- |
-| Core processor | `scripts/processors/processor_cli.py` | Lệnh chạy chính cho discover, run shard, import |
-| Discovery | `scripts/processors/src/manifest.py` | List GCS, build manifest, chia shard |
-| Worker | `scripts/processors/src/shard_runner.py` | Claim lease, xử lý shard, ghi part files |
-| Checkpoint | `scripts/processors/src/checkpoint_store.py` | Resume, heartbeat, lease TTL |
-| Artifact IO | `scripts/processors/src/artifact_io.py` | Đọc/ghi JSONL, local và GCS |
-| Import | `scripts/processors/src/ingest_artifacts.py` | Merge artifact vào Supabase PostgreSQL/Zilliz/Milvus/Elasticsearch |
-| Planner | `scripts/processors/src/role_planner.py` | Render command cho Kaggle/Colab từ YAML |
-| Notebook runner | `scripts/processors/src/notebook_role_runner.py` | Render/execute đúng một role trên Kaggle/Colab |
-| Notebook cells | `scripts/processors/src/notebook_cells.py` | Xuất markdown/cell kit cho Kaggle/Colab, gồm install, env, doctor, run, resume |
-| Smoke flow | `scripts/processors/src/smoke_flow.py` | Local synthetic end-to-end smoke cho manifest, checkpoint, artifact, reconcile, import dry-run |
-| Reconcile | `scripts/processors/src/reconcile_run.py` | Gate kiểm artifact/checkpoint trước DB import |
-| Doctor | `scripts/processors/src/processor_doctor.py` | Preflight readiness cho Kaggle/Colab/importer |
-| ASR | `scripts/processors/extract_gcs_asr.py` | Run faster-whisper trên raw video |
-| Extractors | `scripts/processors/src/extractors/` | Wrapper cho embedding, OCR, object, caption |
-| Sinks | `scripts/processors/src/cloud_sinks/` | Adapter cuối cho database/search |
+| Khu vực         | File / thư mục                                   | Vai trò                                                                                        |
+| --------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Core processor  | `scripts/processors/processor_cli.py`            | Lệnh chạy chính cho discover, run shard, import                                                |
+| Discovery       | `scripts/processors/src/manifest.py`             | List GCS, build manifest, chia shard                                                           |
+| Worker          | `scripts/processors/src/shard_runner.py`         | Claim lease, xử lý shard, ghi part files                                                       |
+| Checkpoint      | `scripts/processors/src/checkpoint_store.py`     | Resume, heartbeat, lease TTL                                                                   |
+| Artifact IO     | `scripts/processors/src/artifact_io.py`          | Đọc/ghi JSONL, local và GCS                                                                    |
+| Import          | `scripts/processors/src/ingest_artifacts.py`     | Merge artifact vào Supabase PostgreSQL/Zilliz/Milvus/Elasticsearch                             |
+| Planner         | `scripts/processors/src/role_planner.py`         | Render command cho Kaggle/Colab từ YAML                                                        |
+| Notebook runner | `scripts/processors/src/notebook_role_runner.py` | Render/execute đúng một role trên Kaggle/Colab                                                 |
+| Notebook cells  | `scripts/processors/src/notebook_cells.py`       | Xuất markdown/cell kit cho Kaggle/Colab, gồm install, env, doctor, run, resume                 |
+| Smoke flow      | `scripts/processors/src/smoke_flow.py`           | Local synthetic end-to-end smoke cho manifest, checkpoint, artifact, reconcile, import dry-run |
+| Reconcile       | `scripts/processors/src/reconcile_run.py`        | Gate kiểm artifact/checkpoint trước DB import                                                  |
+| Doctor          | `scripts/processors/src/processor_doctor.py`     | Preflight readiness cho Kaggle/Colab/importer                                                  |
+| ASR             | `scripts/processors/extract_gcs_asr.py`          | Run faster-whisper trên raw video                                                              |
+| Extractors      | `scripts/processors/src/extractors/`             | Wrapper cho embedding, OCR, object, caption                                                    |
+| Sinks           | `scripts/processors/src/cloud_sinks/`            | Adapter cuối cho database/search                                                               |
 
 ### 4.2 YAML
 
-| File | Mục đích |
-| --- | --- |
-| `configs/data_ingestion_sources.yaml` | Đăng ký source Kaggle/Drive, rule nhận batch, include/exclude path |
-| `configs/dataset_manifest.real.example.yaml` | Mẫu manifest dataset chuẩn hóa |
-| `configs/model_registry.yaml` | Đăng ký model, checkpoint, provider, collection, device, batch size |
-| `scripts/processors/configs/pipeline/processor.yaml` | Default runtime và profile theo stage |
-| `scripts/processors/configs/pipeline/notebook_roles.yaml` | Map vai trò Kaggle/Colab, shard size, batch size gợi ý |
-| `scripts/processors/configs/runtime/checkpoint_policy.yaml` | Lease TTL, heartbeat, resume policy |
-| `configs/retrieval_profiles.yaml` | Trọng số hybrid retrieval và fusion profile |
+| File                                                        | Mục đích                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------- |
+| `configs/data_ingestion_sources.yaml`                       | Đăng ký source Kaggle/Drive, rule nhận batch, include/exclude path  |
+| `configs/dataset_manifest.real.example.yaml`                | Mẫu manifest dataset chuẩn hóa                                      |
+| `configs/model_registry.yaml`                               | Đăng ký model, checkpoint, provider, collection, device, batch size |
+| `scripts/processors/configs/pipeline/processor.yaml`        | Default runtime và profile theo stage                               |
+| `scripts/processors/configs/pipeline/notebook_roles.yaml`   | Map vai trò Kaggle/Colab, shard size, batch size gợi ý              |
+| `scripts/processors/configs/runtime/checkpoint_policy.yaml` | Lease TTL, heartbeat, resume policy                                 |
+| `configs/retrieval_profiles.yaml`                           | Trọng số hybrid retrieval và fusion profile                         |
 
 ## 5. Thiết Kế Parallel
 
@@ -107,11 +107,11 @@ Nếu runtime dừng giữa chừng, shard đó có thể được claim lại s
 
 ### 5.2 Phân vai runtime
 
-| Runtime | Việc chính | Profile gợi ý |
-| --- | --- | --- |
-| Kaggle | Primary visual embedding, secondary visual embedding, objects | `visual_primary_pe_core`, `visual_secondary_openclip_vith14`, `objects_only` |
-| Colab | OCR, caption, ASR | `craft_easyocr_only`, `caption_only`, ASR worker riêng |
-| Backend/import machine | Import trung tâm, QA, benchmark, verify | importer |
+| Runtime                | Việc chính                                                    | Profile gợi ý                                                                |
+| ---------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Kaggle                 | Primary visual embedding, secondary visual embedding, objects | `visual_primary_pe_core`, `visual_secondary_openclip_vith14`, `objects_only` |
+| Colab                  | OCR, caption, ASR                                             | `craft_easyocr_only`, `caption_only`, ASR worker riêng                       |
+| Backend/import machine | Import trung tâm, QA, benchmark, verify                       | importer                                                                     |
 
 Trước khi chạy GPU/import, mỗi runtime nên chạy `processor_cli.py doctor`:
 
@@ -227,21 +227,21 @@ Không nên hardcode:
 
 Bộ baseline ưu tiên theo kinh nghiệm của top player và khối top-player review trong repo:
 
-| Modality | Baseline chính | Fallback / alt |
-| --- | --- | --- |
-| Keyframe extraction | Autoshot | 3 frame/shot chỉ để smoke hoặc stress |
-| Primary visual embedding | PE-Core-bigG-14-448 | - |
-| Secondary visual embedding | OpenCLIP ViT-H/14 | BLIP-2 khi cần profile nặng hơn |
-| ASR | faster-whisper | Whisper-compatible fallback |
-| OCR | CRAFT + Vietnamese-capable recognizer | EasyOCR / PaddleOCR khi cần |
-| Captioning | Qwen-VL hoặc Gemini với shot context | BLIP / shot-context fallback |
-| Vietnamese text embedding | `dangvantuan/vietnamese-embedding` | - |
-| Text and metadata DB | Elasticsearch | - |
-| Vector DB | Milvus / Zilliz | - |
-| Fusion | Weighted Reciprocal Rank Fusion | RRF nếu cần nhanh |
-| Reranking | Cross-encoder | Optional MLLM verification |
-| Temporal search | Subquery retrieval + two-pointer clip grouping | Sliding window fallback |
-| Frontend | Keyframe grid + neighboring shots + proxy scrubbing | - |
+| Modality                   | Baseline chính                                      | Fallback / alt                        |
+| -------------------------- | --------------------------------------------------- | ------------------------------------- |
+| Keyframe extraction        | Autoshot                                            | 3 frame/shot chỉ để smoke hoặc stress |
+| Primary visual embedding   | PE-Core-bigG-14-448                                 | -                                     |
+| Secondary visual embedding | OpenCLIP ViT-H/14                                   | BLIP-2 khi cần profile nặng hơn       |
+| ASR                        | faster-whisper                                      | Whisper-compatible fallback           |
+| OCR                        | CRAFT + Vietnamese-capable recognizer               | EasyOCR / PaddleOCR khi cần           |
+| Captioning                 | Qwen-VL hoặc Gemini với shot context                | BLIP / shot-context fallback          |
+| Vietnamese text embedding  | `dangvantuan/vietnamese-embedding`                  | -                                     |
+| Text and metadata DB       | Elasticsearch                                       | -                                     |
+| Vector DB                  | Milvus / Zilliz                                     | -                                     |
+| Fusion                     | Weighted Reciprocal Rank Fusion                     | RRF nếu cần nhanh                     |
+| Reranking                  | Cross-encoder                                       | Optional MLLM verification            |
+| Temporal search            | Subquery retrieval + two-pointer clip grouping      | Sliding window fallback               |
+| Frontend                   | Keyframe grid + neighboring shots + proxy scrubbing | -                                     |
 
 Baseline này phù hợp với phân chia runtime:
 

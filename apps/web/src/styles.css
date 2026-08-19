@@ -611,6 +611,37 @@ button:disabled {
   font-size: 12px;
 }
 
+.map-keyframe-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+
+.map-keyframe-meta.is-mismatch {
+  border-color: #d68a1a;
+  background: color-mix(in srgb, #d68a1a 12%, var(--bg-soft));
+}
+
+.map-keyframe-meta span,
+.map-keyframe-meta small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.map-keyframe-meta small {
+  grid-column: 1 / -1;
+  color: var(--text-2);
+}
+
 .frame-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -19,7 +19,7 @@ import {
   listDatasets,
   listFrames,
   mediaUrl,
-  runSearch
+  runSearch,
 } from "./api/client";
 import type {
   ContextFrame,
@@ -28,12 +28,13 @@ import type {
   MediaFrame,
   QueryType,
   SearchResult,
-  SubmissionRow
+  SubmissionRow,
 } from "./types";
 
 type AppMode = "Search" | "Auto" | "Chat";
 type ThemeMode = "light" | "dark" | "system";
 
+// Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
   id: string;
   mode: AppMode;
@@ -66,31 +67,43 @@ interface VideoPreview {
   posterUrl: string | null;
 }
 
+interface MapKeyframeInfo {
+  n?: number;
+  pts_time?: number | null;
+  fps?: number | null;
+  frame_idx?: number;
+  source_keyframe_id?: string | null;
+  resolved_keyframe_id?: string;
+  map_path?: string;
+}
+
+// Mock data
 const sampleQueries: Record<QueryType, string> = {
   KIS: "The clip shows an exhibition program with a royal-style decorative panel, dragon and cloud motifs, and the text PHU XUAN GIA DINH.",
   QA: "Identify the name of the world-famous company whose logo was inspired by a castle in Bavaria, Germany.",
-  TRAKE: "In a bicycle race, first a cyclist with a pink helmet crosses the finish line, then a cyclist with a blue helmet, then a cyclist with a red helmet."
+  TRAKE:
+    "In a bicycle race, first a cyclist with a pink helmet crosses the finish line, then a cyclist with a blue helmet, then a cyclist with a red helmet.",
 };
 
 const queryNameByType: Record<QueryType, string> = {
   KIS: "query-1-kis",
   QA: "query-2-qa",
-  TRAKE: "query-3-trake"
+  TRAKE: "query-3-trake",
 };
 
 const queryLabels: Record<QueryType, { title: string; caption: string }> = {
   KIS: {
     title: "KIS",
-    caption: "Find exact scene"
+    caption: "Find exact scene",
   },
   QA: {
     title: "QA",
-    caption: "Answer from video"
+    caption: "Answer from video",
   },
   TRAKE: {
     title: "TRAKE",
-    caption: "Order key events"
-  }
+    caption: "Order key events",
+  },
 };
 
 const mockDatasets: Dataset[] = [
@@ -100,10 +113,11 @@ const mockDatasets: Dataset[] = [
     version: "local",
     root_uri: "mock://aic",
     status: "READY",
-    video_count: 96
-  }
+    video_count: 96,
+  },
 ];
 
+// URL helpers
 function uniqueMediaUrls(paths: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
   return paths
@@ -121,7 +135,7 @@ function resultImageCandidates(result: SearchResult): string[] {
     result.thumbnail_url,
     result.image_url,
     result.image_uri,
-    result.image_storage_key
+    result.image_storage_key,
   ]);
 }
 
@@ -130,7 +144,7 @@ function contextImageCandidates(frame: ContextFrame): string[] {
     frame.thumbnail_url,
     frame.image_url,
     frame.image_uri,
-    frame.image_storage_key
+    frame.image_storage_key,
   ]);
 }
 
@@ -139,7 +153,7 @@ function galleryImageCandidates(frame: MediaFrame): string[] {
     frame.thumbnail_url,
     frame.image_url,
     frame.image_uri,
-    frame.image_storage_key
+    frame.image_storage_key,
   ]);
 }
 
@@ -153,13 +167,35 @@ function withTimeFragment(url: string, timestampMs: number | null): string {
 function timestampLabel(timestampMs: number | null): string {
   if (timestampMs === null) return "00:00";
   const total = Math.max(0, Math.floor(timestampMs / 1000));
-  const minutes = Math.floor(total / 60).toString().padStart(2, "0");
+  const minutes = Math.floor(total / 60)
+    .toString()
+    .padStart(2, "0");
   const seconds = (total % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
 }
 
 function formatScore(score: number): string {
   return score.toFixed(3);
+}
+
+function mapKeyframeInfo(result: SearchResult): MapKeyframeInfo | null {
+  const semanticHit = result.score_breakdown.semantic_hit;
+  if (!semanticHit || typeof semanticHit !== "object") return null;
+  const mapInfo = (semanticHit as { map_keyframe?: unknown }).map_keyframe;
+  if (!mapInfo || typeof mapInfo !== "object") return null;
+  return mapInfo as MapKeyframeInfo;
+}
+
+function semanticHitInfo(result: SearchResult): {
+  map_matches_resolved?: boolean;
+  resolved_keyframe_id?: string | null;
+} | null {
+  const semanticHit = result.score_breakdown.semantic_hit;
+  if (!semanticHit || typeof semanticHit !== "object") return null;
+  return semanticHit as {
+    map_matches_resolved?: boolean;
+    resolved_keyframe_id?: string | null;
+  };
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -173,7 +209,7 @@ function rowKey(row: SubmissionRow): string {
     row.query_type,
     row.video_code,
     row.frame_indices.join("-"),
-    row.answer ?? ""
+    row.answer ?? "",
   ].join(":");
 }
 
@@ -204,8 +240,16 @@ function queryFilename(queryName: string): string {
   return queryName.endsWith(".csv") ? queryName : `${queryName}.csv`;
 }
 
+// Mock results generator for testing without API
 function makeMockResults(type: QueryType, queryName: string): SearchResult[] {
-  const videos = ["L21_V003", "L22_V017", "L24_V006", "L27_V042", "L30_V011", "L23_V028"];
+  const videos = [
+    "L21_V003",
+    "L22_V017",
+    "L24_V006",
+    "L27_V042",
+    "L30_V011",
+    "L23_V028",
+  ];
   return Array.from({ length: 36 }, (_, index) => {
     const videoCode = videos[index % videos.length];
     const frameIdx = 840 + index * 137 + (index % 5) * 17;
@@ -218,7 +262,7 @@ function makeMockResults(type: QueryType, queryName: string): SearchResult[] {
             frame_id: `mock-${videoCode}-${frameIdx + offset * 280}`,
             frame_idx: frameIdx + offset * 280,
             video_code: videoCode,
-            score: Math.max(0.24, score - offset * 0.045)
+            score: Math.max(0.24, score - offset * 0.045),
           }))
         : [];
 
@@ -235,7 +279,7 @@ function makeMockResults(type: QueryType, queryName: string): SearchResult[] {
       score_breakdown: {
         visual: Math.max(0.21, score - 0.05).toFixed(2),
         text: Math.max(0.18, score - 0.12).toFixed(2),
-        ocr: Math.max(0.08, score - 0.22).toFixed(2)
+        ocr: Math.max(0.08, score - 0.22).toFixed(2),
       },
       sequence_frames: sequenceFrames,
       thumbnail_url: `https://picsum.photos/seed/${seed}/420/240`,
@@ -243,7 +287,7 @@ function makeMockResults(type: QueryType, queryName: string): SearchResult[] {
       image_uri: null,
       image_storage_key: null,
       video_url: null,
-      video_uri: null
+      video_uri: null,
     };
   });
 }
@@ -261,7 +305,7 @@ function makeMockFrames(): MediaFrame[] {
     image_url: result.image_url,
     image_uri: result.image_uri,
     image_storage_key: result.image_storage_key,
-    is_media_present: true
+    is_media_present: true,
   }));
 }
 
@@ -278,7 +322,7 @@ function frameToResult(frame: MediaFrame, rank: number): SearchResult {
     score: Math.max(0.3, 0.72 - rank * 0.002),
     score_breakdown: {
       gallery: "manual",
-      frame_type: frame.frame_type ?? "keyframe"
+      frame_type: frame.frame_type ?? "keyframe",
     },
     sequence_frames: [],
     thumbnail_url: frame.thumbnail_url,
@@ -286,7 +330,7 @@ function frameToResult(frame: MediaFrame, rank: number): SearchResult {
     image_uri: frame.image_uri,
     image_storage_key: frame.image_storage_key,
     video_url: null,
-    video_uri: null
+    video_uri: null,
   };
 }
 
@@ -306,47 +350,54 @@ function mockContextForResult(result: SearchResult): FrameContext | null {
       text:
         offset === 0
           ? "Target frame selected for submission."
-          : "Nearby frame for temporal context."
+          : "Nearby frame for temporal context.",
     };
   });
   return {
     target_frame_id: `context-${result.video_code}-${result.frame_idx}`,
     video_code: result.video_code,
-    frames
+    frames,
   };
 }
 
-function makeAgentTrace(mode: AppMode, queryType: QueryType, resultCount: number): AgentStep[] {
+function makeAgentTrace(
+  mode: AppMode,
+  queryType: QueryType,
+  resultCount: number,
+): AgentStep[] {
   const action = mode === "Auto" ? "Shortlist" : "Answer trace";
-  const align = queryType === "TRAKE" ? "Temporal order checked across event frames." : "Frame window checked around top matches.";
+  const align =
+    queryType === "TRAKE"
+      ? "Temporal order checked across event frames."
+      : "Frame window checked around top matches.";
   return [
     {
       title: "Parse query",
       detail: `${queryType} format detected and mapped to Codabench output.`,
-      status: "done"
+      status: "done",
     },
     {
       title: "Retrieve candidates",
       detail: `Visual, OCR and metadata signals produced ${resultCount} candidates.`,
-      status: "done"
+      status: "done",
     },
     {
       title: action,
       detail: align,
-      status: resultCount > 0 ? "done" : "running"
+      status: resultCount > 0 ? "done" : "running",
     },
     {
       title: "Submission check",
       detail: "CSV rows are checked before export.",
-      status: "queued"
-    }
+      status: "queued",
+    },
   ];
 }
 
 function CloudFrameImage({
   candidates,
   alt,
-  eager = false
+  eager = false,
 }: {
   candidates: string[];
   alt: string;
@@ -362,7 +413,10 @@ function CloudFrameImage({
   const src = candidates[candidateIndex];
   if (!src) {
     return (
-      <div className="cloud-image-placeholder" aria-label="No frame media available">
+      <div
+        className="cloud-image-placeholder"
+        aria-label="No frame media available"
+      >
         <ImageOff size={20} />
       </div>
     );
@@ -376,7 +430,9 @@ function CloudFrameImage({
       decoding="async"
       fetchPriority={eager ? "high" : "auto"}
       referrerPolicy="no-referrer"
-      onError={() => setCandidateIndex((index) => Math.min(index + 1, candidates.length))}
+      onError={() =>
+        setCandidateIndex((index) => Math.min(index + 1, candidates.length))
+      }
     />
   );
 }
@@ -387,7 +443,7 @@ function FrameCard({
   eager,
   onOpen,
   onSelect,
-  onPreview
+  onPreview,
 }: {
   result: SearchResult;
   selected: boolean;
@@ -400,12 +456,22 @@ function FrameCard({
   const frameText =
     result.sequence_frames.length > 0
       ? result.sequence_frames.map((frame) => frame.frame_idx).join(", ")
-      : result.frame_idx ?? "N/A";
+      : (result.frame_idx ?? "N/A");
+  const mapInfo = mapKeyframeInfo(result);
+  const semanticInfo = semanticHitInfo(result);
+  const mapMismatch = Boolean(mapInfo && semanticInfo?.map_matches_resolved === false);
 
   return (
-    <article className={`frame-card ${selected ? "selected" : ""}`} onClick={onOpen}>
+    <article
+      className={`frame-card ${selected ? "selected" : ""}`}
+      onClick={onOpen}
+    >
       <div className="frame-thumb">
-        <CloudFrameImage candidates={candidates} alt={`${result.video_code} frame ${frameText}`} eager={eager} />
+        <CloudFrameImage
+          candidates={candidates}
+          alt={`${result.video_code} frame ${frameText}`}
+          eager={eager}
+        />
         <span className="rank-chip">#{result.rank}</span>
       </div>
       <div className="frame-card-body">
@@ -414,6 +480,20 @@ function FrameCard({
           <span>{formatScore(result.score)}</span>
         </div>
         <p>Frame {frameText}</p>
+        {mapInfo && (
+          <div
+            className={`map-keyframe-meta${mapMismatch ? " is-mismatch" : ""}`}
+            title={mapInfo.map_path}
+          >
+            <span>Map n {mapInfo.n ?? "?"}</span>
+            <span>F{String(mapInfo.frame_idx ?? result.frame_idx ?? "").padStart(6, "0")}</span>
+            {typeof mapInfo.pts_time === "number" && <span>{mapInfo.pts_time.toFixed(2)}s</span>}
+            <small>
+              {mapInfo.source_keyframe_id ?? "vector"} -&gt; {mapInfo.resolved_keyframe_id ?? result.frame_id}
+              {mapMismatch && result.frame_id ? ` | UI ${result.frame_id}` : ""}
+            </small>
+          </div>
+        )}
         <div className="frame-actions">
           <button
             type="button"
@@ -443,7 +523,7 @@ function FrameCard({
 
 function ReasoningDisclosure({
   steps,
-  compact = false
+  compact = false,
 }: {
   steps: AgentStep[];
   compact?: boolean;
@@ -451,16 +531,25 @@ function ReasoningDisclosure({
   const running = steps.some((step) => step.status === "running");
   const doneCount = steps.filter((step) => step.status === "done").length;
   return (
-    <details className={`reasoning-disclosure ${compact ? "compact" : ""}`} open={running}>
+    <details
+      className={`reasoning-disclosure ${compact ? "compact" : ""}`}
+      open={running}
+    >
       <summary>
         <span>{running ? "Thinking" : "Reasoning"}</span>
-        <small>{doneCount}/{steps.length} checks</small>
+        <small>
+          {doneCount}/{steps.length} checks
+        </small>
       </summary>
       <div className="reasoning-steps">
         {steps.map((step) => (
           <div className={`reasoning-step ${step.status}`} key={step.title}>
             <small className="reasoning-status">
-              {step.status === "done" ? "Done" : step.status === "running" ? "Running" : "Waiting"}
+              {step.status === "done"
+                ? "Done"
+                : step.status === "running"
+                  ? "Running"
+                  : "Waiting"}
             </small>
             <span>
               <strong>{step.title}</strong>
@@ -484,14 +573,21 @@ function SearchLoadingStage({ frameColumns }: { frameColumns: number }) {
         style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: ghostCount }).map((_, index) => (
-          <span key={index} className="search-loading-frame" style={{ animationDelay: `${index * 80}ms` }} />
+          <span
+            key={index}
+            className="search-loading-frame"
+            style={{ animationDelay: `${index * 80}ms` }}
+          />
         ))}
       </div>
     </div>
   );
 }
 
+// Functions in App
+
 export function App() {
+  // Attibutes
   const [mode, setMode] = useState<AppMode>("Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetId, setDatasetId] = useState("");
@@ -499,9 +595,14 @@ export function App() {
   const [queryName, setQueryName] = useState(queryNameByType.KIS);
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
   const [topK, setTopK] = useState(100);
-  const [useExpansion, setUseExpansion] = useState(true);
-  const [useMetadata, setUseMetadata] = useState(true);
-  const [weights, setWeights] = useState({ visual: 0.42, text: 0.32, ocr: 0.16, temporal: 0.1 });
+  const [useExpansion, setUseExpansion] = useState(false);
+  const [useMetadata, setUseMetadata] = useState(false);
+  const [weights, setWeights] = useState({
+    visual: 0.42,
+    text: 0.32,
+    ocr: 0.16,
+    temporal: 0.1,
+  });
   const [frameColumns, setFrameColumns] = useState(5);
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -519,22 +620,30 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
   const [autoEnabled, setAutoEnabled] = useState(true);
-  const [autoTrace, setAutoTrace] = useState<AgentStep[]>(makeAgentTrace("Auto", "KIS", 0));
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(() => typeof window === "undefined" ? true : window.innerWidth > 900);
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(() => typeof window === "undefined" ? true : window.innerWidth > 1180);
+  const [autoTrace, setAutoTrace] = useState<AgentStep[]>(
+    makeAgentTrace("Auto", "KIS", 0),
+  );
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth > 900,
+  );
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth > 1180,
+  );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
       role: "assistant",
       text: "Upload a video or ask a QA query. I will keep the trace visible and prepare rows in Codabench format.",
-      trace: makeAgentTrace("Chat", "QA", 0)
-    }
+      trace: makeAgentTrace("Chat", "QA", 0),
+    },
   ]);
   const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
-      return (localStorage.getItem("chatshasimi-theme") as ThemeMode) ?? "system";
+      return (
+        (localStorage.getItem("chatshasimi-theme") as ThemeMode) ?? "system"
+      );
     } catch {
       return "system";
     }
@@ -543,12 +652,15 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // Effects
   useEffect(() => {
     const apply = () => {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const prefersDark = window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches;
       document.documentElement.classList.toggle(
         "theme-dark",
-        theme === "dark" || (theme === "system" && prefersDark)
+        theme === "dark" || (theme === "system" && prefersDark),
       );
     };
     apply();
@@ -590,7 +702,9 @@ export function App() {
     listFrames({ datasetId, limit: 48, offset: 0, presentOnly: true })
       .then((payload) => {
         if (cancelled) return;
-        setGalleryFrames(payload.frames.length > 0 ? payload.frames : makeMockFrames());
+        setGalleryFrames(
+          payload.frames.length > 0 ? payload.frames : makeMockFrames(),
+        );
       })
       .catch(() => {
         if (cancelled) return;
@@ -620,13 +734,16 @@ export function App() {
   }, [attachedFiles.length, mode, queryText]);
 
   const activeDataset = useMemo(
-    () => datasets.find((item) => item.id === datasetId) ?? datasets[0] ?? mockDatasets[0],
-    [datasets, datasetId]
+    () =>
+      datasets.find((item) => item.id === datasetId) ??
+      datasets[0] ??
+      mockDatasets[0],
+    [datasets, datasetId],
   );
 
   const galleryResults = useMemo(
     () => galleryFrames.map((frame, index) => frameToResult(frame, index + 1)),
-    [galleryFrames]
+    [galleryFrames],
   );
 
   const visibleResults = useMemo(() => {
@@ -638,7 +755,7 @@ export function App() {
         result.video_code,
         result.frame_idx,
         result.answer,
-        ...result.sequence_frames.map((frame) => frame.frame_idx)
+        ...result.sequence_frames.map((frame) => frame.frame_idx),
       ]
         .join(" ")
         .toLowerCase();
@@ -648,6 +765,7 @@ export function App() {
 
   const selectedKeys = useMemo(() => new Set(selected.map(rowKey)), [selected]);
 
+  // Functions
   function changeType(type: QueryType) {
     setQueryType(type);
     setQueryName(queryNameByType[type]);
@@ -661,7 +779,10 @@ export function App() {
   function switchMode(nextMode: AppMode) {
     setMode(nextMode);
     setIntelligenceOpen(false);
-    if (nextMode === "Chat" && Object.values(sampleQueries).includes(queryText)) {
+    if (
+      nextMode === "Chat" &&
+      Object.values(sampleQueries).includes(queryText)
+    ) {
       setQueryText("");
       return;
     }
@@ -671,7 +792,10 @@ export function App() {
   }
 
   function rememberSearch(nextResults: SearchResult[]) {
-    const createdAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const createdAt = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
     const item: SearchHistoryItem = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       mode,
@@ -680,7 +804,7 @@ export function App() {
       queryText,
       resultCount: nextResults.length,
       createdAt,
-      results: nextResults
+      results: nextResults,
     };
     setHistory((current) => [item, ...current].slice(0, 12));
   }
@@ -714,7 +838,7 @@ export function App() {
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: result.video_code,
       frame_indices: frameIndices,
-      answer: queryType === "QA" ? result.answer ?? "" : null
+      answer: queryType === "QA" ? (result.answer ?? "") : null,
     };
 
     setSelected((current) => {
@@ -724,7 +848,9 @@ export function App() {
   }
 
   function removeSelected(key: string) {
-    setSelected((current) => normalizeRanks(current.filter((row) => rowKey(row) !== key)));
+    setSelected((current) =>
+      normalizeRanks(current.filter((row) => rowKey(row) !== key)),
+    );
   }
 
   async function submitSearch() {
@@ -738,10 +864,12 @@ export function App() {
     setHasSearched(true);
     setDownloadUrl(null);
     setStatus(mode === "Auto" && autoEnabled ? "Auto running" : "Searching");
-    const runningTrace = makeAgentTrace(mode, queryType, 0).map((step, index) => ({
-      ...step,
-      status: index <= 1 ? "running" as const : "queued" as const
-    }));
+    const runningTrace = makeAgentTrace(mode, queryType, 0).map(
+      (step, index) => ({
+        ...step,
+        status: index <= 1 ? ("running" as const) : ("queued" as const),
+      }),
+    );
     if (mode === "Auto") setAutoTrace(runningTrace);
 
     try {
@@ -752,9 +880,12 @@ export function App() {
         queryText,
         topK,
         useExpansion,
-        useMetadata
+        useMetadata,
       });
-      const nextResults = response.results.length > 0 ? response.results : makeMockResults(queryType, queryName);
+      const nextResults =
+        response.results.length > 0
+          ? response.results
+          : makeMockResults(queryType, queryName);
       setResults(nextResults);
       setStatus(`${nextResults.length} results`);
       setAutoTrace(makeAgentTrace(mode, queryType, nextResults.length));
@@ -763,7 +894,11 @@ export function App() {
     } catch (error) {
       const nextResults = makeMockResults(queryType, queryName);
       setResults(nextResults);
-      setStatus(error instanceof Error ? `Mock results: ${error.message.slice(0, 64)}` : "Mock results");
+      setStatus(
+        error instanceof Error
+          ? `Mock results: ${error.message.slice(0, 64)}`
+          : "Mock results",
+      );
       setAutoTrace(makeAgentTrace(mode, queryType, nextResults.length));
       rememberSearch(nextResults);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
@@ -776,7 +911,11 @@ export function App() {
     const prompt = queryText.trim();
     if (!prompt && attachedFiles.length === 0) return;
     const fileNames = attachedFiles.map((file) => file.name);
-    const trace = makeAgentTrace("Chat", "QA", fileNames.length > 0 ? fileNames.length : 4);
+    const trace = makeAgentTrace(
+      "Chat",
+      "QA",
+      fileNames.length > 0 ? fileNames.length : 4,
+    );
     const answerText =
       fileNames.length > 0
         ? "Video received. I prepared a QA trace and can turn a confirmed answer into a Codabench row."
@@ -787,14 +926,14 @@ export function App() {
         id: `user-${Date.now()}`,
         role: "user",
         text: prompt || "Uploaded video for QA",
-        files: fileNames
+        files: fileNames,
       },
       {
         id: `assistant-${Date.now()}`,
         role: "assistant",
         text: answerText,
-        trace
-      }
+        trace,
+      },
     ]);
     setQueryText("");
     setAttachedFiles([]);
@@ -813,17 +952,21 @@ export function App() {
   }
 
   function openVideoPreview(result: SearchResult) {
-    const videoUrl = firstMediaUrl(result.video_url, `/api/media/videos/${result.video_id}/preview`);
+    const videoUrl = firstMediaUrl(
+      result.video_url,
+      `/api/media/videos/${result.video_id}/preview`,
+    );
     if (!videoUrl) {
       setStatus("Video preview unavailable");
       return;
     }
-    const frameLabel = result.frame_idx === null ? "sequence" : `frame ${result.frame_idx}`;
+    const frameLabel =
+      result.frame_idx === null ? "sequence" : `frame ${result.frame_idx}`;
     setVideoPreview({
       title: result.video_code,
       subtitle: `${frameLabel} | ${timestampLabel(result.timestamp_ms)}`,
       url: withTimeFragment(videoUrl, result.timestamp_ms),
-      posterUrl: resultImageCandidates(result)[0] ?? null
+      posterUrl: resultImageCandidates(result)[0] ?? null,
     });
   }
 
@@ -851,13 +994,22 @@ export function App() {
     if (selected.length === 0) return;
     setStatus("Exporting");
     try {
-      if (datasetId.startsWith("mock")) throw new Error("Using local mock dataset");
+      if (datasetId.startsWith("mock"))
+        throw new Error("Using local mock dataset");
       const name = `submission_${new Date().toISOString().replace(/[:.]/g, "-")}`;
-      const exported = await createAndExportSubmission(datasetId, name, selected);
+      const exported = await createAndExportSubmission(
+        datasetId,
+        name,
+        selected,
+      );
       setDownloadName(`${name}.zip`);
       setDownloadUrl(exported.downloadUrl);
       const report = exported.validation_report;
-      setStatus(report.valid ? "Submission exported" : `Invalid: ${report.errors.join(", ")}`);
+      setStatus(
+        report.valid
+          ? "Submission exported"
+          : `Invalid: ${report.errors.join(", ")}`,
+      );
     } catch {
       await exportLocalSubmission();
     }
@@ -891,7 +1043,9 @@ export function App() {
       : "";
 
   return (
-    <main className={`chat-shell ${leftSidebarOpen ? "" : "left-collapsed"} ${rightSidebarOpen ? "" : "right-collapsed"}`}>
+    <main
+      className={`chat-shell ${leftSidebarOpen ? "" : "left-collapsed"} ${rightSidebarOpen ? "" : "right-collapsed"}`}
+    >
       <aside className="left-sidebar">
         <div className="brand-row">
           <div className="brand-mark">CS</div>
@@ -923,9 +1077,16 @@ export function App() {
               <p className="empty-note">No searches yet</p>
             ) : (
               history.map((item) => (
-                <button type="button" key={item.id} className="history-item" onClick={() => restoreHistory(item)}>
+                <button
+                  type="button"
+                  key={item.id}
+                  className="history-item"
+                  onClick={() => restoreHistory(item)}
+                >
                   <span>{item.queryName}</span>
-                  <small>{item.createdAt} | {item.resultCount} results</small>
+                  <small>
+                    {item.createdAt} | {item.resultCount} results
+                  </small>
                 </button>
               ))
             )}
@@ -933,7 +1094,11 @@ export function App() {
         </section>
 
         <div className="sidebar-footer">
-          <button type="button" className="settings-entry" onClick={() => setSettingsOpen((open) => !open)}>
+          <button
+            type="button"
+            className="settings-entry"
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
             Settings
           </button>
         </div>
@@ -949,7 +1114,9 @@ export function App() {
               setIntelligenceOpen(false);
               setSettingsOpen(false);
             }}
-            aria-label={leftSidebarOpen ? "Close left sidebar" : "Open left sidebar"}
+            aria-label={
+              leftSidebarOpen ? "Close left sidebar" : "Open left sidebar"
+            }
           >
             <PanelLeft size={18} />
           </button>
@@ -976,7 +1143,11 @@ export function App() {
                 setIntelligenceOpen(false);
                 setSettingsOpen(false);
               }}
-              aria-label={rightSidebarOpen ? "Close selected frames sidebar" : "Open selected frames sidebar"}
+              aria-label={
+                rightSidebarOpen
+                  ? "Close selected frames sidebar"
+                  : "Open selected frames sidebar"
+              }
             >
               <PanelRight size={18} />
             </button>
@@ -992,7 +1163,10 @@ export function App() {
             <div className="workspace-controls">
               <label className="compact-field">
                 Dataset
-                <select value={datasetId} onChange={(event) => setDatasetId(event.target.value)}>
+                <select
+                  value={datasetId}
+                  onChange={(event) => setDatasetId(event.target.value)}
+                >
                   {datasets.map((dataset) => (
                     <option key={dataset.id} value={dataset.id}>
                       {dataset.name}
@@ -1002,7 +1176,10 @@ export function App() {
               </label>
               <label className="compact-field query-file">
                 Query file
-                <input value={queryName} onChange={(event) => setQueryName(event.target.value)} />
+                <input
+                  value={queryName}
+                  onChange={(event) => setQueryName(event.target.value)}
+                />
               </label>
             </div>
           </div>
@@ -1034,26 +1211,34 @@ export function App() {
               ) : (
                 <div
                   className="frame-grid"
-                  style={{ gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))` }}
+                  style={{
+                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                  }}
                 >
                   {visibleResults.map((result, index) => (
                     <FrameCard
                       key={result.id}
                       result={result}
                       eager={index < frameColumns}
-                      selected={selectedKeys.has(rowKey({
-                        query_name: queryName,
-                        query_type: queryType,
-                        rank: 0,
-                        video_code: result.video_code,
-                        frame_indices:
-                          queryType === "TRAKE" && result.sequence_frames.length > 0
-                            ? result.sequence_frames.map((item) => item.frame_idx)
-                            : result.frame_idx === null
-                              ? []
-                              : [result.frame_idx],
-                        answer: queryType === "QA" ? result.answer ?? "" : null
-                      }))}
+                      selected={selectedKeys.has(
+                        rowKey({
+                          query_name: queryName,
+                          query_type: queryType,
+                          rank: 0,
+                          video_code: result.video_code,
+                          frame_indices:
+                            queryType === "TRAKE" &&
+                            result.sequence_frames.length > 0
+                              ? result.sequence_frames.map(
+                                  (item) => item.frame_idx,
+                                )
+                              : result.frame_idx === null
+                                ? []
+                                : [result.frame_idx],
+                          answer:
+                            queryType === "QA" ? (result.answer ?? "") : null,
+                        }),
+                      )}
                       onOpen={() => void openFrameContext(result)}
                       onSelect={() => addResult(result)}
                       onPreview={() => openVideoPreview(result)}
@@ -1074,7 +1259,9 @@ export function App() {
                   ) : (
                     <div
                       className="frame-grid auto-grid"
-                      style={{ gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))` }}
+                      style={{
+                        gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                      }}
                     >
                       {visibleResults.map((result, index) => (
                         <FrameCard
@@ -1095,7 +1282,9 @@ export function App() {
               ) : (
                 <div
                   className="frame-grid"
-                  style={{ gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))` }}
+                  style={{
+                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                  }}
                 >
                   {visibleResults.map((result, index) => (
                     <FrameCard
@@ -1116,8 +1305,13 @@ export function App() {
           {mode === "Chat" && (
             <section className="chat-thread" aria-label="Chat messages">
               {chatMessages.map((message) => (
-                <article className={`chat-message ${message.role}`} key={message.id}>
-                  <div className="avatar">{message.role === "assistant" ? "CS" : "You"}</div>
+                <article
+                  className={`chat-message ${message.role}`}
+                  key={message.id}
+                >
+                  <div className="avatar">
+                    {message.role === "assistant" ? "CS" : "You"}
+                  </div>
                   <div className="message-body">
                     <p>{message.text}</p>
                     {message.files && message.files.length > 0 && (
@@ -1127,7 +1321,9 @@ export function App() {
                         ))}
                       </div>
                     )}
-                    {message.trace && <ReasoningDisclosure steps={message.trace} compact />}
+                    {message.trace && (
+                      <ReasoningDisclosure steps={message.trace} compact />
+                    )}
                   </div>
                 </article>
               ))}
@@ -1144,7 +1340,11 @@ export function App() {
                   <button
                     type="button"
                     aria-label={`Remove ${file.name}`}
-                    onClick={() => setAttachedFiles((current) => current.filter((item) => item !== file))}
+                    onClick={() =>
+                      setAttachedFiles((current) =>
+                        current.filter((item) => item !== file),
+                      )
+                    }
                   >
                     <X size={12} />
                   </button>
@@ -1165,7 +1365,11 @@ export function App() {
                   void submitSearch();
                 }
               }}
-              placeholder={mode === "Chat" ? "Ask about a video or upload one for QA" : "Search frames, events, OCR text, or visual details"}
+              placeholder={
+                mode === "Chat"
+                  ? "Ask about a video or upload one for QA"
+                  : "Search frames, events, OCR text, or visual details"
+              }
             />
             <div className="composer-actions">
               <div className="composer-left-actions">
@@ -1180,11 +1384,20 @@ export function App() {
                     event.currentTarget.value = "";
                   }}
                 />
-                <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file">
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach file"
+                >
                   <Paperclip size={17} />
                 </button>
                 <div className="intelligence-wrap">
-                  <button type="button" className="intelligence-button" onClick={() => setIntelligenceOpen((open) => !open)}>
+                  <button
+                    type="button"
+                    className="intelligence-button"
+                    onClick={() => setIntelligenceOpen((open) => !open)}
+                  >
                     <SlidersHorizontal size={16} />
                     Intelligence
                     <ChevronDown size={14} />
@@ -1199,7 +1412,9 @@ export function App() {
                           max={8}
                           step={1}
                           value={frameColumns}
-                          onChange={(event) => updateFrameColumns(Number(event.target.value))}
+                          onChange={(event) =>
+                            updateFrameColumns(Number(event.target.value))
+                          }
                         />
                       </label>
                       <label>
@@ -1210,11 +1425,23 @@ export function App() {
                           max={100}
                           step={1}
                           value={topK}
-                          onChange={(event) => updateTopK(Number(event.target.value))}
+                          onChange={(event) =>
+                            updateTopK(Number(event.target.value))
+                          }
                         />
                       </label>
-                      <button type="button" className="reserved-slot" disabled aria-label="Future filter slot" />
-                      <button type="button" className="reserved-slot" disabled aria-label="Future reranker slot" />
+                      <button
+                        type="button"
+                        className="reserved-slot"
+                        disabled
+                        aria-label="Future filter slot"
+                      />
+                      <button
+                        type="button"
+                        className="reserved-slot"
+                        disabled
+                        aria-label="Future reranker slot"
+                      />
                     </div>
                   )}
                 </div>
@@ -1235,7 +1462,13 @@ export function App() {
                 disabled={loading}
                 aria-label={mode === "Chat" ? "Send message" : "Run search"}
               >
-                {loading ? <Loader2 className="spin-icon" size={18} /> : mode === "Chat" ? <Send size={18} /> : <Search size={18} />}
+                {loading ? (
+                  <Loader2 className="spin-icon" size={18} />
+                ) : mode === "Chat" ? (
+                  <Send size={18} />
+                ) : (
+                  <Search size={18} />
+                )}
               </button>
             </div>
           </div>
@@ -1257,10 +1490,20 @@ export function App() {
                   <span className="row-rank">{row.rank}</span>
                   <span>
                     <strong>{row.video_code}</strong>
-                    <small>{row.query_type} | {row.query_name}</small>
-                    <code>{row.frame_indices.join(", ")}{row.answer ? `, ${row.answer}` : ""}</code>
+                    <small>
+                      {row.query_type} | {row.query_name}
+                    </small>
+                    <code>
+                      {row.frame_indices.join(", ")}
+                      {row.answer ? `, ${row.answer}` : ""}
+                    </code>
                   </span>
-                  <button type="button" className="selected-remove" aria-label="Remove row" onClick={() => removeSelected(rowKey(row))}>
+                  <button
+                    type="button"
+                    className="selected-remove"
+                    aria-label="Remove row"
+                    onClick={() => removeSelected(rowKey(row))}
+                  >
                     <span aria-hidden="true" />
                   </button>
                 </div>
@@ -1280,7 +1523,10 @@ export function App() {
                 className={`context-frame ${frame.id === context.target_frame_id ? "target" : ""}`}
                 key={frame.id}
               >
-                <CloudFrameImage candidates={contextImageCandidates(frame)} alt={`Context frame ${frame.frame_idx}`} />
+                <CloudFrameImage
+                  candidates={contextImageCandidates(frame)}
+                  alt={`Context frame ${frame.frame_idx}`}
+                />
                 <span>
                   <strong>Frame {frame.frame_idx}</strong>
                   <small>{timestampLabel(frame.timestamp_ms)}</small>
@@ -1291,11 +1537,20 @@ export function App() {
         </section>
 
         <section className="export-panel">
-          <button type="button" className="export-button" disabled={selected.length === 0} onClick={() => void exportSubmission()}>
+          <button
+            type="button"
+            className="export-button"
+            disabled={selected.length === 0}
+            onClick={() => void exportSubmission()}
+          >
             Export zip
           </button>
           {downloadUrl && (
-            <a className="download-link" href={downloadUrl} download={downloadName}>
+            <a
+              className="download-link"
+              href={downloadUrl}
+              download={downloadName}
+            >
               Download {downloadName}
             </a>
           )}
@@ -1306,42 +1561,71 @@ export function App() {
         <div className="settings-popover" role="dialog" aria-label="Settings">
           <div className="panel-heading">
             <strong>Settings</strong>
-            <button type="button" className="icon-button small" onClick={() => setSettingsOpen(false)} aria-label="Close settings">
+            <button
+              type="button"
+              className="icon-button small"
+              onClick={() => setSettingsOpen(false)}
+              aria-label="Close settings"
+            >
               <X size={14} />
             </button>
           </div>
           <div className="settings-block">
             <span>Search coefficients</span>
-            {(Object.keys(weights) as Array<keyof typeof weights>).map((key) => (
-              <label key={key}>
-                {key}
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={weights[key]}
-                  onChange={(event) => updateWeight(key, Number(event.target.value))}
-                />
-              </label>
-            ))}
+            {(Object.keys(weights) as Array<keyof typeof weights>).map(
+              (key) => (
+                <label key={key}>
+                  {key}
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={weights[key]}
+                    onChange={(event) =>
+                      updateWeight(key, Number(event.target.value))
+                    }
+                  />
+                </label>
+              ),
+            )}
           </div>
           <div className="settings-block two-col">
-            <button type="button" className={useExpansion ? "active" : ""} onClick={() => setUseExpansion((value) => !value)}>
+            <button
+              type="button"
+              className={useExpansion ? "active" : ""}
+              onClick={() => setUseExpansion((value) => !value)}
+            >
               Expansion
             </button>
-            <button type="button" className={useMetadata ? "active" : ""} onClick={() => setUseMetadata((value) => !value)}>
+            <button
+              type="button"
+              className={useMetadata ? "active" : ""}
+              onClick={() => setUseMetadata((value) => !value)}
+            >
               Metadata
             </button>
           </div>
           <div className="settings-block theme-row">
-            <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>
+            <button
+              type="button"
+              className={theme === "light" ? "active" : ""}
+              onClick={() => setTheme("light")}
+            >
               Light
             </button>
-            <button type="button" className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>
+            <button
+              type="button"
+              className={theme === "dark" ? "active" : ""}
+              onClick={() => setTheme("dark")}
+            >
               Dark
             </button>
-            <button type="button" className={theme === "system" ? "active" : ""} onClick={() => setTheme("system")}>
+            <button
+              type="button"
+              className={theme === "system" ? "active" : ""}
+              onClick={() => setTheme("system")}
+            >
               System
             </button>
           </div>
@@ -1349,20 +1633,39 @@ export function App() {
       )}
 
       {videoPreview && (
-        <div className="video-backdrop" onClick={(event) => {
-          if (event.target === event.currentTarget) setVideoPreview(null);
-        }}>
-          <div className="video-modal" role="dialog" aria-modal="true" aria-label="Video preview">
+        <div
+          className="video-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setVideoPreview(null);
+          }}
+        >
+          <div
+            className="video-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Video preview"
+          >
             <div className="video-modal-header">
               <span>
                 <strong>{videoPreview.title}</strong>
                 <small>{videoPreview.subtitle}</small>
               </span>
-              <button type="button" className="icon-button" onClick={() => setVideoPreview(null)} aria-label="Close video">
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setVideoPreview(null)}
+                aria-label="Close video"
+              >
                 <X size={16} />
               </button>
             </div>
-            <video className="video-preview-player" src={videoPreview.url} poster={videoPreview.posterUrl ?? undefined} controls autoPlay />
+            <video
+              className="video-preview-player"
+              src={videoPreview.url}
+              poster={videoPreview.posterUrl ?? undefined}
+              controls
+              autoPlay
+            />
           </div>
         </div>
       )}

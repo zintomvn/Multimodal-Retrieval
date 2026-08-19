@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import socket
 from typing import Any
+from urllib import error, request
 from urllib.parse import urlparse, urlunparse
 
 from ..gcs_source import FrameItem
@@ -13,8 +15,7 @@ class ElasticsearchAnnotationSink:
 
     def __init__(self, config: SinkConfig) -> None:
         self.config = config
-        self.client = None
-        self.bulk = None
+        self.url = self._resolve_url(self.config.elasticsearch_url).rstrip("/")
         self.disabled = False
 
     def upsert(self, frames: list[FrameItem], annotations: list[dict[str, Any]]) -> int:
@@ -22,15 +23,12 @@ class ElasticsearchAnnotationSink:
         if self.disabled:
             return 0
         try:
-            resolved_url = self._resolve_url(self.config.elasticsearch_url)
-            self._probe_endpoint(resolved_url)
-            self._ensure_client()
+            self._probe_endpoint(self.url)
             self._ensure_index()
             actions = [self._build_action(item, record) for item, record in zip(frames, annotations)]
             if not actions:
                 return 0
-            success, _ = self.bulk(self.client, actions, raise_on_error=True)
-            return int(success)
+            return self._bulk(actions)
         except Exception:
             if self.config.elasticsearch_disable_after_error:
                 self.disabled = True
@@ -56,20 +54,6 @@ class ElasticsearchAnnotationSink:
             },
         }
 
-    def _ensure_client(self) -> None:
-        if self.client is not None:
-            return
-        from elasticsearch import Elasticsearch
-        from elasticsearch.helpers import bulk
-
-        self.client = Elasticsearch(
-            self._resolve_url(self.config.elasticsearch_url),
-            request_timeout=self.config.elasticsearch_request_timeout,
-            max_retries=self.config.elasticsearch_max_retries,
-            retry_on_timeout=True,
-        )
-        self.bulk = bulk
-
     def _resolve_url(self, url: str) -> str:
         parsed = urlparse(url)
         if parsed.hostname != "elasticsearch":
@@ -92,25 +76,82 @@ class ElasticsearchAnnotationSink:
             raise ConnectionError(f"Elasticsearch unavailable at {url}") from exc
 
     def _ensure_index(self) -> None:
-        if self.client.indices.exists(index=self.config.elasticsearch_index):
+        index_url = f"{self.url}/{self.config.elasticsearch_index}"
+        if self._head(index_url):
             return
-        self.client.indices.create(
-            index=self.config.elasticsearch_index,
-            mappings={
-                "properties": {
-                    "keyframe_id": {"type": "keyword"},
-                    "video_id": {"type": "keyword"},
-                    "shot_id": {"type": "keyword"},
-                    "frame_seconds": {"type": "float"},
-                    "caption": {"type": "text"},
-                    "ocr_texts": {"type": "text"},
-                    "detected_objects": {"type": "keyword"},
-                    "object_counts": {"type": "object"},
-                    "image_uri": {"type": "keyword"},
-                    "image_url": {"type": "keyword"},
+        self._request_json(
+            "PUT",
+            index_url,
+            {
+                "mappings": {
+                    "properties": {
+                        "keyframe_id": {"type": "keyword"},
+                        "video_id": {"type": "keyword"},
+                        "shot_id": {"type": "keyword"},
+                        "frame_seconds": {"type": "float"},
+                        "caption": {"type": "text"},
+                        "ocr_texts": {"type": "text"},
+                        "detected_objects": {"type": "keyword"},
+                        "object_counts": {"type": "object"},
+                        "image_uri": {"type": "keyword"},
+                        "image_url": {"type": "keyword"},
+                    }
                 }
             },
         )
+
+    def _bulk(self, actions: list[dict[str, Any]]) -> int:
+        lines: list[str] = []
+        for action in actions:
+            op = action.get("_op_type", "index")
+            index = action["_index"]
+            item_id = action["_id"]
+            source = action["_source"]
+            lines.append(json.dumps({op: {"_index": index, "_id": item_id}}, ensure_ascii=False))
+            lines.append(json.dumps(source, ensure_ascii=False))
+        body = ("\n".join(lines) + "\n").encode("utf-8")
+        response = self._request_bytes(
+            "POST",
+            f"{self.url}/_bulk",
+            body,
+            content_type="application/x-ndjson",
+        )
+        if response.get("errors"):
+            failures = [item for item in response.get("items", []) if item.get("index", {}).get("error")]
+            raise RuntimeError(f"Elasticsearch bulk import failed for {len(failures)} documents")
+        return len(actions)
+
+    def _head(self, url: str) -> bool:
+        req = request.Request(url, method="HEAD")
+        try:
+            with request.urlopen(req, timeout=self.config.elasticsearch_request_timeout):
+                return True
+        except error.HTTPError as exc:
+            if exc.code == 404:
+                return False
+            raise
+
+    def _request_json(self, method: str, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request_bytes(
+            method,
+            url,
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            content_type="application/json",
+        )
+
+    def _request_bytes(self, method: str, url: str, body: bytes, *, content_type: str) -> dict[str, Any]:
+        req = request.Request(
+            url,
+            data=body,
+            method=method,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": content_type,
+            },
+        )
+        with request.urlopen(req, timeout=self.config.elasticsearch_request_timeout) as response:
+            raw = response.read()
+        return json.loads(raw.decode("utf-8")) if raw else {}
 
     def _public_url(self, blob_name: str) -> str:
         if self.config.gcs_public_url:

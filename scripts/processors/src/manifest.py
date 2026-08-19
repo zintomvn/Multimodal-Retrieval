@@ -154,7 +154,7 @@ def load_manifest_rows(uri: str, credentials_file: str = "", timeout_seconds: fl
 
 def frame_item_from_record(record: dict[str, Any]) -> FrameItem:
     """Convert a manifest or artifact frame record into FrameItem."""
-    gcs_uri = str(record.get("gcs_uri") or record.get("image_uri") or "")
+    gcs_uri = str(record.get("gcs_uri") or record.get("image_gcs_uri") or record.get("image_uri") or "")
     if gcs_uri:
         parsed = parse_gcs_uri(gcs_uri)
         bucket = parsed.bucket
@@ -173,11 +173,21 @@ def frame_item_from_record(record: dict[str, Any]) -> FrameItem:
         video_id=video_id,
         image_name=image_name,
         frame_idx=frame_idx,
-        frame_seconds=float(record.get("frame_seconds") or 0.0),
+        frame_seconds=float(record.get("frame_seconds") or record.get("frame_sec") or 0.0),
         fps=_optional_float(record.get("fps")),
-        shot_index=_optional_int(record.get("shot_index")),
+        shot_index=_optional_int(record.get("shot_index")) or _shot_index_from_id(str(record.get("shot_id") or "")),
         frame_type=str(record.get("frame_type") or "key"),
     )
+
+
+def _shot_index_from_id(raw: str) -> int | None:
+    match = re.search(r"(?:^|[_-])S(\d+)", raw, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"shot[_-]?(\d+)", raw, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def frame_item_to_manifest_row(item: FrameItem, dataset_id: str) -> dict[str, Any]:

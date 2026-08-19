@@ -82,7 +82,9 @@ class ArtifactStore:
         """Read a UTF-8 text artifact."""
         if is_gcs_uri(uri):
             parsed = parse_gcs_uri(uri)
-            return self._client().bucket(parsed.bucket).blob(parsed.blob).download_as_text(
+            blob = self._client().bucket(parsed.bucket).blob(parsed.blob)
+            blob.reload(timeout=self.timeout_seconds)
+            return blob.download_as_text(
                 encoding="utf-8",
                 timeout=self.timeout_seconds,
             )

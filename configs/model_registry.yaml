@@ -1,4 +1,16 @@
 embedders:
+  siglip2_base_patch16_256:
+    task: multimodal_embedding
+    provider: siglip2
+    checkpoint_uri: google/siglip2-base-patch16-256
+    model: google/siglip2-base-patch16-256
+    device: auto
+    dim: 768
+    l2_normalize: true
+    local_files_only: true
+    collection: keyframe_embeddings_siglip2_base_patch16_256
+    enabled: true
+    description: "Primary SigLIP2 text encoder for the L21-L25 Zilliz vector collection."
   pe_core_bigg_14_448:
     task: multimodal_embedding
     provider: openclip
@@ -11,7 +23,7 @@ embedders:
     dim: 1280
     l2_normalize: true
     collection: keyframe_embeddings_pe_core_bigG_14_448
-    enabled: true
+    enabled: false
     description: "Primary visual embedding for competition ingest."
   openclip_vith14:
     task: multimodal_embedding
@@ -38,7 +50,7 @@ embedders:
     openclip_max_batch: 8
     dim: 512
     l2_normalize: true
-    enabled: true
+    enabled: false
     description: "Must match demo/features/vit-ViT-B-32-laion2b_s34b_b79k embedding space."
   pe_core_bigg:
     task: multimodal_embedding

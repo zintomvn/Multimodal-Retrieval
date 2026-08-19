@@ -1,0 +1,104 @@
+{
+  "batch": "L21",
+  "created_at": "2026-08-13T15:25:13.700908+00:00",
+  "dataset_id": "ai_challenge_2025",
+  "feature_coverage": {
+    "caption_by_video": {
+      "L21_V001": 1023,
+      "L21_V002": 867
+    },
+    "caption_frames": 1890,
+    "object_by_video": {
+      "L21_V001": 858,
+      "L21_V002": 684
+    },
+    "object_frames": 1542,
+    "ocr_by_video": {
+      "L21_V001": 958,
+      "L21_V002": 867
+    },
+    "ocr_frames": 1825
+  },
+  "frame_profile": "autoshot_v1",
+  "frames": 25581,
+  "outputs": {
+    "gcs_annotations": "gs://aic_ai_2026/features/patches/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/run_id=coverage_patch_l21_20260813T152454Z/annotations.jsonl",
+    "gcs_summary": "gs://aic_ai_2026/features/patches/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/run_id=coverage_patch_l21_20260813T152454Z/summary.json",
+    "local_annotations": "D:\\University\\Projects\\Individual projects\\Multimodal-Retrieval\\data\\patched\\l21_full_coverage_annotations.jsonl",
+    "local_summary": "D:\\University\\Projects\\Individual projects\\Multimodal-Retrieval\\data\\patched\\l21_full_coverage_summary.json"
+  },
+  "rows": 25581,
+  "run_id": "coverage_patch_l21_20260813T152454Z",
+  "source_artifacts": [
+    {
+      "files": [
+        "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=captioning/extractor_version=fe-captioning-v2.2/model=qwen3_vl_4b/data/annotations.jsonl"
+      ],
+      "matched_rows": 1890,
+      "rows": 1890,
+      "unmatched_rows": 0,
+      "uri": "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=captioning/extractor_version=fe-captioning-v2.2/model=qwen3_vl_4b/data/annotations.jsonl",
+      "videos": {
+        "L21_V001": 1023,
+        "L21_V002": 867
+      }
+    },
+    {
+      "files": [
+        "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=object_detection/extractor_version=fe-object-detection-v1/run_id=full_l21_20260810T053426Z_2fd88279/annotations.jsonl"
+      ],
+      "matched_rows": 1890,
+      "rows": 1890,
+      "unmatched_rows": 0,
+      "uri": "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=object_detection/extractor_version=fe-object-detection-v1/run_id=full_l21_20260810T053426Z_2fd88279/annotations.jsonl",
+      "videos": {
+        "L21_V001": 1023,
+        "L21_V002": 867
+      }
+    },
+    {
+      "files": [
+        "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=ocr/extractor_version=fe-ocr-v1/run_id=full_l21_20260719T064450Z_6876c339/annotations.jsonl"
+      ],
+      "matched_rows": 1826,
+      "rows": 1826,
+      "unmatched_rows": 0,
+      "uri": "gs://aic_ai_2026/features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=ocr/extractor_version=fe-ocr-v1/run_id=full_l21_20260719T064450Z_6876c339/annotations.jsonl",
+      "videos": {
+        "L21_V001": 959,
+        "L21_V002": 867
+      }
+    }
+  ],
+  "videos": {
+    "L21_V001": 1023,
+    "L21_V002": 867,
+    "L21_V003": 804,
+    "L21_V005": 747,
+    "L21_V006": 828,
+    "L21_V007": 654,
+    "L21_V008": 1077,
+    "L21_V009": 921,
+    "L21_V010": 843,
+    "L21_V011": 861,
+    "L21_V012": 753,
+    "L21_V013": 945,
+    "L21_V014": 948,
+    "L21_V015": 1104,
+    "L21_V016": 948,
+    "L21_V017": 678,
+    "L21_V018": 1053,
+    "L21_V019": 762,
+    "L21_V021": 753,
+    "L21_V022": 639,
+    "L21_V023": 936,
+    "L21_V024": 1005,
+    "L21_V025": 933,
+    "L21_V026": 1044,
+    "L21_V027": 966,
+    "L21_V028": 771,
+    "L21_V029": 885,
+    "L21_V030": 849,
+    "L21_V031": 984
+  }
+}

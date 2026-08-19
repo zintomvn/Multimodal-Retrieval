@@ -1,0 +1,10 @@
+keyword,matched_objects,matched_folders,size_GB,sample_path
+caption,19,5,0.006943851709365845,features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=captioning/extractor_version=fe-captioning-v2.2/model=qwen3_vl_4b/data/_SUCCESS
+ocr,29,7,0.07850026711821556,features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=ocr/extractor_version=fe-ocr-v1/run_id=demo_20260719T063632Z_2c2aa41a/_SUCCESS
+object,120,26,0.6021734848618507,features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=object_detection/extractor_version=fe-object-detection-v1/run_id=demo_20260719T044453Z_449323fa/_SUCCESS
+keyframe,311298,894,58.250662222504616,processed/keyframes/dataset=ai_challenge_2025/batch=L21/profile=autoshot_v1/video_id=L21_V001/frames_manifest.jsonl
+frame,311471,934,58.99799197539687,features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=captioning/extractor_version=fe-captioning-v2.2/model=qwen3_vl_4b/data/_SUCCESS
+feature,176,43,0.7477111266925931,features/extractors/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/extractor=captioning/extractor_version=fe-captioning-v2.2/model=qwen3_vl_4b/data/_SUCCESS
+embedding,3,3,0.0003813738003373146,processed/feature-annotations/fe-vector-embedding-v1/vector_embedding-demo-20260718_174024-59916b7d/manifest.json
+metadata,5,1,6.932765245437622e-06,features/import_bundles/dataset=ai_challenge_2025/batch=L21/frame_profile=autoshot_v1/run_id=coverage_patch_l21_20260813T152454Z/metadata_backups/aic_ai_2026__features__extractors__dataset=ai_challenge_2025__batch=L21__frame_profile=autoshot_v1__extractor=captioning__extractor_version=fe-captioning-v2.2__model=qwen3_vl_4b__data__manifest.json.json
+asr,0,0,0.0,

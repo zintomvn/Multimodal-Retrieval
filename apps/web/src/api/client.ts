@@ -12,13 +12,17 @@ import type {
   PipelineJobStartResponse,
   QueryType,
   SearchResponse,
-  SubmissionRow
+  SubmissionRow,
 } from "../types";
 
+// API base URL and GCS
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const GCS_BUCKET = import.meta.env.VITE_GCS_BUCKET ?? "";
-const GCS_PUBLIC_BASE_URL = (import.meta.env.VITE_GCS_PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+const GCS_PUBLIC_BASE_URL = (
+  import.meta.env.VITE_GCS_PUBLIC_BASE_URL ?? ""
+).replace(/\/$/, "");
 
+// Convert a GCS path (gs://bucket/key) to a public URL
 function gcsMediaUrl(path: string): string | null {
   const raw = path.trim();
   if (!raw) return null;
@@ -39,13 +43,15 @@ function gcsMediaUrl(path: string): string | null {
   return `https://storage.googleapis.com/${bucket}/${encodedKey}`;
 }
 
+// JSON request
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  // call fetch with the API base URL and the provided path
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers ?? {})
+      ...(init?.headers ?? {}),
     },
-    ...init
+    ...init,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -68,7 +74,12 @@ export async function runSearch(input: {
   useExpansion: boolean;
   useMetadata: boolean;
 }): Promise<SearchResponse> {
-  const path = input.queryType === "QA" ? "/api/retrieval/qa" : input.queryType === "TRAKE" ? "/api/retrieval/trake" : "/api/retrieval/search";
+  const path =
+    input.queryType === "QA"
+      ? "/api/retrieval/qa"
+      : input.queryType === "TRAKE"
+        ? "/api/retrieval/trake"
+        : "/api/retrieval/search";
   return requestJson<SearchResponse>(path, {
     method: "POST",
     body: JSON.stringify({
@@ -81,9 +92,11 @@ export async function runSearch(input: {
       options: {
         use_query_expansion: input.useExpansion,
         use_metadata: input.useMetadata,
-        delta_t_max_ms: 180000
-      }
-    })
+        use_reranker: false,
+        strict_hybrid: !input.useMetadata,
+        delta_t_max_ms: 180000,
+      },
+    }),
   });
 }
 
@@ -104,17 +117,26 @@ export async function listFrames(input: {
   params.set("limit", String(input.limit ?? 60));
   params.set("offset", String(input.offset ?? 0));
   params.set("present_only", String(input.presentOnly ?? true));
-  return requestJson<FrameListResponse>(`/api/media/frames?${params.toString()}`);
+  return requestJson<FrameListResponse>(
+    `/api/media/frames?${params.toString()}`,
+  );
 }
 
-export async function createAndExportSubmission(datasetId: string, name: string, rows: SubmissionRow[]) {
-  const submission = await requestJson<{ id: string; status: string }>("/api/submissions", {
-    method: "POST",
-    body: JSON.stringify({ dataset_id: datasetId, name })
-  });
+export async function createAndExportSubmission(
+  datasetId: string,
+  name: string,
+  rows: SubmissionRow[],
+) {
+  const submission = await requestJson<{ id: string; status: string }>(
+    "/api/submissions",
+    {
+      method: "POST",
+      body: JSON.stringify({ dataset_id: datasetId, name }),
+    },
+  );
   await requestJson(`/api/submissions/${submission.id}/items`, {
     method: "POST",
-    body: JSON.stringify({ rows })
+    body: JSON.stringify({ rows }),
   });
   const exported = await requestJson<{
     submission_id: string;
@@ -122,17 +144,22 @@ export async function createAndExportSubmission(datasetId: string, name: string,
     zip_uri: string | null;
     validation_report: { valid: boolean; errors: string[]; warnings: string[] };
   }>(`/api/submissions/${submission.id}/export`, {
-    method: "POST"
+    method: "POST",
   });
   return {
     ...exported,
-    downloadUrl: `${API_BASE}/api/submissions/${submission.id}/download`
+    downloadUrl: `${API_BASE}/api/submissions/${submission.id}/download`,
   };
 }
 
 export function mediaUrl(path: string | null): string | null {
   if (!path) return null;
-  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:") || path.startsWith("data:")) {
+  if (
+    path.startsWith("http://") ||
+    path.startsWith("https://") ||
+    path.startsWith("blob:") ||
+    path.startsWith("data:")
+  ) {
     return path;
   }
   if (path.startsWith("/")) return `${API_BASE}${path}`;
@@ -140,7 +167,9 @@ export function mediaUrl(path: string | null): string | null {
   return gcsMediaUrl(path) ?? path;
 }
 
-export function firstMediaUrl(...paths: Array<string | null | undefined>): string | null {
+export function firstMediaUrl(
+  ...paths: Array<string | null | undefined>
+): string | null {
   for (const path of paths) {
     const resolved = mediaUrl(path ?? null);
     if (resolved) return resolved;
@@ -148,7 +177,9 @@ export function firstMediaUrl(...paths: Array<string | null | undefined>): strin
   return null;
 }
 
-export async function startIngestJob(input: IngestJobStartRequest): Promise<IngestJobStartResponse> {
+export async function startIngestJob(
+  input: IngestJobStartRequest,
+): Promise<IngestJobStartResponse> {
   return requestJson<IngestJobStartResponse>("/api/ingest/jobs", {
     method: "POST",
     body: JSON.stringify({
@@ -159,54 +190,77 @@ export async function startIngestJob(input: IngestJobStartRequest): Promise<Inge
       dataset_root: input.dataset_root ?? undefined,
       targets: input.targets ?? undefined,
       dry_run: input.dry_run ?? false,
-    })
+    }),
   });
 }
 
-export async function getIngestJob(jobId: string): Promise<IngestJobPollResponse> {
+export async function getIngestJob(
+  jobId: string,
+): Promise<IngestJobPollResponse> {
   return requestJson<IngestJobPollResponse>(`/api/jobs/${jobId}`);
 }
 
-export async function startPipelineJob(input: PipelineJobStartRequest): Promise<PipelineJobStartResponse> {
+export async function startPipelineJob(
+  input: PipelineJobStartRequest,
+): Promise<PipelineJobStartResponse> {
   return requestJson<PipelineJobStartResponse>("/api/pipeline/jobs", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
   });
 }
 
-export async function getPipelineJob(jobId: string): Promise<PipelineJobPollResponse> {
+export async function getPipelineJob(
+  jobId: string,
+): Promise<PipelineJobPollResponse> {
   return requestJson<PipelineJobPollResponse>(`/api/jobs/${jobId}`);
 }
 
-export async function startGCSUpload(input: GCSUploadJobRequest): Promise<IngestJobStartResponse> {
+export async function startGCSUpload(
+  input: GCSUploadJobRequest,
+): Promise<IngestJobStartResponse> {
   return requestJson<IngestJobStartResponse>("/api/ingest/upload/gcs", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
   });
 }
 
-export async function startMilvusUpload(input: MilvusUploadJobRequest): Promise<IngestJobStartResponse> {
+export async function startMilvusUpload(
+  input: MilvusUploadJobRequest,
+): Promise<IngestJobStartResponse> {
   return requestJson<IngestJobStartResponse>("/api/ingest/upload/milvus", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
   });
 }
 
-export async function uploadFileToGCS(file: File, datasetId?: string): Promise<IngestJobStartResponse> {
+export async function uploadFileToGCS(
+  file: File,
+  datasetId?: string,
+): Promise<IngestJobStartResponse> {
   const form = new FormData();
   form.append("file", file);
   if (datasetId) form.append("dataset_id", datasetId);
-  const res = await fetch(`${API_BASE}/api/ingest/upload/file/gcs`, { method: "POST", body: form });
+  const res = await fetch(`${API_BASE}/api/ingest/upload/file/gcs`, {
+    method: "POST",
+    body: form,
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;
 }
 
-export async function uploadFileToMilvus(file: File, collection?: string, datasetId?: string): Promise<IngestJobStartResponse> {
+export async function uploadFileToMilvus(
+  file: File,
+  collection?: string,
+  datasetId?: string,
+): Promise<IngestJobStartResponse> {
   const form = new FormData();
   form.append("file", file);
   if (collection) form.append("collection", collection);
   if (datasetId) form.append("dataset_id", datasetId);
-  const res = await fetch(`${API_BASE}/api/ingest/upload/file/milvus`, { method: "POST", body: form });
+  const res = await fetch(`${API_BASE}/api/ingest/upload/file/milvus`, {
+    method: "POST",
+    body: form,
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;
 }

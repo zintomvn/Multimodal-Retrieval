@@ -78,14 +78,11 @@ class PostgresAnnotationSink:
         session.flush()
 
     def _upsert_shots(self, session, Shot, frames: list[FrameItem]) -> None:  # noqa: ANN001
-        shot_items = [item for item in frames if item.shot_id is not None]
-        shot_ids = [item.shot_id for item in shot_items if item.shot_id]
-        if not shot_ids:
-            return
-        existing = {item.shot_id: item for item in session.query(Shot).filter(Shot.shot_id.in_(shot_ids)).all()}
-        for item in shot_items:
+        shot_payloads: dict[str, dict[str, Any]] = {}
+        for item in frames:
             if item.shot_id is None or item.shot_index is None:
                 continue
+            current = shot_payloads.get(item.shot_id)
             payload = {
                 "video_id": item.video_id,
                 "shot_index": item.shot_index,
@@ -94,11 +91,24 @@ class PostgresAnnotationSink:
                 "start_seconds": item.frame_seconds,
                 "end_seconds": item.frame_seconds,
             }
-            if item.shot_id in existing:
+            if current is None:
+                shot_payloads[item.shot_id] = payload
+                continue
+            current["start_frame"] = min(int(current["start_frame"]), item.frame_idx)
+            current["end_frame"] = max(int(current["end_frame"]), item.frame_idx)
+            current["start_seconds"] = min(float(current["start_seconds"]), item.frame_seconds)
+            current["end_seconds"] = max(float(current["end_seconds"]), item.frame_seconds)
+
+        shot_ids = list(shot_payloads)
+        if not shot_ids:
+            return
+        existing = {item.shot_id: item for item in session.query(Shot).filter(Shot.shot_id.in_(shot_ids)).all()}
+        for shot_id, payload in shot_payloads.items():
+            if shot_id in existing:
                 for key, value in payload.items():
-                    setattr(existing[item.shot_id], key, value)
+                    setattr(existing[shot_id], key, value)
             else:
-                session.add(Shot(shot_id=item.shot_id, **payload))
+                session.add(Shot(shot_id=shot_id, **payload))
         session.flush()
 
     def _upsert_frames(self, session, Frame, frames: list[FrameItem]) -> None:  # noqa: ANN001
