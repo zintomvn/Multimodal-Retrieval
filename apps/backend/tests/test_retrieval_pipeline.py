@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -224,6 +225,49 @@ def test_m3_search_returns_hybrid_scores_and_persists_run(tmp_path: Path) -> Non
     loaded_run = service.get_run(response.query_run_id)
     assert loaded_run.query_run_id == response.query_run_id
     assert isinstance(loaded_run.normalized_query.get("latency_ms"), int)
+
+    db.close()
+
+
+def test_semantic_numeric_keyframe_id_uses_local_map_keyframes(tmp_path: Path) -> None:
+    db, service, dataset, _frame_a, frame_b = _build_retrieval_fixture(tmp_path)
+    map_dir = tmp_path / "map-keyframes"
+    map_dir.mkdir()
+    (map_dir / "L30_V001.csv").write_text(
+        "n,pts_time,fps,frame_idx\n"
+        "1,0.4,25,10\n"
+        "2,1.0,25,25\n",
+        encoding="utf-8",
+    )
+    service.settings = replace(service.settings, data_root=tmp_path)
+    embedder = service.model_registry.embedder
+    service.vector_client.upsert(
+        "keyframe_embeddings_siglip2_base_patch16_256",
+        [
+            (
+                "L30_V001_002",
+                embedder.embed_text("rocket astronauts"),
+                {"video_id": "L30_V001", "keyframe_number": 2},
+            )
+        ],
+    )
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="numeric-map",
+            query_text="rocket astronauts",
+            top_k=1,
+            options=SearchOptions(use_query_expansion=False, use_metadata=False, use_reranker=False),
+        )
+    )
+
+    assert response.results[0].frame_id == frame_b.keyframe_id
+    semantic_hit = response.results[0].score_breakdown["semantic_hit"]
+    assert semantic_hit["source_keyframe_id"] == "L30_V001_002"
+    assert semantic_hit["map_keyframe"]["n"] == 2
+    assert semantic_hit["map_keyframe"]["frame_idx"] == 25
 
     db.close()
 

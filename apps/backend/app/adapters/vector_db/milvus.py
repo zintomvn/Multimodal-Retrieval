@@ -7,21 +7,35 @@ class MilvusVectorSearchClient:
     """Thin optional wrapper. Import pymilvus only when this adapter is enabled."""
 
     def __init__(self, uri: str, token: str = "") -> None:
-        from pymilvus import MilvusClient
-
-        kwargs: dict = {"uri": uri}
-        if token:
-            kwargs["token"] = token
-        self.client = MilvusClient(**kwargs)
+        self.uri = uri
+        self.token = token
+        self.client = None
 
     def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
+        self._ensure_client()
         filter_expr = self._to_filter_expr(filters or {})
         raw_hits = self.client.search(
             collection_name=collection,
             data=[vector],
             limit=top_k,
             filter=filter_expr,
-            output_fields=["frame_id", "video_id", "frame_idx", "event_id", "model_version", "keyframe_id", "dataset_id"],
+            output_fields=[
+                "frame_id",
+                "video_id",
+                "frame_idx",
+                "event_id",
+                "model_version",
+                "keyframe_id",
+                "dataset_id",
+                "batch_id",
+                "map_n",
+                "keyframe_number",
+                "embedding_index_0",
+                "image_rel_path",
+                "canonical_keyframe_id",
+                "canonical_frame_idx",
+                "original_keyframe_id",
+            ],
         )
         hits: list[VectorHit] = []
         for hit in raw_hits[0] if raw_hits else []:
@@ -31,6 +45,7 @@ class MilvusVectorSearchClient:
     def upsert(self, collection: str, vectors: list[tuple[str, list[float], dict]]) -> int:
         if not vectors:
             return 0
+        self._ensure_client()
         self._ensure_collection(collection=collection, dimension=len(vectors[0][1]))
         data = [{"id": item_id, "vector": vector, **metadata} for item_id, vector, metadata in vectors]
         self.client.upsert(collection_name=collection, data=data)
@@ -40,6 +55,7 @@ class MilvusVectorSearchClient:
         """Create the collection with HNSW/COSINE index if it does not exist."""
         from pymilvus import DataType, MilvusClient
 
+        self._ensure_client()
         if self.client.has_collection(name):
             return
 
@@ -56,6 +72,16 @@ class MilvusVectorSearchClient:
         )
 
         self.client.create_collection(name, schema=schema, index_params=index_params)
+
+    def _ensure_client(self) -> None:
+        if self.client is not None:
+            return
+        from pymilvus import MilvusClient
+
+        kwargs: dict = {"uri": self.uri}
+        if self.token:
+            kwargs["token"] = self.token
+        self.client = MilvusClient(**kwargs)
 
     def _to_filter_expr(self, filters: dict) -> str:
         parts = []

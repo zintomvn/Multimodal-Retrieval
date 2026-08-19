@@ -1,6 +1,6 @@
 competition_default:
-  semantic_weight: 0.85
-  metadata_weight: 0.05
+  semantic_weight: 0.3
+  metadata_weight: 0.6
   temporal_weight: 0.05
   user_boost_weight: 0.05
   rrf:
@@ -10,13 +10,15 @@ competition_default:
     enabled_default: true
     max_variants: 5
   milvus:
+    collection: keyframe_embeddings_siglip2_base_patch16_256
+    weight: 1.0
     top_k_per_model: 500
     final_top_k: 100
   metadata:
     ocr_boost: 3.0
     asr_boost: 2.5
     object_boost: 1.8
-    caption_boost: 1.5
+    caption_boost: 5.0
   reranking:
     enabled: false
     top_k: 50
@@ -42,6 +44,8 @@ semantic_fast:
     enabled_default: false
     max_variants: 1
   milvus:
+    collection: keyframe_embeddings_siglip2_base_patch16_256
+    weight: 1.0
     top_k_per_model: 200
     final_top_k: 100
   metadata:
@@ -63,14 +67,8 @@ competition_mvp_v1:
     k: 60
   visual_models:
     primary:
-      collection: keyframe_embeddings_pe_core_bigG_14_448
-      weight: 0.60
-    secondary:
-      collection: keyframe_embeddings_openclip_vith14
-      weight: 0.25
-    legacy:
-      collection: keyframe_embeddings
-      weight: 0.15
+      collection: keyframe_embeddings_siglip2_base_patch16_256
+      weight: 1.0
   query_type_weights:
     kis:
       visual: 0.50
@@ -99,6 +97,8 @@ competition_mvp_v1:
     max_variants: 5
     decompose_temporal: true
   milvus:
+    collection: keyframe_embeddings_siglip2_base_patch16_256
+    weight: 1.0
     top_k_per_model: 500
     final_top_k: 100
   metadata:

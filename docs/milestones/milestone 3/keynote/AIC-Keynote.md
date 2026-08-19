@@ -339,7 +339,7 @@ flowchart TD
 
     B --> C{"Caption model"}
     C -->|BLIP| C1["BLIP-2 OPT-2.7B<br/>batch = 8<br/>max tokens = 80<br/>min tokens = 10<br/>beams = 1<br/>repetition penalty = 1.2<br/>length penalty = 1.1<br/>FP16<br/>use_cache = True"]
-    C -->|Qwen| C2["Qwen2.5-VL-3B<br/>max pixels = 1024²<br/>batch = 8<br/>max tokens = 80<br/>do_sample = False<br/>BF16<br/>use_cache = True"]
+    C -->|Qwen| C2["Qwen3-VL-4B<br/>max pixels = 1024²<br/>batch = 8<br/>max tokens = 80<br/>do_sample = False<br/>BF16<br/>use_cache = True"]
 
     C1 --> D
     C2 --> D

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import math
 import re
 from collections import Counter
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
-from app.core.config import get_settings
+from app.core.config import REPO_ROOT, get_settings
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
@@ -23,6 +24,7 @@ from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 
 TOKEN_RE = re.compile(r"[\wÀ-ỹ]+", re.UNICODE)
 FRAME_VIDEO_ID_RE = re.compile(r"^(?P<video_id>.+)_F\d+$")
+VECTOR_KEYFRAME_ID_RE = re.compile(r"^(?P<video_id>L\d{2}_V\d{3})_(?P<n>\d+)$")
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -52,6 +54,7 @@ class FrameScore:
     rerank_score: float = 0.0
     rerank_detail: dict[str, Any] = field(default_factory=dict)
     filter_debug: dict[str, Any] = field(default_factory=dict)
+    source_hit: dict[str, Any] = field(default_factory=dict)
 
 
 class RetrievalService:
@@ -69,6 +72,9 @@ class RetrievalService:
         self.settings = get_settings()
         self.profiles = self._load_profiles()
         self.query_planner = AgentQueryPlanner.from_config(self.settings.agent_config_path)
+        self._map_keyframes_cache: dict[str, dict[int, dict[str, Any]] | None] = {}
+        self._keyframe_exists_cache: dict[str, bool] = {}
+        self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
 
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
@@ -252,6 +258,7 @@ class RetrievalService:
                     "rrf_score": round(candidate.rrf_score, 6),
                     "rerank_score": round(candidate.rerank_score, 6),
                     "rerank_detail": candidate.rerank_detail,
+                    "semantic_hit": candidate.source_hit,
                     "final_score": round(candidate.final_score, 6),
                     "filter_debug": candidate.filter_debug,
                 },
@@ -380,7 +387,7 @@ class RetrievalService:
         ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
 
         dataset_video_ids = self._dataset_video_ids(dataset)
-        semantic_scores, semantic_backend_error = self._semantic_scores(variants, ann_top_k, dataset_video_ids)
+        semantic_scores, semantic_backend_error = self._semantic_scores(variants, ann_top_k, dataset_video_ids, profile)
         if options.use_metadata:
             text_scores, text_backend_error = self._text_scores(variants, ann_top_k, dataset_video_ids, profile)
         else:
@@ -468,6 +475,7 @@ class RetrievalService:
                     "quality_score": quality_score,
                     "weighted_score": weighted_score,
                     "rrf_raw": rrf_raw,
+                    "source_hit": self._semantic_hit_sources.get(frame_id, {}),
                 }
             )
 
@@ -490,16 +498,24 @@ class RetrievalService:
                     rrf_score=rrf_score,
                     final_score=final_score,
                     filter_debug=filter_debug.get(frame.keyframe_id, {}),
+                    source_hit=item["source_hit"],
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
 
-    def _semantic_scores(self, variants: list[str], top_k: int, dataset_video_ids: set[str]) -> tuple[dict[str, float], bool]:
+    def _semantic_scores(
+        self,
+        variants: list[str],
+        top_k: int,
+        dataset_video_ids: set[str],
+        profile: dict[str, Any],
+    ) -> tuple[dict[str, float], bool]:
         if self.vector_client is None:
             return {}, True
         scores: dict[str, float] = {}
         backend_error = False
+        collections = self._semantic_collections(profile)
         for variant in variants:
             try:
                 query_vector = self.model_registry.embedder.embed_text(variant)
@@ -509,22 +525,67 @@ class RetrievalService:
                 continue
             if not query_vector:
                 continue
-            try:
-                hits = self.vector_client.search("keyframe_embeddings", query_vector, top_k=top_k)
-            except Exception:
-                backend_error = True
-                continue
-            for hit in hits:
-                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
-                if not frame_id:
+            for collection, collection_weight in collections:
+                try:
+                    hits = self.vector_client.search(collection, query_vector, top_k=top_k)
+                except Exception:
+                    backend_error = True
                     continue
-                if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
-                    continue
-                score = max(0.0, float(hit.score))
-                existing = scores.get(frame_id, 0.0)
-                if score > existing:
-                    scores[frame_id] = score
+                for hit in hits:
+                    frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                    if not frame_id:
+                        continue
+                    if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                        continue
+                    score = max(0.0, float(hit.score)) * collection_weight
+                    existing = scores.get(frame_id, 0.0)
+                    if score > existing:
+                        scores[frame_id] = score
+                        self._semantic_hit_sources[frame_id] = self._semantic_source_hit(
+                            item_id=hit.id,
+                            metadata=hit.metadata,
+                            collection=collection,
+                            score=score,
+                            resolved_frame_id=frame_id,
+                        )
         return scores, backend_error
+
+    def _semantic_collections(self, profile: dict[str, Any]) -> list[tuple[str, float]]:
+        collections: list[tuple[str, float]] = []
+
+        visual_models = profile.get("visual_models")
+        if isinstance(visual_models, dict):
+            for config in visual_models.values():
+                if not isinstance(config, dict):
+                    continue
+                collection = str(config.get("collection") or "").strip()
+                if collection:
+                    collections.append((collection, float(config.get("weight", 1.0))))
+
+        milvus_profile = profile.get("milvus") if isinstance(profile.get("milvus"), dict) else {}
+        collection = str(milvus_profile.get("collection") or "").strip()
+        if collection:
+            collections.append((collection, float(milvus_profile.get("weight", 1.0))))
+
+        if not collections:
+            embedder_entry = self.model_registry.first_enabled("embedders")
+            if embedder_entry and isinstance(embedder_entry[1], dict):
+                provider = str(embedder_entry[1].get("provider") or "").lower()
+                collection = str(embedder_entry[1].get("collection") or "").strip()
+                if provider in {"openai_compatible", "siglip2", "transformers_siglip2", "huggingface_siglip2"} and collection:
+                    collections.append((collection, 1.0))
+
+        if not collections:
+            collections.append(("keyframe_embeddings", 1.0))
+
+        deduped: list[tuple[str, float]] = []
+        seen: set[str] = set()
+        for name, weight in collections:
+            if name in seen:
+                continue
+            seen.add(name)
+            deduped.append((name, weight))
+        return deduped
 
     def _text_scores(
         self,
@@ -644,6 +705,7 @@ class RetrievalService:
                     rrf_score=rrf_score,
                     final_score=final_score,
                     filter_debug=filter_debug.get(frame.keyframe_id, {}),
+                    source_hit={},
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
@@ -717,6 +779,7 @@ class RetrievalService:
                         "backend": getattr(reranker, "backend", reranker.__class__.__name__),
                     },
                     filter_debug=item.filter_debug,
+                    source_hit=item.source_hit,
                 )
             )
 
@@ -832,12 +895,24 @@ class RetrievalService:
         }
 
     def _resolve_keyframe_id(self, item_id: str, metadata: dict[str, Any]) -> str | None:
-        if metadata.get("keyframe_id"):
-            return str(metadata["keyframe_id"])
-        if metadata.get("frame_id"):
-            return str(metadata["frame_id"])
-        if item_id:
-            return str(item_id)
+        for candidate in (
+            metadata.get("original_keyframe_id"),
+            item_id,
+            metadata.get("keyframe_id"),
+            metadata.get("frame_id"),
+        ):
+            map_info = self._map_keyframe_info(str(candidate or ""), metadata)
+            if map_info and self._keyframe_exists(str(map_info["resolved_keyframe_id"])):
+                return str(map_info["resolved_keyframe_id"])
+
+        if metadata.get("canonical_keyframe_id"):
+            return str(metadata["canonical_keyframe_id"])
+        if metadata.get("mapped_keyframe_id"):
+            return str(metadata["mapped_keyframe_id"])
+        for candidate in (metadata.get("keyframe_id"), metadata.get("frame_id"), item_id):
+            value = str(candidate or "").strip()
+            if value:
+                return value
         return None
 
     def _resolve_video_id(self, frame_id: str, metadata: dict[str, Any]) -> str:
@@ -846,7 +921,133 @@ class RetrievalService:
         match = FRAME_VIDEO_ID_RE.match(frame_id or "")
         if match:
             return match.group("video_id")
+        match = VECTOR_KEYFRAME_ID_RE.match(frame_id or "")
+        if match:
+            return match.group("video_id")
         return ""
+
+    def _semantic_source_hit(
+        self,
+        item_id: str,
+        metadata: dict[str, Any],
+        collection: str,
+        score: float,
+        resolved_frame_id: str,
+    ) -> dict[str, Any]:
+        raw_keyframe_id = str(metadata.get("original_keyframe_id") or item_id or metadata.get("keyframe_id") or "")
+        map_info = None
+        for candidate in (raw_keyframe_id, item_id, metadata.get("keyframe_id"), metadata.get("frame_id")):
+            candidate_map_info = self._map_keyframe_info(str(candidate or ""), metadata)
+            if not candidate_map_info:
+                continue
+            if map_info is None:
+                map_info = candidate_map_info
+            if candidate_map_info.get("resolved_keyframe_id") == resolved_frame_id:
+                map_info = candidate_map_info
+                break
+        map_matches_resolved = bool(map_info and map_info.get("resolved_keyframe_id") == resolved_frame_id)
+        return {
+            "collection": collection,
+            "score": round(float(score), 6),
+            "source_keyframe_id": raw_keyframe_id or None,
+            "milvus_keyframe_id": metadata.get("keyframe_id") or None,
+            "resolved_keyframe_id": resolved_frame_id,
+            "map_matches_resolved": map_matches_resolved,
+            "map_keyframe": map_info,
+        }
+
+    def _map_keyframe_info(self, candidate: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+        candidate = str(candidate or "").strip()
+        video_id = ""
+        map_n: int | None = None
+        match = VECTOR_KEYFRAME_ID_RE.match(candidate)
+        if match:
+            video_id = match.group("video_id")
+            map_n = self._int_or_none(match.group("n"))
+        elif metadata.get("video_id"):
+            video_id = str(metadata["video_id"])
+            map_n = self._first_int(
+                metadata.get("keyframe_number"),
+                metadata.get("map_n"),
+                metadata.get("n"),
+            )
+            if map_n is None and metadata.get("embedding_index_0") is not None:
+                index = self._int_or_none(metadata.get("embedding_index_0"))
+                map_n = index + 1 if index is not None else None
+
+        if not video_id or map_n is None:
+            return None
+
+        rows = self._load_map_keyframes(video_id)
+        if not rows:
+            return None
+        row = rows.get(map_n)
+        if not row:
+            return None
+        frame_idx = self._int_or_none(row.get("frame_idx"))
+        if frame_idx is None:
+            return None
+        return {
+            "source": "data/map-keyframes",
+            "map_path": f"data/map-keyframes/{video_id}.csv",
+            "video_id": video_id,
+            "n": map_n,
+            "pts_time": self._float_or_none(row.get("pts_time")),
+            "fps": self._float_or_none(row.get("fps")),
+            "frame_idx": frame_idx,
+            "source_keyframe_id": candidate or f"{video_id}_{map_n:03d}",
+            "resolved_keyframe_id": f"{video_id}_F{frame_idx:06d}",
+        }
+
+    def _load_map_keyframes(self, video_id: str) -> dict[int, dict[str, Any]] | None:
+        if video_id in self._map_keyframes_cache:
+            return self._map_keyframes_cache[video_id]
+        candidate_paths = (
+            self.settings.data_root / "map-keyframes" / f"{video_id}.csv",
+            REPO_ROOT / "data" / "map-keyframes" / f"{video_id}.csv",
+        )
+        path = next((candidate for candidate in candidate_paths if candidate.is_file()), None)
+        if path is None:
+            self._map_keyframes_cache[video_id] = None
+            return None
+        rows: dict[int, dict[str, Any]] = {}
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                map_n = self._int_or_none(row.get("n"))
+                if map_n is not None:
+                    rows[map_n] = dict(row)
+        self._map_keyframes_cache[video_id] = rows
+        return rows
+
+    def _keyframe_exists(self, keyframe_id: str) -> bool:
+        if keyframe_id not in self._keyframe_exists_cache:
+            self._keyframe_exists_cache[keyframe_id] = (
+                self.db.query(Frame.keyframe_id).filter(Frame.keyframe_id == keyframe_id).first() is not None
+            )
+        return self._keyframe_exists_cache[keyframe_id]
+
+    def _first_int(self, *values: Any) -> int | None:
+        for value in values:
+            parsed = self._int_or_none(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _int_or_none(self, value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(float(str(value)))
+        except (TypeError, ValueError):
+            return None
+
+    def _float_or_none(self, value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return None
 
     def _metadata_score(self, variants: list[str], frame: Frame) -> float:
         annotation_text = self._frame_text(frame)

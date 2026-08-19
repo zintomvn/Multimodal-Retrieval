@@ -19,7 +19,7 @@ export interface SearchResult {
   timestamp_ms: number | null;
   answer: string | null;
   score: number;
-  score_breakdown: Record<string, number | string>;
+  score_breakdown: Record<string, unknown>;
   sequence_frames: Array<{
     frame_id: string;
     frame_idx: number;

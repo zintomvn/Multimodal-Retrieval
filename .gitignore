@@ -252,3 +252,12 @@ gen-lang-client-*.json
 skills-lock.json
 # Node modules
 node_modules/
+
+
+# data and exp
+map-keyframes
+exp_captioning
+
+# Local/generated files too large for GitHub
+data/*.db
+notebooks/eda/gcs_explorer_output/gcs_inventory.csv

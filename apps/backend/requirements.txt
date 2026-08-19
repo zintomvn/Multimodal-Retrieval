@@ -13,6 +13,7 @@ pymilvus==2.5.10
 elasticsearch==8.15.1
 boto3==1.38.23
 google-cloud-storage==2.18.2
+transformers>=4.53,<5
 pytest==8.4.1
 psycopg[binary]
 deepagents>=0.5.3
