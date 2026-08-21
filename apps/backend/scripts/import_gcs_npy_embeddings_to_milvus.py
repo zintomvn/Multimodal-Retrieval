@@ -4,6 +4,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -23,13 +24,17 @@ from app.core.config import get_settings  # noqa: E402
 from src.artifact_io import gcs_client  # noqa: E402
 
 
-DEFAULT_BATCHES = "L21,L22,L23,L24,L25"
-DEFAULT_COLLECTION = "keyframe_embeddings_siglip2_base_patch16_256"
+DEFAULT_BATCHES = "L21,L22,L23,L24,L25,L26,L27,L28,L29,L30"
+DEFAULT_COLLECTION = "keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2"
 DEFAULT_DATASET_ID = "ai_challenge_2025"
-DEFAULT_EXTRACTOR_VERSION = "siglip2-base-patch16-256-v1"
+DEFAULT_EXTRACTOR_VERSION = "clip-vit-h14-quickgelu-dfn5b-v2"
 DEFAULT_FRAME_PROFILE = "autoshot_v1"
 DEFAULT_GCS_FEATURE_PREFIX = "features/extractors"
-DEFAULT_MODEL_NAME = "google/siglip2-base-patch16-256"
+DEFAULT_MODEL_KEY = "clip_vith14_quickgelu_dfn5b_v2"
+DEFAULT_MODEL_NAME = "ViT-H-14-quickgelu-dfn5b"
+DEFAULT_EMBEDDING_FAMILY = "clip"
+
+FRAME_IDX_RE = re.compile(r"(?:^|[_-])f(?P<frame_idx>\d{3,})(?:\D|$)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -73,7 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gcs-credentials-file", default="")
     parser.add_argument("--gcs-timeout", type=float, default=60.0)
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
+    parser.add_argument("--model-key", default=DEFAULT_MODEL_KEY)
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--embedding-family", default=DEFAULT_EMBEDDING_FAMILY)
+    parser.add_argument("--embedding-space", default="")
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--max-videos", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
@@ -164,6 +172,41 @@ def int_or_default(raw: Any, default: int) -> int:
     return int(float(raw))
 
 
+def int_or_none(raw: Any) -> int | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return int(float(str(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def frame_idx_from_token(raw: Any) -> int | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    match = FRAME_IDX_RE.search(value)
+    if not match:
+        return None
+    return int(match.group("frame_idx"))
+
+
+def parsed_frame_idx(row: dict[str, str]) -> int | None:
+    for key in ("canonical_frame_idx", "frame_idx", "source_frame_idx"):
+        parsed = int_or_none(row.get(key))
+        if parsed is not None:
+            return parsed
+    for key in ("keyframe_id", "frame_filename", "image_rel_path"):
+        parsed = frame_idx_from_token(row.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def canonical_keyframe_id(video_id: str, frame_idx: int) -> str:
+    return f"{video_id}_F{frame_idx:06d}"
+
+
 def load_canonical_frames(video_ids: list[str]) -> dict[str, list[CanonicalFrame]]:
     from app.db.models import Frame
     from app.db.session import SessionLocal
@@ -209,8 +252,12 @@ def row_payload(
     vector: np.ndarray,
     index: int,
     dataset_id: str,
+    frame_profile: str,
+    model_key: str,
     model_name: str,
     model_version: str,
+    embedding_family: str,
+    embedding_space: str,
     canonical_frame: CanonicalFrame | None = None,
     vector_count: int | None = None,
 ) -> dict[str, Any]:
@@ -221,8 +268,22 @@ def row_payload(
     if not image_rel_path and frame_filename:
         image_rel_path = f"{artifact.video_id}/{frame_filename}"
     original_keyframe_id = str(row.get("keyframe_id") or "").strip() or f"{artifact.video_id}_{keyframe_number:03d}"
-    keyframe_id = canonical_frame.keyframe_id if canonical_frame is not None else original_keyframe_id
-    frame_idx = canonical_frame.frame_idx if canonical_frame is not None else keyframe_number
+    source_frame_idx = parsed_frame_idx(row)
+    if canonical_frame is not None:
+        keyframe_id = canonical_frame.keyframe_id
+        frame_idx = canonical_frame.frame_idx
+        frame_idx_source = "canonical_db_ordinal_ratio"
+        canonical_mapping = "ordinal_ratio_to_db_frames"
+    elif source_frame_idx is not None:
+        frame_idx = source_frame_idx
+        keyframe_id = canonical_keyframe_id(artifact.video_id, frame_idx)
+        frame_idx_source = "source_keyframe_filename"
+        canonical_mapping = "parsed_from_source_keyframe_id"
+    else:
+        keyframe_id = original_keyframe_id
+        frame_idx = keyframe_number
+        frame_idx_source = "keyframe_number"
+        canonical_mapping = ""
     payload = {
         "id": original_keyframe_id,
         "vector": vector.astype(float).tolist(),
@@ -231,28 +292,36 @@ def row_payload(
         "video_id": artifact.video_id,
         "batch_id": artifact.batch_id,
         "dataset_id": dataset_id,
+        "frame_profile": frame_profile,
         "map_n": map_n,
         "embedding_index_0": index,
         "keyframe_number": keyframe_number,
         "video_vector_count": int(vector_count or 0),
         "frame_idx": frame_idx,
-        "frame_idx_source": "canonical_db_ordinal_ratio" if canonical_frame is not None else "keyframe_number",
+        "frame_idx_source": frame_idx_source,
         "frame_filename": frame_filename,
         "image_rel_path": image_rel_path,
+        "model_key": model_key,
         "model_name": model_name,
         "model_version": model_version,
+        "embedding_family": embedding_family,
+        "embedding_space": embedding_space or model_key,
+        "embedding_dim": int(vector.shape[0]),
+        "extractor": "vector-embedding",
+        "extractor_version": model_version,
         "source_embedding_uri": artifact.embedding_uri,
         "source_map_uri": artifact.map_uri,
     }
-    if canonical_frame is not None:
+    if canonical_frame is not None or source_frame_idx is not None:
         payload.update(
             {
-                "canonical_keyframe_id": canonical_frame.keyframe_id,
-                "canonical_frame_idx": canonical_frame.frame_idx,
-                "canonical_timestamp_ms": canonical_frame.timestamp_ms,
-                "canonical_mapping": "ordinal_ratio_to_db_frames",
+                "canonical_keyframe_id": keyframe_id,
+                "canonical_frame_idx": frame_idx,
+                "canonical_mapping": canonical_mapping,
             }
         )
+    if canonical_frame is not None:
+        payload["canonical_timestamp_ms"] = canonical_frame.timestamp_ms
     return payload
 
 
@@ -314,6 +383,11 @@ def import_artifacts(
         "collection": args.collection,
         "dataset_id": args.dataset_id,
         "extractor_version": args.extractor_version,
+        "frame_profile": args.frame_profile,
+        "model_key": args.model_key,
+        "model_name": args.model_name,
+        "embedding_family": args.embedding_family,
+        "embedding_space": args.embedding_space or args.model_key,
         "dry_run": bool(args.dry_run),
         "videos": 0,
         "vectors": 0,
@@ -379,8 +453,12 @@ def import_artifacts(
                 vector=vector,
                 index=index,
                 dataset_id=args.dataset_id,
+                frame_profile=args.frame_profile,
+                model_key=args.model_key,
                 model_name=args.model_name,
                 model_version=args.extractor_version,
+                embedding_family=args.embedding_family,
+                embedding_space=args.embedding_space or args.model_key,
                 canonical_frame=canonical_frame_for_vector(canonical_frames, int(vectors.shape[0]), index),
                 vector_count=int(vectors.shape[0]),
             )

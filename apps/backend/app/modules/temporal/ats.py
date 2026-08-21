@@ -11,6 +11,8 @@ class Candidate:
     frame_idx: int
     score: float
     text: str
+    event_index: int = 0
+    event_query: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,8 @@ def adaptive_temporal_search(
                 continue
             score_sum = 0.0
             for idx, candidate in enumerate(sequence):
-                weight = weights[min(idx, len(weights) - 1)] if weights else 1.0
+                weight_idx = candidate.event_index - 1 if candidate.event_index > 0 else idx
+                weight = weights[min(weight_idx, len(weights) - 1)] if weights else 1.0
                 score_sum += weight * candidate.score
             gap_penalty = _gap_penalty(sequence, delta_frame_max)
             score = score_sum / len(sequence) - gap_penalty

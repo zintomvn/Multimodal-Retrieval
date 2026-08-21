@@ -11,7 +11,7 @@ llm_query_planning:
       model: openai/gpt-oss-120b
       api_key_env: GROQ_API_KEY
       temperature: 0.1
-      max_tokens: 2048
+      max_tokens: 768
       timeout_s: 30
       max_retries: 2
       reasoning_format: parsed
@@ -76,11 +76,14 @@ llm_query_planning:
 
         Rules:
         - Preserve the original meaning. Do not invent entities, brands, or text.
+        - Write `summary`, `temporal_events.query`, and semantic/metadata variants in English, even when the user query is Vietnamese.
+        - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose variants.
         - Prefer concrete visual words that may appear in captions, OCR, and object tags.
         - Keep each variant under 24 words.
-        - Include the original query as the first variant.
+        - Make the first variant the best concise English retrieval rewrite, not the raw Vietnamese query.
         - For simple KIS/QA queries, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
+        - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
     query_decomposition:
       name: query_decomposition_agent
       description: Extracts visual, textual, object, scene, and temporal factors from the query.
@@ -96,6 +99,8 @@ llm_query_planning:
       system_prompt: |
         You create query expansion variants for hybrid video retrieval. Variants
         should help both semantic embeddings and metadata search. Produce short
+        English rewrites by default, translating Vietnamese descriptions into
+        concrete visual English while preserving exact OCR strings when needed.
         rewrites that combine the most important visual factors, OCR cues, object
         names, and event-level wording. Avoid long explanations, synonyms that
         change meaning, and broad generic words.

@@ -43,11 +43,11 @@ class RegistryDefaults:
     l2_normalize: bool
 
 
-DEFAULT_MODEL_ID = "ViT-B-32-laion2b_s34b_b79k"
-DEFAULT_OPENCLIP_MODEL = "ViT-B-32"
-DEFAULT_OPENCLIP_PRETRAINED = "laion2b_s34b_b79k"
+DEFAULT_MODEL_ID = "ViT-H-14-quickgelu-dfn5b"
+DEFAULT_OPENCLIP_MODEL = "ViT-H-14-quickgelu"
+DEFAULT_OPENCLIP_PRETRAINED = "dfn5b"
 DEFAULT_OPENCLIP_DEVICE = "cpu"
-DEFAULT_OPENCLIP_MAX_BATCH = 32
+DEFAULT_OPENCLIP_MAX_BATCH = 16
 DEFAULT_L2_NORMALIZE = True
 
 
@@ -75,6 +75,13 @@ def _to_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _resolve_device(value: str) -> str:
+    requested = str(value or "").strip().lower()
+    if requested in {"", "auto"}:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return str(value)
 
 
 def _build_runtime(config: RuntimeConfig) -> dict[str, Any]:
@@ -273,7 +280,7 @@ def main() -> None:
     config = RuntimeConfig(
         model=args.model,
         pretrained=args.pretrained,
-        device=args.device,
+        device=_resolve_device(args.device),
         l2_normalize=args.l2_normalize,
         max_batch_size=args.max_batch_size,
         model_id=args.model_id,

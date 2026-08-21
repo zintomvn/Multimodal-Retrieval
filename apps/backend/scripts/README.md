@@ -185,7 +185,7 @@ Invoke-WebRequest `
 
 Kết quả đúng với private GCS bucket là HTTP `307` redirect sang signed URL.
 
-## Chạy local embedding service (ViT-B-32 + laion2b_s34b_b79k)
+## Chạy local embedding service (ViT-H-14-quickgelu + dfn5b)
 
 Đây là cách khuyến nghị để backend retrieval gọi model thật qua `openai_compatible`:
 
@@ -193,13 +193,13 @@ Kết quả đúng với private GCS bucket là HTTP `307` redirect sang signed 
 cd apps/backend
 ../../venv/bin/pip install -r requirements-embedding-service.txt
 
-# Start service at http://127.0.0.1:8002/v1 when the backend API uses 8001
-../../venv/bin/python scripts/serve_openclip_embeddings.py --port 8002 --device cuda
+# Backend API in `be.cmd` uses 8010, so the embedding endpoint can use 8001.
+../../venv/bin/python scripts/serve_openclip_embeddings.py --port 8001 --device auto
 ```
 
 Best practice:
 
-- Keep `embedders.openai_embedding.base_url` aligned with the service port. This repo currently uses `http://localhost:8002/v1` so the backend can stay on `8001`.
+- Keep `embedders.clip_vith14_quickgelu_dfn5b_v2.base_url` aligned with the service port. This repo currently uses `http://localhost:8001/v1`.
 - Cấu hình model/pretrained/device/batch trong `configs/model_registry.yaml` (entry embedder đang `enabled: true`).
 - Script tự đọc `.env` (fallback `.env.example`) để lấy `MODEL_REGISTRY_PATH` và `EMBED_HOST/EMBED_PORT`.
 - Nếu muốn dùng file env khác: `--env-file /path/to/file.env`.
@@ -210,13 +210,13 @@ Kiểm tra endpoint trước khi bật retrieval backend:
 ```bash
 cd apps/backend
 ../../venv/bin/python scripts/check_embedding_endpoint.py \
-  --base-url http://127.0.0.1:8002/v1 \
-  --model ViT-B-32-laion2b_s34b_b79k \
-  --expected-dim 512
+  --base-url http://127.0.0.1:8001/v1 \
+  --model ViT-H-14-quickgelu-dfn5b \
+  --expected-dim 1024
 ```
 
 Kết quả mong đợi:
 
 - `"ok": true`
-- `"dim": 512`
+- `"dim": 1024`
 - `"norm_close_to_1": true`

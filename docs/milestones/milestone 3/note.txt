@@ -78,12 +78,10 @@ L23: 2,326 vectors
 L24: 6,781 vectors
 L25: 37,445 vectors
 
-
 Total: 63,448 vectors / 216 videos
 Dim: 768
 Mismatch: 0
 Zilliz row_count: 63,448
-
 
 # Note
 
@@ -95,11 +93,9 @@ Problems:
 - Kiểm tra cách chạy của elasticsearch
 
 
-
-
 Đã chỉnh backend sang SigLIP2 và test được từ frontend xuống backend.
 Thông số model/search đang ở đây
-- configs/model_registry.yaml: khai báo model embedder. Hiện siglip2_base_patch16_256 enabled, dim 768, collection keyframe_embeddings_siglip2_base_patch16_256; openai_embedding ViT-B-32 đã tắt.
+- configs/model_registry.yaml: khai bao model embedder. Hien clip_vith14_quickgelu_dfn5b_v2 enabled, dim 1024, collection keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2; SigLIP2 So400M de disabled cho lan extract sau.
 - configs/retrieval_profiles.yaml: profile search trỏ Milvus sang collection SigLIP2.
 - apps/backend/app/core/deps.py: backend chọn runtime embedder.
 - apps/backend/app/adapters/model_runtime/siglip2.py: adapter SigLIP2 mới.
@@ -117,9 +113,20 @@ Một blocker còn lại: DATABASE_URL trong .env hiện bị Supabase báo tena
 
 
 
-CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
-SigLIP2 - 1152-dims
+KIS
+QA
+TRAKE
 
+gắn thêm các metadata vào
+- Chạy object detection
+- Chạy ASR cho video song song với chạy với frame
+
+
+# MODEL
+asr: whisper-large3-turbo
+
+CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
+SigLIP2-400m - 1152-dims
 
 
 | Pipeline                      | Mục đích                                  | Model được paper ghi               | Tên nên load khi implement                                            | Output                               | Có đưa vào vector DB? |
@@ -132,3 +139,141 @@ SigLIP2 - 1152-dims
 | **OCR**                       | Đọc chữ trong keyframe                    | **Qwen2.5-VL-3B-Instruct**         | cùng model trên                                                       | OCR text                             | ❌ Elasticsearch       |
 | **ASR**                       | Speech → text                             | **Whisper**                        | Paper **không nói rõ variant**                                        | transcript + timestamp               | ❌ Elasticsearch       |
 | Object annotation             | Object filter                             | Faster R-CNN / OpenImagesV4        | Dataset AIC đã cung cấp                                               | object labels                        | ❌ Elasticsearch       |
+
+
+| Batch | Videos trên GCS | Frames `.jpg` | Caption | OCR | Objects |
+|---|---:|---:|---:|---:|---:|
+| L21   | 29 | 25,581 | 1,890 | 1,825 | 1,542 |
+| L22   | 31 | 31,212 | 0 | 31,209 | 27,414 |
+| L23   | 25 | 2,514 | 0 | 2,514 | 2,425 |
+| L24   | 43 | 7,176 | 0 | 6,955 | 6,264 |
+| L25   | 88 | 36,254 | 0 | 0 | 31,283 |
+| L26   | 498 | 154,242 | 0 | 0 | 145,552 |
+| L27   | 16 | 8,964 | 0 | 0 | 7,020 |
+| L28   | 24 | 16,002 | 0 | 0 | 11,971 |
+| L29   | 23 | 15,078 | 0 | 0 | 12,144 |
+| L30   | 96 | 13,278 | 0 | 0 | 11,429 |
+
+
+
+# Strategy 1: CLIP-Based
+
+USER QUERY
+    │
+    ↓
+Qwen3-4B-Instruct-2507
+Query interpretation / decomposition
+    │
+    ├─────────────────────────────────┐
+    ↓                                 ↓
+ SigLIP2                           CLIP / other
+    ↓                                 ↓
+top 300                            top 300
+    └──────────────┬──────────────────┘
+                   ↓
+                  RRF
+                   ↓
+                top 50
+                   ↓
+       Model Reranker (Qwen3-VL-Reranker-2B)
+                   ↓
+                top 10
+                   ↓
+          Temporal Re-ranking
+                   ↓
+              final result
+
+Temporal Search: lấy thuật toán của vortex và anh Trường test xem sao
+Reranking:
+- RFF
+- Model rerank 
+- Query Refinement with Relevance Feedback
++ Rocchio algorithm
+
+reranker: 
+
+# Strategy 2: Text-based
+reranker:   
+nvidia/llama-nemotron-rerank-vl-1b-v2
+
+embedding:
+Qwen3-Embedding-0.6B
+https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+
+Prompt:
+P1: đọc paper [2606.19682v1-1.pdf](d:/University/Projects/Individual projects/Multimodal-Retrieval/docs/papers/2606.19682v1-1.pdf) làm ra một phiên bản markdown của nó, hiện tại tôi đã chạy extract feature từ model CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1152-dims trong paper và để nó trong các extractor_version=clip-vit-h14-quickgelu-dfn5b-v2/ như hình tôi gửi, giờ chạy nó ingest vào milvus, lưu ý tôi sẽ chạy feature extract thêm bằng model siglip2 để làm giống kỹ thuật trong paper nên là thiết kế trên milvus và metadata sao tôi sẽ dùng được như yêu cầu, sau đó kết nối với backend để tôi chạy, không dùng model siglip2 baseline cũ nữa, xóa model baseline SigLIP2 c? ?? g? khỏi dự án giúp tôi, vì cái đó tôi feature extraction sai logic, xóa cho đỡ nặng máy và chạy trên backend model mới giúp tôi
+
+P2: Dựa vào paper, viết lại cho tôi giải thuật để tìm cho dạng TRAKE hay Temporal Search và rerank lại 
+
+Dựa vào data của asr viết cho tôi script chạy insert vào elasticsearch, 
+
+
+Thịnh:
+- Note chạy local
+- 
+
+Note code:
+- gom data text lại thành một bộ
+    + Metadata: Captioning + OCR + Object detection
+    + Captioning -> chạy đưa lên elasticsearch luôn
+    + ASR -> chạy đưa lên elasticsearch luôn
+- upload lên elasticsearch local + viết script
+- metadata thì upload lên lại supabase cloud
+- chạy embedding text của elasticsearch -> upload lên milvus (3 loại embeddings: 2 visual-text + 1 text)
+- liên kết với backend chạy được hiện lên web
+- Chạy ingest embedding -> test liên kết rồi viết script test benchmark
+
+Note fix:
+- Chạy thêm database quan hệ vào supabase
+- giao diện của trake chỉnh lại có thêm nút lựa chọn frame nào
+- Bấm ảnh hiện ra thì có play video và có cho xem frame lên xuống của video đó -> cho vào submission
+- QA thêm suy luận bằng LLM 
+- thêm tài khoản và lịch sử vào redis 
+    Giao diện: 
+    + KIS: như cũ
+    + TRAKE thì chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo 
+    + QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
+
+- Improving: 
+    + host model online (siglip2, openclip, qwen3-vl-embedding)
+    + UI: Làm thêm phần hiện từng chỉ số ra để cho thấy độ tương đồng từng thành phần khi nhấn vào video
+    + Chỉnh lại logic x
+    + Câu TRAKE bug chưa hiện hết 4 event x
+    + Chỉnh lại output câu TRAKE x
+    + xem tối ưu tốc độ search và hiện lên màn hình x
+    + UI: x
+    Video có thể nhấn play xem video, tối ưu backend cho phần hiện UI nhanh hơn 
+    Bấm button Video hiện ra thì có play video và có cho xem frame bằng button tiến hoặc lùi của video đó để xem frame tiếp theo hoặc frame trước đó và cho thêm vào submission
+    Hiện điểm từng thành phần của frame đó (visual, text, asr) trong khi search 
+    
+    + export file submission csv cho câu thì hiện nút kế bên nút export csv x
+    thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
+
+    + Phần TRAKE lọc frame trùng ra, 
+
+Testing:
+- Chạy search những câu của ban tổ chức
+
+- 
+
+
+
+Note run: 
+- elasticsearch: chạy script chạy data lên 
+
+# Tech stack
+Elasticsearch: bỏ qua chạy host bằng docker -> import lên elasticsearch
+endpoint: https://ec0eca5bfadf4b849ffcba79ad4efdd6.us-central1.gcp.cloud.es.io:443
+key: dlM0VklLQUJLOEVPekxqSFAyWE86QVJmb0JXUmVtNEV0SF9lYkk5MThuZw==
+NkM0V0lLQUJLOEVPekxqSHBtVlg6NlpER0JRRWNwaDR1VHVmMnVsUjhidw==
+
+
+Còn một blocker thật: SigLIP2 runtime local ở 8003 chưa load được do lỗi tài nguyên Windows/pagefile/disk (os error 1455 / model ~4.5GB). 
+Collection SigLIP2 đã ingest và backend RRF đã sẵn sàng; hiện live search đang fallback CLIP-only trong RRF cho tới khi bật được service SigLIP2 mới.
+
+fix lỗi của elasticsearch, dùng data của supabase tôi đã khởi động lại và chỉnh lại chỉ dùng model CLIP làm baseline trước để search, khi search thì lưu lịch sử vào redis và lưu lịch sử search vào supabase
+Giao diện:
+- KIS: như cũ
+- TRAKE thì kết quả sẽ hiện kiểu chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo sang ngang để chọn
+- QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
+thay vì submission thì cho ra file csv để tải về chứ không phải zip, UI khi agent phân tích thì hiện ra những file json hay trace phần phân tích lên UI để tôi xem, giống ChatGPT của openAI, 

@@ -1,16 +1,36 @@
 embedders:
-  siglip2_base_patch16_256:
+  clip_vith14_quickgelu_dfn5b_v2:
     task: multimodal_embedding
-    provider: siglip2
-    checkpoint_uri: google/siglip2-base-patch16-256
-    model: google/siglip2-base-patch16-256
+    provider: openai_compatible
+    base_url: http://localhost:8001/v1
+    model: ViT-H-14-quickgelu-dfn5b
+    openclip_model: ViT-H-14-quickgelu
+    openclip_pretrained: dfn5b
+    openclip_device: auto
+    openclip_max_batch: 16
     device: auto
-    dim: 768
+    dim: 1024
     l2_normalize: true
     local_files_only: true
-    collection: keyframe_embeddings_siglip2_base_patch16_256
+    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
     enabled: true
-    description: "Primary SigLIP2 text encoder for the L21-L25 Zilliz vector collection."
+    description: "Primary CLIP/OpenCLIP text encoder matching extractor_version=clip-vit-h14-quickgelu-dfn5b-v2."
+  siglip2_so400m16_384_webli_openclip_1152_v1:
+    task: multimodal_embedding
+    provider: openai_compatible
+    base_url: http://localhost:8003/v1
+    model: ViT-SO400M-16-SigLIP2-384-webli
+    openclip_model: ViT-SO400M-16-SigLIP2-384
+    openclip_pretrained: webli
+    openclip_device: auto
+    openclip_max_batch: 16
+    device: auto
+    dim: 1152
+    l2_normalize: true
+    collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+    extractor_version: siglip2-so400m16-384-webli-openclip-1152-v1
+    enabled: false
+    description: "Fine-grained SigLIP2 1152-dim text encoder for Vortex-style CLIP+SigLIP2 RRF fusion."
   pe_core_bigg_14_448:
     task: multimodal_embedding
     provider: openclip

@@ -239,6 +239,7 @@ feature_extraction_notebooks
 
 # Data
 demo
+data/extracted/
 
 # Env
 .env

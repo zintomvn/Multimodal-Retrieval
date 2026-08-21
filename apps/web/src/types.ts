@@ -24,7 +24,15 @@ export interface SearchResult {
     frame_id: string;
     frame_idx: number;
     video_code: string;
+    timestamp_ms?: number | null;
     score: number;
+    order_index?: number;
+    event_index?: number;
+    event_query?: string;
+    thumbnail_url?: string | null;
+    image_url?: string | null;
+    image_uri?: string | null;
+    image_storage_key?: string | null;
   }>;
   thumbnail_url: string | null;
   image_url: string | null;
@@ -39,9 +47,39 @@ export interface SearchResponse {
   query_type: QueryType;
   query_name: string | null;
   normalized_query: {
+    language?: string;
     variants?: string[];
     temporal_events?: string[];
+    temporal_event_count?: number;
+    temporal_event_source?: string;
+    raw_temporal_events?: string[];
     profile?: string;
+    latency_ms?: number;
+    agent_query_plan?: {
+      source?: string;
+      language?: string;
+      intent?: string;
+      summary?: string;
+      decomposition?: {
+        search_factors?: Record<string, unknown>;
+        raw_temporal_events?: unknown[];
+      };
+      temporal_events?: string[];
+      variants?: string[];
+      agent_metadata?: {
+        enabled?: boolean;
+        active_profile?: string;
+        provider?: string;
+        model?: string;
+        api_key_env?: string;
+        api_key_configured?: boolean;
+        langsmith_api_key_env?: string;
+        langsmith_api_key_configured?: boolean;
+        langsmith_trace_enabled?: boolean;
+        config_path?: string | null;
+      };
+      error?: string;
+    };
   };
   results: SearchResult[];
 }

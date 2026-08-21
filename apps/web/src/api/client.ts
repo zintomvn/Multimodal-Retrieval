@@ -72,6 +72,7 @@ export async function runSearch(input: {
   queryText: string;
   topK: number;
   useExpansion: boolean;
+  useAgentPlanning: boolean;
   useMetadata: boolean;
 }): Promise<SearchResponse> {
   const path =
@@ -91,9 +92,10 @@ export async function runSearch(input: {
       profile: "competition_default",
       options: {
         use_query_expansion: input.useExpansion,
+        use_agent_query_planning: input.useAgentPlanning,
         use_metadata: input.useMetadata,
         use_reranker: false,
-        strict_hybrid: !input.useMetadata,
+        strict_hybrid: false,
         delta_t_max_ms: 180000,
       },
     }),
@@ -141,6 +143,7 @@ export async function createAndExportSubmission(
   const exported = await requestJson<{
     submission_id: string;
     status: string;
+    csv_uri: string | null;
     zip_uri: string | null;
     validation_report: { valid: boolean; errors: string[]; warnings: string[] };
   }>(`/api/submissions/${submission.id}/export`, {

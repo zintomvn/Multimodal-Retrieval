@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import logging
 import math
 import re
 from collections import Counter
@@ -19,7 +21,11 @@ from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
+from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
+
+
+logger = logging.getLogger(__name__)
 
 
 TOKEN_RE = re.compile(r"[\wÀ-ỹ]+", re.UNICODE)
@@ -55,6 +61,14 @@ class FrameScore:
     rerank_detail: dict[str, Any] = field(default_factory=dict)
     filter_debug: dict[str, Any] = field(default_factory=dict)
     source_hit: dict[str, Any] = field(default_factory=dict)
+    text_hit: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SemanticCollection:
+    collection: str
+    weight: float = 1.0
+    model_key: str | None = None
 
 
 class RetrievalService:
@@ -75,6 +89,7 @@ class RetrievalService:
         self._map_keyframes_cache: dict[str, dict[int, dict[str, Any]] | None] = {}
         self._keyframe_exists_cache: dict[str, bool] = {}
         self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
+        self._text_hit_sources: dict[str, dict[str, Any]] = {}
 
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
@@ -120,13 +135,15 @@ class RetrievalService:
                 self.db.rollback()
             raise
 
-        return SearchResponse(
+        response = SearchResponse(
             query_run_id=run.id,
             query_type=request.query_type,
             query_name=request.query_name,
             normalized_query=normalized,
             results=results,
         )
+        self._cache_search_history(response)
+        return response
 
     def get_run(self, run_id: str) -> SearchResponse:
         run = self.db.query(QueryRun).filter(QueryRun.id == run_id).one()
@@ -146,6 +163,32 @@ class RetrievalService:
             updated += 1
         self.db.commit()
         return updated
+
+    def _cache_search_history(self, response: SearchResponse) -> None:
+        redis_url = (self.settings.redis_url or "").strip()
+        if not redis_url:
+            return
+        try:
+            import redis  # type: ignore
+
+            client = redis.Redis.from_url(
+                redis_url,
+                socket_connect_timeout=0.75,
+                socket_timeout=1.5,
+                decode_responses=True,
+            )
+            payload = json.dumps(response.model_dump(mode="json"), ensure_ascii=False)
+            key = f"search_history:{response.query_run_id}"
+            client.setex(key, 60 * 60 * 24 * 7, payload)
+            client.lpush("search_history:recent", response.query_run_id)
+            client.ltrim("search_history:recent", 0, 99)
+        except Exception:  # noqa: BLE001 - Redis history is an auxiliary cache.
+            logger.warning("Failed to cache search history in Redis.", exc_info=True)
+
+    def plan_query(self, request: SearchRequest) -> dict[str, Any]:
+        if not request.query_text.strip():
+            raise ValueError("query_text must not be empty")
+        return self._normalize_query(request)
 
     def _load_profiles(self) -> dict[str, Any]:
         path = self.settings.retrieval_profiles_path
@@ -171,35 +214,47 @@ class RetrievalService:
         query_text = request.query_text.strip()
         variants = [query_text]
         agent_plan = None
+        if request.options.use_agent_query_planning:
+            agent_plan = self.query_planner.plan(
+                query=query_text,
+                query_type=request.query_type,
+                max_variants=max_variants,
+            )
         if request.options.use_query_expansion and expansion_default_enabled:
-            if request.options.use_agent_query_planning:
-                agent_plan = self.query_planner.plan(
-                    query=query_text,
-                    query_type=request.query_type,
+            if agent_plan is not None and agent_plan.variants:
+                variants = self._dedupe_query_variants(
+                    [*agent_plan.variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
                     max_variants=max_variants,
                 )
-                if agent_plan.source == "langchain_deep_agent" and agent_plan.variants:
-                    variants = agent_plan.variants
-                else:
-                    variants = self._expand_query_variants(query_text, max_variants=max_variants)
             else:
                 variants = self._expand_query_variants(query_text, max_variants=max_variants)
-        temporal_events = (
-            request.options.temporal_events
-            or (agent_plan.temporal_events if agent_plan and agent_plan.temporal_events else [])
-            or self._split_temporal_events(query_text)
-        )
+        temporal_parse = self._parse_temporal_events(query_text)
+        temporal_events, temporal_source = self._resolve_temporal_events(request, agent_plan, temporal_parse)
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
             "variants": variants,
             "tokens": normalize_tokens(" ".join(variants)),
             "temporal_events": temporal_events,
+            "temporal_event_count": len(temporal_events),
+            "temporal_event_source": temporal_source,
+            "raw_temporal_events": temporal_parse.events,
             "profile": request.profile,
             "filters": self._normalized_filter_options(request.options),
         }
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
         return normalized
+
+    def _dedupe_query_variants(self, values: list[str], max_variants: int) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            value = " ".join(str(item).split())
+            key = value.lower()
+            if value and key not in seen:
+                deduped.append(value)
+                seen.add(key)
+        return deduped[: max(1, max_variants)]
 
     def _expand_query_variants(self, query: str, max_variants: int) -> list[str]:
         try:
@@ -213,7 +268,40 @@ class RetrievalService:
                 deduped.append(value)
         return deduped[: max(1, max_variants)]
 
+    def _parse_temporal_events(self, query: str) -> TemporalEventParse:
+        return parse_temporal_events(query, max_events=8)
+
+    def _resolve_temporal_events(
+        self,
+        request: SearchRequest,
+        agent_plan: Any,
+        temporal_parse: TemporalEventParse,
+    ) -> tuple[list[str], str]:
+        option_events = self._dedupe_query_variants(request.options.temporal_events, max_variants=8)
+        if option_events:
+            return option_events, "request_options"
+
+        agent_events = self._dedupe_query_variants(
+            agent_plan.temporal_events if agent_plan and agent_plan.temporal_events else [],
+            max_variants=8,
+        )
+        parsed_events = temporal_parse.events
+
+        if request.query_type == "TRAKE":
+            if agent_events and (len(parsed_events) <= 1 or len(agent_events) == len(parsed_events)):
+                return agent_events, "agent"
+            if len(parsed_events) > 1:
+                return parsed_events, temporal_parse.source
+            if agent_events:
+                return agent_events, "agent"
+            return parsed_events or [request.query_text.strip()], temporal_parse.source
+
+        if agent_events:
+            return agent_events, "agent"
+        return parsed_events or [request.query_text.strip()], temporal_parse.source
+
     def _split_temporal_events(self, query: str) -> list[str]:
+        return self._parse_temporal_events(query).events or [query]
         separators = [r"\bthen\b", r"\bafter that\b", r"\bsau đó\b", r"\btiếp theo\b", r";", r"\(e\d+\)\s*:"]
         pattern = "|".join(separators)
         parts = [part.strip(" .:-") for part in re.split(pattern, query, flags=re.IGNORECASE) if part.strip(" .:-")]
@@ -241,7 +329,10 @@ class RetrievalService:
             if request.query_type == "QA":
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
-                raw_answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                try:
+                    raw_answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                except Exception:
+                    raw_answer = answer_hint
                 answer = self._postprocess_qa_answer(raw_answer)
             result = RetrievalResult(
                 query_run_id=run.id,
@@ -259,6 +350,7 @@ class RetrievalService:
                     "rerank_score": round(candidate.rerank_score, 6),
                     "rerank_detail": candidate.rerank_detail,
                     "semantic_hit": candidate.source_hit,
+                    "text_hit": candidate.text_hit,
                     "final_score": round(candidate.final_score, 6),
                     "filter_debug": candidate.filter_debug,
                 },
@@ -276,32 +368,42 @@ class RetrievalService:
         request: SearchRequest,
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
-        events = normalized["temporal_events"] or [request.query_text]
+        events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
         candidate_sets: list[list[Candidate]] = []
-        for event_query in events:
+        event_summaries: list[dict[str, Any]] = []
+        per_event_top_k = max(80, min(500, request.top_k * 20))
+        for event_index, event_query in enumerate(events, start=1):
             ranked = self._rank_frames(
                 dataset=dataset,
                 variants=[event_query],
                 query_text=event_query,
                 profile_name=request.profile,
                 options=request.options,
-                top_k=80,
+                top_k=per_event_top_k,
             )
-            candidate_sets.append(
-                [
-                    Candidate(
-                        frame_id=candidate.frame.id,
-                        video_id=candidate.frame.video_id,
-                        video_code=candidate.frame.video.video_code,
-                        frame_idx=candidate.frame.frame_idx,
-                        score=candidate.final_score,
-                        text=self._frame_text(candidate.frame),
-                    )
-                    for candidate in ranked
-                ]
+            event_candidates = [
+                Candidate(
+                    frame_id=candidate.frame.id,
+                    video_id=candidate.frame.video_id,
+                    video_code=candidate.frame.video.video_code,
+                    frame_idx=candidate.frame.frame_idx,
+                    score=candidate.final_score,
+                    text=self._frame_text(candidate.frame),
+                    event_index=event_index,
+                    event_query=event_query,
+                )
+                for candidate in ranked
+            ]
+            candidate_sets.append(event_candidates)
+            event_summaries.append(
+                {
+                    "event_index": event_index,
+                    "query": event_query,
+                    "candidate_count": len(event_candidates),
+                }
             )
         delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
-        min_match = request.options.min_match or max(1, math.ceil(len(events) * 0.67))
+        min_match = request.options.min_match or len(events)
         sequences = adaptive_temporal_search(
             candidate_sets=candidate_sets,
             weights=[1.0 for _ in events],
@@ -319,6 +421,19 @@ class RetrievalService:
                 tuple(candidate.frame_idx for candidate in item.candidates),
             ),
         )
+        sequence_frame_ids = {
+            candidate.frame_id
+            for sequence in sequences
+            for candidate in sequence.candidates
+            if candidate.frame_id
+        }
+        sequence_frames_by_id = {
+            frame.id: frame
+            for frame in self.db.query(Frame)
+            .options(joinedload(Frame.video))
+            .filter(Frame.id.in_(sequence_frame_ids))
+            .all()
+        } if sequence_frame_ids else {}
         items: list[ResultItem] = []
         for rank, sequence in enumerate(sequences, start=1):
             representative = sequence.candidates[len(sequence.candidates) // 2]
@@ -329,10 +444,22 @@ class RetrievalService:
                     "frame_id": candidate.frame_id,
                     "frame_idx": candidate.frame_idx,
                     "video_code": candidate.video_code,
+                    "timestamp_ms": sequence_frames_by_id.get(candidate.frame_id).timestamp_ms
+                    if sequence_frames_by_id.get(candidate.frame_id)
+                    else None,
                     "score": round(candidate.score, 4),
                     "order_index": idx + 1,
-                    "event_index": idx + 1,
+                    "event_index": candidate.event_index or idx + 1,
+                    "event_query": candidate.event_query,
                     "delta_from_previous": None if idx == 0 else candidate.frame_idx - sequence.candidates[idx - 1].frame_idx,
+                    "thumbnail_url": f"/api/media/frames/{candidate.frame_id}/thumbnail" if candidate.frame_id else None,
+                    "image_url": self._browser_image_url(sequence_frames_by_id.get(candidate.frame_id)),
+                    "image_uri": sequence_frames_by_id.get(candidate.frame_id).image_uri
+                    if sequence_frames_by_id.get(candidate.frame_id)
+                    else None,
+                    "image_storage_key": sequence_frames_by_id.get(candidate.frame_id).image_storage_key
+                    if sequence_frames_by_id.get(candidate.frame_id)
+                    else None,
                 }
                 for idx, candidate in enumerate(sequence.candidates)
             ]
@@ -346,6 +473,9 @@ class RetrievalService:
                     "temporal_score": round(sequence.score, 4),
                     "matched_events": len(sequence.candidates),
                     "expected_events": len(events),
+                    "min_match": min_match,
+                    "requires_full_sequence": request.options.min_match is None,
+                    "event_queries": event_summaries,
                     "ordering": {
                         "is_strictly_increasing": all(delta > 0 for delta in delta_frames_seq) if delta_frames_seq else True,
                         "frame_indices": frame_indices,
@@ -476,6 +606,7 @@ class RetrievalService:
                     "weighted_score": weighted_score,
                     "rrf_raw": rrf_raw,
                     "source_hit": self._semantic_hit_sources.get(frame_id, {}),
+                    "text_hit": self._text_hit_sources.get(frame_id, {}),
                 }
             )
 
@@ -499,6 +630,7 @@ class RetrievalService:
                     final_score=final_score,
                     filter_debug=filter_debug.get(frame.keyframe_id, {}),
                     source_hit=item["source_hit"],
+                    text_hit=item["text_hit"],
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
@@ -511,23 +643,38 @@ class RetrievalService:
         dataset_video_ids: set[str],
         profile: dict[str, Any],
     ) -> tuple[dict[str, float], bool]:
+        self._semantic_hit_sources = {}
         if self.vector_client is None:
             return {}, True
-        scores: dict[str, float] = {}
         backend_error = False
         collections = self._semantic_collections(profile)
+        visual_rrf_config = profile.get("visual_rrf", {})
+        visual_rrf_enabled = len(collections) > 1 and bool(visual_rrf_config.get("enabled", True))
+        visual_rrf_k = max(
+            1.0,
+            float(visual_rrf_config.get("k", profile.get("rrf", {}).get("k", 60))),
+        )
+        query_vectors: dict[tuple[str, str], list[float]] = {}
+        per_model_scores: dict[str, dict[str, float]] = {}
+        per_model_weights: dict[str, float] = {}
+        per_frame_sources: dict[str, dict[str, dict[str, Any]]] = {}
         for variant in variants:
-            try:
-                query_vector = self.model_registry.embedder.embed_text(variant)
-            except Exception:
-                # Keep retrieval available even when embedder runtime is misconfigured.
-                backend_error = True
-                continue
-            if not query_vector:
-                continue
-            for collection, collection_weight in collections:
+            for target in collections:
+                model_id = target.model_key or target.collection
+                per_model_weights.setdefault(model_id, target.weight)
+                vector_key = (target.model_key or "__default__", variant)
+                if vector_key not in query_vectors:
+                    try:
+                        query_vectors[vector_key] = self.model_registry.embedder_for(target.model_key).embed_text(variant)
+                    except Exception:
+                        # Keep retrieval available even when one embedder runtime is misconfigured.
+                        backend_error = True
+                        query_vectors[vector_key] = []
+                query_vector = query_vectors[vector_key]
+                if not query_vector:
+                    continue
                 try:
-                    hits = self.vector_client.search(collection, query_vector, top_k=top_k)
+                    hits = self.vector_client.search(target.collection, query_vector, top_k=top_k)
                 except Exception:
                     backend_error = True
                     continue
@@ -537,35 +684,93 @@ class RetrievalService:
                         continue
                     if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
                         continue
-                    score = max(0.0, float(hit.score)) * collection_weight
-                    existing = scores.get(frame_id, 0.0)
+                    score = max(0.0, float(hit.score))
+                    model_scores = per_model_scores.setdefault(model_id, {})
+                    existing = model_scores.get(frame_id, 0.0)
                     if score > existing:
-                        scores[frame_id] = score
-                        self._semantic_hit_sources[frame_id] = self._semantic_source_hit(
+                        model_scores[frame_id] = score
+                        source_hit = self._semantic_source_hit(
                             item_id=hit.id,
                             metadata=hit.metadata,
-                            collection=collection,
+                            collection=target.collection,
+                            model_key=target.model_key,
                             score=score,
                             resolved_frame_id=frame_id,
                         )
+                        source_hit["variant"] = variant
+                        source_hit["model_weight"] = target.weight
+                        source_hit["weighted_similarity"] = round(score * target.weight, 6)
+                        per_frame_sources.setdefault(frame_id, {})[model_id] = source_hit
+
+        if visual_rrf_enabled:
+            scores: dict[str, float] = {}
+            rrf_sources: dict[str, list[dict[str, Any]]] = {}
+            for model_id, model_scores in per_model_scores.items():
+                rank_map = self._rank_map(model_scores, set(model_scores))
+                weight = per_model_weights.get(model_id, 1.0)
+                for frame_id, rank in rank_map.items():
+                    contribution = weight / (visual_rrf_k + rank)
+                    scores[frame_id] = scores.get(frame_id, 0.0) + contribution
+                    source = dict(per_frame_sources.get(frame_id, {}).get(model_id, {}))
+                    source.update(
+                        {
+                            "visual_rank": rank,
+                            "visual_rrf_contribution": round(contribution, 8),
+                        }
+                    )
+                    rrf_sources.setdefault(frame_id, []).append(source)
+            for frame_id, sources in rrf_sources.items():
+                sources.sort(key=lambda item: (item.get("visual_rank") or 10**9, item.get("model_key") or ""))
+                self._semantic_hit_sources[frame_id] = {
+                    "fusion": "visual_rrf",
+                    "rrf_k": visual_rrf_k,
+                    "score": round(scores.get(frame_id, 0.0), 8),
+                    "sources": sources,
+                }
+            return scores, backend_error
+
+        scores: dict[str, float] = {}
+        for model_id, model_scores in per_model_scores.items():
+            weight = per_model_weights.get(model_id, 1.0)
+            for frame_id, score in model_scores.items():
+                weighted_score = score * weight
+                if weighted_score > scores.get(frame_id, 0.0):
+                    scores[frame_id] = weighted_score
+                    self._semantic_hit_sources[frame_id] = per_frame_sources.get(frame_id, {}).get(model_id, {})
         return scores, backend_error
 
-    def _semantic_collections(self, profile: dict[str, Any]) -> list[tuple[str, float]]:
-        collections: list[tuple[str, float]] = []
+    def _semantic_collections(self, profile: dict[str, Any]) -> list[SemanticCollection]:
+        collections: list[SemanticCollection] = []
 
         visual_models = profile.get("visual_models")
         if isinstance(visual_models, dict):
             for config in visual_models.values():
                 if not isinstance(config, dict):
                     continue
+                if config.get("enabled") is False:
+                    continue
                 collection = str(config.get("collection") or "").strip()
                 if collection:
-                    collections.append((collection, float(config.get("weight", 1.0))))
+                    model_key = str(config.get("model_key") or config.get("embedder") or "").strip() or None
+                    collections.append(
+                        SemanticCollection(
+                            collection=collection,
+                            weight=float(config.get("weight", 1.0)),
+                            model_key=model_key,
+                        )
+                    )
 
         milvus_profile = profile.get("milvus") if isinstance(profile.get("milvus"), dict) else {}
         collection = str(milvus_profile.get("collection") or "").strip()
         if collection:
-            collections.append((collection, float(milvus_profile.get("weight", 1.0))))
+            model_key = str(milvus_profile.get("model_key") or milvus_profile.get("embedder") or "").strip() or None
+            collections.append(
+                SemanticCollection(
+                    collection=collection,
+                    weight=float(milvus_profile.get("weight", 1.0)),
+                    model_key=model_key,
+                )
+            )
 
         if not collections:
             embedder_entry = self.model_registry.first_enabled("embedders")
@@ -573,18 +778,19 @@ class RetrievalService:
                 provider = str(embedder_entry[1].get("provider") or "").lower()
                 collection = str(embedder_entry[1].get("collection") or "").strip()
                 if provider in {"openai_compatible", "siglip2", "transformers_siglip2", "huggingface_siglip2"} and collection:
-                    collections.append((collection, 1.0))
+                    collections.append(SemanticCollection(collection=collection, model_key=embedder_entry[0]))
 
         if not collections:
-            collections.append(("keyframe_embeddings", 1.0))
+            collections.append(SemanticCollection(collection="keyframe_embeddings"))
 
-        deduped: list[tuple[str, float]] = []
-        seen: set[str] = set()
-        for name, weight in collections:
-            if name in seen:
+        deduped: list[SemanticCollection] = []
+        seen: set[tuple[str, str | None]] = set()
+        for item in collections:
+            key = (item.collection, item.model_key)
+            if key in seen:
                 continue
-            seen.add(name)
-            deduped.append((name, weight))
+            seen.add(key)
+            deduped.append(item)
         return deduped
 
     def _text_scores(
@@ -594,10 +800,14 @@ class RetrievalService:
         dataset_video_ids: set[str],
         profile: dict[str, Any],
     ) -> tuple[dict[str, float], bool]:
+        self._text_hit_sources = {}
         if self.text_client is None:
             return {}, True
         metadata_profile = profile.get("metadata", {})
         boosts = {
+            "asr_text": float(metadata_profile.get("asr_boost", 2.5)),
+            "normalized_asr_text": float(metadata_profile.get("asr_boost", 2.5)),
+            "text_value": float(metadata_profile.get("text_boost", metadata_profile.get("asr_boost", 2.5))),
             "ocr_texts": float(metadata_profile.get("ocr_boost", 3.0)),
             "caption": float(metadata_profile.get("caption_boost", 1.5)),
             "detected_objects": float(metadata_profile.get("object_boost", 1.0)),
@@ -625,7 +835,40 @@ class RetrievalService:
                 existing = scores.get(frame_id, 0.0)
                 if score > existing:
                     scores[frame_id] = score
+                    self._text_hit_sources[frame_id] = self._text_source_hit(
+                        metadata=hit.metadata,
+                        score=score,
+                        resolved_frame_id=frame_id,
+                        variant=variant,
+                    )
         return scores, backend_error
+
+    def _text_source_hit(
+        self,
+        metadata: dict[str, Any],
+        score: float,
+        resolved_frame_id: str,
+        variant: str,
+    ) -> dict[str, Any]:
+        return {
+            "source_type": metadata.get("source_type") or metadata.get("kind") or "metadata",
+            "score": round(float(score), 6),
+            "variant": variant,
+            "keyframe_id": metadata.get("keyframe_id") or metadata.get("frame_id") or resolved_frame_id,
+            "video_id": metadata.get("video_id"),
+            "segment_id": metadata.get("segment_id"),
+            "start_seconds": metadata.get("start_seconds"),
+            "end_seconds": metadata.get("end_seconds"),
+            "field": "asr_text" if metadata.get("source_type") == "asr" else "metadata",
+            "snippet": self._text_hit_snippet(metadata),
+        }
+
+    def _text_hit_snippet(self, metadata: dict[str, Any]) -> str:
+        for key in ("asr_text", "text_value", "caption", "normalized_asr_text", "raw_asr_text"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value[:240]
+        return ""
 
     def _fallback_rank_frames(
         self,
@@ -706,6 +949,7 @@ class RetrievalService:
                     final_score=final_score,
                     filter_debug=filter_debug.get(frame.keyframe_id, {}),
                     source_hit={},
+                    text_hit={},
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
@@ -780,6 +1024,7 @@ class RetrievalService:
                     },
                     filter_debug=item.filter_debug,
                     source_hit=item.source_hit,
+                    text_hit=item.text_hit,
                 )
             )
 
@@ -931,6 +1176,7 @@ class RetrievalService:
         item_id: str,
         metadata: dict[str, Any],
         collection: str,
+        model_key: str | None,
         score: float,
         resolved_frame_id: str,
     ) -> dict[str, Any]:
@@ -948,6 +1194,10 @@ class RetrievalService:
         map_matches_resolved = bool(map_info and map_info.get("resolved_keyframe_id") == resolved_frame_id)
         return {
             "collection": collection,
+            "model_key": model_key,
+            "model_name": metadata.get("model_name") or None,
+            "model_version": metadata.get("model_version") or None,
+            "embedding_dim": metadata.get("embedding_dim") or None,
             "score": round(float(score), 6),
             "source_keyframe_id": raw_keyframe_id or None,
             "milvus_keyframe_id": metadata.get("keyframe_id") or None,

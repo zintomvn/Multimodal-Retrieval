@@ -31,10 +31,11 @@ def validate_submission(submission_id: str, db: Session = Depends(get_db)) -> di
 
 @router.post("/{submission_id}/export", response_model=SubmissionExportResponse)
 def export_submission(submission_id: str, db: Session = Depends(get_db)) -> SubmissionExportResponse:
-    submission, report = SubmissionService(db).export_zip(submission_id)
+    submission, report = SubmissionService(db).export_csv(submission_id)
     return SubmissionExportResponse(
         submission_id=submission.id,
         status=submission.status,
+        csv_uri=submission.zip_uri,
         zip_uri=submission.zip_uri,
         validation_report=report,
     )
@@ -44,5 +45,5 @@ def export_submission(submission_id: str, db: Session = Depends(get_db)) -> Subm
 def download_submission(submission_id: str, db: Session = Depends(get_db)) -> FileResponse:
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission or not submission.zip_uri:
-        raise HTTPException(status_code=404, detail="Exported ZIP not found")
-    return FileResponse(submission.zip_uri, filename=f"{submission.name}.zip", media_type="application/zip")
+        raise HTTPException(status_code=404, detail="Exported CSV not found")
+    return FileResponse(submission.zip_uri, filename=f"{submission.name}.csv", media_type="text/csv")

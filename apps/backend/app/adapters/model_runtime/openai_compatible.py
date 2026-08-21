@@ -81,7 +81,9 @@ class OpenAICompatibleQueryExpander(QueryExpander):
     def expand(self, query: str, max_variants: int = 5) -> list[str]:
         prompt = (
             "You are a query expansion engine for video retrieval. "
-            "Return a JSON object with key 'variants' as an array of concise search rewrites. "
+            "Translate Vietnamese visual descriptions into concise English retrieval rewrites. "
+            "Preserve exact OCR/on-screen text strings when they are likely useful. "
+            "Return a JSON object with key 'variants' as an array of concise English search rewrites. "
             "Do not add explanations."
         )
         payload = self._chat(
@@ -97,8 +99,6 @@ class OpenAICompatibleQueryExpander(QueryExpander):
             value = str(item).strip()
             if value and value not in deduped:
                 deduped.append(value)
-        if query.strip() and query.strip() not in deduped:
-            deduped.insert(0, query.strip())
         return deduped[: max(1, max_variants)]
 
     def _parse_variants(self, content: str) -> list[str]:

@@ -6,11 +6,26 @@ competition_default:
   rrf:
     enabled: true
     k: 60
+  visual_rrf:
+    enabled: true
+    k: 60
+  visual_models:
+    clip_global:
+      model_key: clip_vith14_quickgelu_dfn5b_v2
+      collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+      weight: 1.0
+      enabled: true
+    siglip2_fine_grained:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+      weight: 1.0
+      enabled: false
   query_expansion:
     enabled_default: true
     max_variants: 5
   milvus:
-    collection: keyframe_embeddings_siglip2_base_patch16_256
+    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+    model_key: clip_vith14_quickgelu_dfn5b_v2
     weight: 1.0
     top_k_per_model: 500
     final_top_k: 100
@@ -44,7 +59,8 @@ semantic_fast:
     enabled_default: false
     max_variants: 1
   milvus:
-    collection: keyframe_embeddings_siglip2_base_patch16_256
+    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+    model_key: clip_vith14_quickgelu_dfn5b_v2
     weight: 1.0
     top_k_per_model: 200
     final_top_k: 100
@@ -65,10 +81,20 @@ competition_mvp_v1:
   rrf:
     enabled: true
     k: 60
+  visual_rrf:
+    enabled: true
+    k: 60
   visual_models:
     primary:
-      collection: keyframe_embeddings_siglip2_base_patch16_256
+      model_key: clip_vith14_quickgelu_dfn5b_v2
+      collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
       weight: 1.0
+      enabled: true
+    siglip2_fine_grained:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+      weight: 1.0
+      enabled: false
   query_type_weights:
     kis:
       visual: 0.50
@@ -97,7 +123,8 @@ competition_mvp_v1:
     max_variants: 5
     decompose_temporal: true
   milvus:
-    collection: keyframe_embeddings_siglip2_base_patch16_256
+    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+    model_key: clip_vith14_quickgelu_dfn5b_v2
     weight: 1.0
     top_k_per_model: 500
     final_top_k: 100

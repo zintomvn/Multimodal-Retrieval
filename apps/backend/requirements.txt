@@ -8,6 +8,7 @@ pydantic==2.11.5
 python-multipart==0.0.20
 PyYAML==6.0.2
 httpx==0.28.1
+redis==5.2.1
 numpy==2.2.6
 pymilvus==2.5.10
 elasticsearch==8.15.1

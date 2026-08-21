@@ -48,7 +48,7 @@ class GCSObjectStorageClient:
         if repo_path.exists():
             return str(repo_path)
 
-        return credentials_file
+        return ""
 
     def put_object(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
         blob = self._bucket.blob(key)

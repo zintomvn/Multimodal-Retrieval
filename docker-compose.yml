@@ -9,7 +9,8 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      xpack.ml.enabled: "false"
+      ES_JAVA_OPTS: -Xms384m -Xmx384m
     ports:
       - "9200:9200"
     volumes:
@@ -29,6 +30,11 @@ services:
       - ./configs:/app/configs:ro
       - ./data:/app/data
       - ./models:/app/models:ro
+    environment:
+      TEXT_SEARCH_BACKEND: postgres
+      CLIP_EMBEDDING_BASE_URL: http://host.docker.internal:8001/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_started

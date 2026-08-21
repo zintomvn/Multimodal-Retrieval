@@ -62,8 +62,8 @@ def test_model_runtime_uses_siglip2_embedder_when_enabled(monkeypatch) -> None:
             "siglip2_main": {
                 "task": "multimodal_embedding",
                 "provider": "siglip2",
-                "model": "google/siglip2-base-patch16-256",
-                "dim": 768,
+                "model": "google/siglip2-so400m-patch14-384",
+                "dim": 1152,
                 "l2_normalize": True,
                 "local_files_only": True,
                 "enabled": True,
@@ -76,7 +76,7 @@ def test_model_runtime_uses_siglip2_embedder_when_enabled(monkeypatch) -> None:
     svc = get_model_registry_service()
 
     assert svc.embedder.__class__.__name__ == "Siglip2TextEmbedder"
-    assert getattr(svc.embedder, "expected_dim", None) == 768
+    assert getattr(svc.embedder, "expected_dim", None) == 1152
     assert getattr(svc.embedder, "local_files_only", False) is True
 
 

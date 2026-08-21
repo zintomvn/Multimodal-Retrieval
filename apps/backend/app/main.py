@@ -19,7 +19,8 @@ from app.modules.submissions.router import router as submissions_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
+    if not settings.skip_db_init:
+        init_db()
     yield
 
 

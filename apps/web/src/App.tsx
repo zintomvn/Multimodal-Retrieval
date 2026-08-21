@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import JSZip from "jszip";
 import {
   ChevronDown,
   ImageOff,
@@ -28,6 +27,7 @@ import type {
   MediaFrame,
   QueryType,
   SearchResult,
+  SearchResponse,
   SubmissionRow,
 } from "./types";
 
@@ -44,12 +44,14 @@ interface SearchHistoryItem {
   resultCount: number;
   createdAt: string;
   results: SearchResult[];
+  trace: AgentStep[];
 }
 
 interface AgentStep {
   title: string;
   detail: string;
-  status: "done" | "running" | "queued";
+  status: "done" | "running" | "queued" | "warning";
+  raw?: unknown;
 }
 
 interface ChatMessage {
@@ -157,6 +159,20 @@ function galleryImageCandidates(frame: MediaFrame): string[] {
   ]);
 }
 
+function sequenceImageCandidates(
+  frame: SearchResult["sequence_frames"][number],
+  fallback: SearchResult,
+): string[] {
+  return uniqueMediaUrls([
+    frame.thumbnail_url,
+    frame.image_url,
+    frame.image_uri,
+    frame.image_storage_key,
+    fallback.thumbnail_url,
+    fallback.image_url,
+  ]);
+}
+
 function withTimeFragment(url: string, timestampMs: number | null): string {
   if (timestampMs === null) return url;
   const seconds = Math.max(0, timestampMs / 1000);
@@ -238,6 +254,30 @@ function submissionCsvLine(row: SubmissionRow): string {
 
 function queryFilename(queryName: string): string {
   return queryName.endsWith(".csv") ? queryName : `${queryName}.csv`;
+}
+
+function buildSubmissionCsv(rows: SubmissionRow[]): string {
+  const queryNames = new Set(rows.map((row) => row.query_name));
+  if (queryNames.size <= 1) {
+    return `${rows.map(submissionCsvLine).join("\r\n")}\r\n`;
+  }
+  const lines = [
+    ["query_name", "video_code", "frame_indices", "answer"].map(csvCell).join(","),
+    ...rows.map((row) =>
+      [
+        csvCell(row.query_name),
+        csvCell(row.video_code),
+        csvCell(row.frame_indices.join(" ")),
+        csvCell(row.answer ?? ""),
+      ].join(","),
+    ),
+  ];
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function downloadBlobUrl(previousUrl: string | null, blob: Blob): string {
+  if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
+  return URL.createObjectURL(blob);
 }
 
 // Mock results generator for testing without API
@@ -394,6 +434,132 @@ function makeAgentTrace(
   ];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function summarizeList(values: string[], empty: string): string {
+  if (values.length === 0) return empty;
+  const shown = values.slice(0, 3);
+  const suffix = values.length > shown.length ? ` +${values.length - shown.length}` : "";
+  return `${shown.join(" | ")}${suffix}`;
+}
+
+function summarizeFactors(value: unknown): string {
+  if (!isRecord(value)) return "No structured factors returned.";
+  const labels: Record<string, string> = {
+    subjects: "subjects",
+    actions: "actions",
+    objects: "objects",
+    attributes: "attributes",
+    scene: "scene",
+    text_cues: "OCR",
+    time_cues: "time",
+    negative_constraints: "negative",
+  };
+  const parts = Object.entries(labels)
+    .map(([key, label]) => {
+      const values = stringList(value[key]);
+      if (values.length === 0) return "";
+      return `${label}: ${values.slice(0, 3).join(", ")}`;
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(" / ") : "No structured factors returned.";
+}
+
+function makeTraceFromResponse(
+  mode: AppMode,
+  queryType: QueryType,
+  response: SearchResponse,
+  resultCount: number,
+): AgentStep[] {
+  const normalized = response.normalized_query;
+  const plan = normalized.agent_query_plan;
+  const metadata = plan?.agent_metadata;
+  const source = plan?.source ?? "baseline";
+  const profile = metadata?.active_profile ?? normalized.profile ?? "default";
+  const provider = metadata?.provider ?? "local";
+  const model = metadata?.model ?? "retrieval";
+  const keyEnv = metadata?.api_key_env ?? "API key";
+  const keyStatus =
+    metadata?.api_key_configured === false
+      ? `missing ${keyEnv}`
+      : metadata?.api_key_configured
+        ? `${keyEnv} configured`
+        : "key status unavailable";
+  const traceStatus: AgentStep["status"] = plan?.error ? "warning" : "done";
+  const temporalEvents = plan?.temporal_events ?? normalized.temporal_events ?? [];
+  const plannedVariants = plan?.variants ?? [];
+  const retrievalVariants = normalized.variants ?? [];
+  const summary = plan?.summary || response.normalized_query.variants?.[0] || "Query parsed.";
+  const traceLabel =
+    metadata?.langsmith_trace_enabled && metadata.langsmith_api_key_configured
+      ? "LangSmith on"
+      : "LangSmith off";
+
+  return [
+    {
+      title: "Agent profile",
+      detail: `${profile} | ${provider}/${model} | ${keyStatus} | ${traceLabel}`,
+      status: traceStatus,
+      raw: metadata ?? null,
+    },
+    {
+      title: "Decompose query",
+      detail: `${plan?.intent ?? queryType} / ${plan?.language ?? normalized.language ?? "auto"}: ${summary}`,
+      status: traceStatus,
+      raw: plan ?? normalized,
+    },
+    {
+      title: "Search factors",
+      detail: summarizeFactors(plan?.decomposition?.search_factors),
+      status: traceStatus,
+      raw: plan?.decomposition?.search_factors ?? null,
+    },
+    {
+      title: "Split events",
+      detail: summarizeList(temporalEvents, "No temporal split needed."),
+      status: traceStatus,
+      raw: temporalEvents,
+    },
+    {
+      title: "Generate variants",
+      detail: summarizeList(
+        plannedVariants.length > 0 ? plannedVariants : retrievalVariants,
+        "Using original query only.",
+      ),
+      status: traceStatus,
+      raw: {
+        planned_variants: plannedVariants,
+        retrieval_variants: retrievalVariants,
+      },
+    },
+    {
+      title: "Retrieve candidates",
+      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using ${retrievalVariants.length || 1} retrieval variant(s). Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
+      status: resultCount > 0 ? "done" : "warning",
+      raw: {
+        query_run_id: response.query_run_id,
+        latency_ms: normalized.latency_ms,
+        top_results: response.results.slice(0, 5).map((result) => ({
+          rank: result.rank,
+          video_code: result.video_code,
+          frame_idx: result.frame_idx,
+          score: result.score,
+          score_breakdown: result.score_breakdown,
+        })),
+      },
+    },
+  ];
+}
+
 function CloudFrameImage({
   candidates,
   alt,
@@ -521,6 +687,104 @@ function FrameCard({
   );
 }
 
+function TrakeRows({
+  results,
+  eventCount,
+  isSelected,
+  onOpen,
+  onSelect,
+  onPreview,
+}: {
+  results: SearchResult[];
+  eventCount: number;
+  isSelected: (result: SearchResult) => boolean;
+  onOpen: (result: SearchResult) => void;
+  onSelect: (result: SearchResult) => void;
+  onPreview: (result: SearchResult) => void;
+}) {
+  const inferredEventCount = Math.max(
+    1,
+    eventCount,
+    ...results.flatMap((result) =>
+      result.sequence_frames.map((frame) => frame.event_index ?? frame.order_index ?? 0),
+    ),
+  );
+  const lanes = Array.from({ length: inferredEventCount }, (_, index) => index);
+
+  return (
+    <div className="trake-board" aria-label="TRAKE ordered frame lanes">
+      {lanes.map((lane) => (
+        <section className="trake-lane" key={lane}>
+          <div className="trake-lane-label">
+            <strong>E{lane + 1}</strong>
+            <span>{results.length} candidates</span>
+          </div>
+          <div className="trake-strip">
+            {results.map((result, resultIndex) => {
+              const sequenceFrame =
+                result.sequence_frames.find(
+                  (frame) => (frame.event_index ?? frame.order_index) === lane + 1,
+                ) ?? result.sequence_frames[lane];
+              if (!sequenceFrame && lane > 0) return null;
+              const frameIdx = sequenceFrame?.frame_idx ?? result.frame_idx;
+              const timestampMs =
+                sequenceFrame?.timestamp_ms ?? result.timestamp_ms ?? null;
+              const candidates = sequenceFrame
+                ? sequenceImageCandidates(sequenceFrame, result)
+                : resultImageCandidates(result);
+              const selected = isSelected(result);
+              return (
+                <article
+                  className={`trake-cell ${selected ? "selected" : ""}`}
+                  key={`${result.id}-${lane}`}
+                  onClick={() => onOpen(result)}
+                >
+                  <div className="trake-thumb">
+                    <CloudFrameImage
+                      candidates={candidates}
+                      alt={`${result.video_code} event ${lane + 1} frame ${frameIdx ?? "N/A"}`}
+                      eager={lane === 0 && resultIndex < 8}
+                    />
+                    <span className="rank-chip">#{result.rank}</span>
+                  </div>
+                  <div className="trake-cell-body">
+                    <strong>{result.video_code}</strong>
+                    <small>
+                      F{frameIdx ?? "N/A"} | {timestampLabel(timestampMs)}
+                    </small>
+                    <div className="trake-cell-actions">
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onPreview(result);
+                        }}
+                      >
+                        Video
+                      </button>
+                      <button
+                        type="button"
+                        className="select-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onSelect(result);
+                        }}
+                      >
+                        {selected ? "Added" : "Pick"}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function ReasoningDisclosure({
   steps,
   compact = false,
@@ -529,7 +793,7 @@ function ReasoningDisclosure({
   compact?: boolean;
 }) {
   const running = steps.some((step) => step.status === "running");
-  const doneCount = steps.filter((step) => step.status === "done").length;
+  const doneCount = steps.filter((step) => step.status === "done" || step.status === "warning").length;
   return (
     <details
       className={`reasoning-disclosure ${compact ? "compact" : ""}`}
@@ -549,11 +813,18 @@ function ReasoningDisclosure({
                 ? "Done"
                 : step.status === "running"
                   ? "Running"
-                  : "Waiting"}
+                  : step.status === "warning"
+                    ? "Check"
+                    : "Waiting"}
             </small>
             <span>
               <strong>{step.title}</strong>
               <small>{step.detail}</small>
+              {step.raw !== undefined && step.raw !== null && (
+                <pre className="trace-json">
+                  {JSON.stringify(step.raw, null, 2)}
+                </pre>
+              )}
             </span>
           </div>
         ))}
@@ -596,6 +867,7 @@ export function App() {
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
   const [topK, setTopK] = useState(100);
   const [useExpansion, setUseExpansion] = useState(false);
+  const [useAgentPlanning, setUseAgentPlanning] = useState(true);
   const [useMetadata, setUseMetadata] = useState(false);
   const [weights, setWeights] = useState({
     visual: 0.42,
@@ -606,6 +878,7 @@ export function App() {
   const [frameColumns, setFrameColumns] = useState(5);
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [trakeEventCount, setTrakeEventCount] = useState(4);
   const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -615,7 +888,7 @@ export function App() {
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [downloadName, setDownloadName] = useState("submission.zip");
+  const [downloadName, setDownloadName] = useState("submission.csv");
   const [history, setHistory] = useState<SearchHistoryItem[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
@@ -634,7 +907,7 @@ export function App() {
     {
       id: "assistant-welcome",
       role: "assistant",
-      text: "Upload a video or ask a QA query. I will keep the trace visible and prepare rows in Codabench format.",
+      text: "Upload a video or ask a QA query. I will keep the trace visible and prepare CSV rows.",
       trace: makeAgentTrace("Chat", "QA", 0),
     },
   ]);
@@ -766,6 +1039,22 @@ export function App() {
   const selectedKeys = useMemo(() => new Set(selected.map(rowKey)), [selected]);
 
   // Functions
+  function selectionKeyForResult(result: SearchResult): string {
+    return rowKey({
+      query_name: queryName,
+      query_type: queryType,
+      rank: 0,
+      video_code: result.video_code,
+      frame_indices:
+        queryType === "TRAKE" && result.sequence_frames.length > 0
+          ? result.sequence_frames.map((item) => item.frame_idx)
+          : result.frame_idx === null
+            ? []
+            : [result.frame_idx],
+      answer: queryType === "QA" ? (result.answer ?? "") : null,
+    });
+  }
+
   function changeType(type: QueryType) {
     setQueryType(type);
     setQueryName(queryNameByType[type]);
@@ -774,6 +1063,7 @@ export function App() {
     setHasSearched(false);
     setContext(null);
     setActiveResultId(null);
+    setAutoTrace(makeAgentTrace(mode, type, 0));
   }
 
   function switchMode(nextMode: AppMode) {
@@ -791,7 +1081,7 @@ export function App() {
     }
   }
 
-  function rememberSearch(nextResults: SearchResult[]) {
+  function rememberSearch(nextResults: SearchResult[], trace: AgentStep[]) {
     const createdAt = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -805,6 +1095,7 @@ export function App() {
       resultCount: nextResults.length,
       createdAt,
       results: nextResults,
+      trace,
     };
     setHistory((current) => [item, ...current].slice(0, 12));
   }
@@ -870,7 +1161,7 @@ export function App() {
         status: index <= 1 ? ("running" as const) : ("queued" as const),
       }),
     );
-    if (mode === "Auto") setAutoTrace(runningTrace);
+    setAutoTrace(runningTrace);
 
     try {
       const response = await runSearch({
@@ -880,27 +1171,45 @@ export function App() {
         queryText,
         topK,
         useExpansion,
+        useAgentPlanning,
         useMetadata,
       });
       const nextResults =
         response.results.length > 0
           ? response.results
           : makeMockResults(queryType, queryName);
+      if (queryType === "TRAKE") {
+        setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
+      }
       setResults(nextResults);
       setStatus(`${nextResults.length} results`);
-      setAutoTrace(makeAgentTrace(mode, queryType, nextResults.length));
-      rememberSearch(nextResults);
+      const trace = makeTraceFromResponse(mode, queryType, response, nextResults.length);
+      setAutoTrace(trace);
+      rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
       const nextResults = makeMockResults(queryType, queryName);
+      const trace = makeAgentTrace(mode, queryType, nextResults.length).map(
+        (step, index) =>
+          index === 0
+            ? {
+                ...step,
+                detail:
+                  error instanceof Error
+                    ? `Search API fallback: ${error.message.slice(0, 96)}`
+                    : "Search API fallback.",
+                status: "warning" as const,
+              }
+            : step,
+      );
       setResults(nextResults);
       setStatus(
         error instanceof Error
           ? `Mock results: ${error.message.slice(0, 64)}`
           : "Mock results",
       );
-      setAutoTrace(makeAgentTrace(mode, queryType, nextResults.length));
-      rememberSearch(nextResults);
+      setAutoTrace(trace);
+      rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } finally {
       setLoading(false);
@@ -947,7 +1256,7 @@ export function App() {
     setQueryText(item.queryText);
     setResults(item.results);
     setHasSearched(true);
-    setAutoTrace(makeAgentTrace(item.mode, item.queryType, item.resultCount));
+    setAutoTrace(item.trace);
     if (item.results[0]) void openFrameContext(item.results[0]);
   }
 
@@ -970,24 +1279,15 @@ export function App() {
     });
   }
 
-  async function exportLocalSubmission() {
-    const zip = new JSZip();
-    const folder = zip.folder("submission");
-    if (!folder) throw new Error("Cannot create submission folder");
-    const grouped = new Map<string, SubmissionRow[]>();
-    selected.forEach((row) => {
-      const filename = queryFilename(row.query_name);
-      grouped.set(filename, [...(grouped.get(filename) ?? []), row]);
+  function exportLocalCsv() {
+    const blob = new Blob([buildSubmissionCsv(selected)], {
+      type: "text/csv;charset=utf-8",
     });
-    grouped.forEach((rows, filename) => {
-      folder.file(filename, `${rows.map(submissionCsvLine).join("\r\n")}\r\n`);
-    });
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const name = `submission_${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+    const url = downloadBlobUrl(downloadUrl, blob);
+    const name = `submission_${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
     setDownloadName(name);
     setDownloadUrl(url);
-    setStatus("Local zip ready");
+    setStatus("CSV ready");
   }
 
   async function exportSubmission() {
@@ -1002,7 +1302,7 @@ export function App() {
         name,
         selected,
       );
-      setDownloadName(`${name}.zip`);
+      setDownloadName(`${name}.csv`);
       setDownloadUrl(exported.downloadUrl);
       const report = exported.validation_report;
       setStatus(
@@ -1011,7 +1311,7 @@ export function App() {
           : `Invalid: ${report.errors.join(", ")}`,
       );
     } catch {
-      await exportLocalSubmission();
+      exportLocalCsv();
     }
   }
 
@@ -1023,6 +1323,7 @@ export function App() {
     setActiveResultId(null);
     setAttachedFiles([]);
     setStatus("Ready");
+    setAutoTrace(makeAgentTrace(mode, queryType, 0));
   }
 
   function updateWeight(key: keyof typeof weights, value: number) {
@@ -1200,6 +1501,7 @@ export function App() {
 
           {mode === "Search" && (
             <section className="frame-section">
+              {(loading || hasSearched) && <ReasoningDisclosure steps={autoTrace} />}
               {loading ? (
                 <SearchLoadingStage frameColumns={frameColumns} />
               ) : galleryLoading && !hasSearched ? (
@@ -1208,6 +1510,17 @@ export function App() {
                     <div className="skeleton-card" key={index} />
                   ))}
                 </div>
+              ) : queryType === "TRAKE" && hasSearched ? (
+                <TrakeRows
+                  results={visibleResults}
+                  eventCount={trakeEventCount}
+                  isSelected={(result) =>
+                    selectedKeys.has(selectionKeyForResult(result))
+                  }
+                  onOpen={(result) => void openFrameContext(result)}
+                  onSelect={addResult}
+                  onPreview={openVideoPreview}
+                />
               ) : (
                 <div
                   className="frame-grid"
@@ -1220,25 +1533,7 @@ export function App() {
                       key={result.id}
                       result={result}
                       eager={index < frameColumns}
-                      selected={selectedKeys.has(
-                        rowKey({
-                          query_name: queryName,
-                          query_type: queryType,
-                          rank: 0,
-                          video_code: result.video_code,
-                          frame_indices:
-                            queryType === "TRAKE" &&
-                            result.sequence_frames.length > 0
-                              ? result.sequence_frames.map(
-                                  (item) => item.frame_idx,
-                                )
-                              : result.frame_idx === null
-                                ? []
-                                : [result.frame_idx],
-                          answer:
-                            queryType === "QA" ? (result.answer ?? "") : null,
-                        }),
-                      )}
+                      selected={selectedKeys.has(selectionKeyForResult(result))}
                       onOpen={() => void openFrameContext(result)}
                       onSelect={() => addResult(result)}
                       onPreview={() => openVideoPreview(result)}
@@ -1256,6 +1551,17 @@ export function App() {
                   <ReasoningDisclosure steps={autoTrace} />
                   {loading ? (
                     <SearchLoadingStage frameColumns={frameColumns} />
+                  ) : queryType === "TRAKE" && hasSearched ? (
+                    <TrakeRows
+                      results={visibleResults}
+                      eventCount={trakeEventCount}
+                      isSelected={(result) =>
+                        selectedKeys.has(selectionKeyForResult(result))
+                      }
+                      onOpen={(result) => void openFrameContext(result)}
+                      onSelect={addResult}
+                      onPreview={openVideoPreview}
+                    />
                   ) : (
                     <div
                       className="frame-grid auto-grid"
@@ -1279,6 +1585,17 @@ export function App() {
                 </>
               ) : loading ? (
                 <SearchLoadingStage frameColumns={frameColumns} />
+              ) : queryType === "TRAKE" && hasSearched ? (
+                <TrakeRows
+                  results={visibleResults}
+                  eventCount={trakeEventCount}
+                  isSelected={(result) =>
+                    selectedKeys.has(selectionKeyForResult(result))
+                  }
+                  onOpen={(result) => void openFrameContext(result)}
+                  onSelect={addResult}
+                  onPreview={openVideoPreview}
+                />
               ) : (
                 <div
                   className="frame-grid"
@@ -1543,7 +1860,7 @@ export function App() {
             disabled={selected.length === 0}
             onClick={() => void exportSubmission()}
           >
-            Export zip
+            Export CSV
           </button>
           {downloadUrl && (
             <a
@@ -1590,7 +1907,7 @@ export function App() {
               ),
             )}
           </div>
-          <div className="settings-block two-col">
+          <div className="settings-block toggles">
             <button
               type="button"
               className={useExpansion ? "active" : ""}
@@ -1604,6 +1921,13 @@ export function App() {
               onClick={() => setUseMetadata((value) => !value)}
             >
               Metadata
+            </button>
+            <button
+              type="button"
+              className={useAgentPlanning ? "active" : ""}
+              onClick={() => setUseAgentPlanning((value) => !value)}
+            >
+              Agent plan
             </button>
           </div>
           <div className="settings-block theme-row">

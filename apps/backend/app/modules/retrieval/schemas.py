@@ -63,6 +63,10 @@ class SearchResponse(BaseModel):
     results: list[ResultItem]
 
 
+class QueryPlanResponse(BaseModel):
+    normalized_query: dict
+
+
 class SelectResultsRequest(BaseModel):
     result_ids: list[str]
     selected: bool = True
