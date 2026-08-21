@@ -35,18 +35,21 @@ class GCSObjectStorageClient:
     def _resolve_credentials_file(credentials_file: str) -> str:
         if not credentials_file:
             return ""
-        path = Path(credentials_file)
-        if path.is_absolute() and path.exists():
-            return str(path)
-        if path.exists():
-            return str(path)
+        raw_candidates = [credentials_file]
+        normalized = credentials_file.replace("\\", "/")
+        if normalized != credentials_file:
+            raw_candidates.append(normalized)
 
         # Settings are loaded from the repo-root .env, but the backend usually
         # runs from apps/backend. Resolve relative credential paths from repo root.
         repo_root = Path(__file__).resolve().parents[5]
-        repo_path = repo_root / path
-        if repo_path.exists():
-            return str(repo_path)
+        backend_root = Path(__file__).resolve().parents[2]
+        for raw in raw_candidates:
+            path = Path(raw)
+            candidates = [path] if path.is_absolute() else [path, repo_root / path, backend_root / path]
+            for candidate in candidates:
+                if candidate.exists():
+                    return str(candidate.resolve())
 
         return ""
 
@@ -74,6 +77,10 @@ class GCSObjectStorageClient:
         if self._public_base_url:
             return f"{self._public_base_url}/{key}"
         return f"https://storage.googleapis.com/{self._bucket_name}/{key}"
+
+    def object_exists(self, key: str, timeout: float = 3.0) -> bool:
+        blob = self._bucket.blob(key)
+        return bool(blob.exists(timeout=timeout))
 
     def list_objects(self, prefix: str) -> list[str]:
         blobs = self._client.list_blobs(self._bucket_name, prefix=prefix)

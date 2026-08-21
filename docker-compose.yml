@@ -10,7 +10,7 @@ services:
       discovery.type: single-node
       xpack.security.enabled: "false"
       xpack.ml.enabled: "false"
-      ES_JAVA_OPTS: -Xms384m -Xmx384m
+      ES_JAVA_OPTS: -Xms768m -Xmx768m
     ports:
       - "9200:9200"
     volumes:
@@ -30,9 +30,14 @@ services:
       - ./configs:/app/configs:ro
       - ./data:/app/data
       - ./models:/app/models:ro
+      - ./apps/secrets:/app/apps/secrets:ro
     environment:
-      TEXT_SEARCH_BACKEND: postgres
+      DATABASE_URL: sqlite:////app/data/dev_search_local.db
+      TEXT_SEARCH_BACKEND: elasticsearch
       CLIP_EMBEDDING_BASE_URL: http://host.docker.internal:8001/v1
+      MILVUS_CONNECT_TIMEOUT: "3.0"
+      MILVUS_SEARCH_TIMEOUT: "4.0"
+      SKIP_DB_INIT: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -46,7 +51,8 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
+      VITE_API_BASE_URL: ""
+      VITE_API_PROXY_TARGET: http://backend:8000
     ports:
       - "5173:5173"
     depends_on:

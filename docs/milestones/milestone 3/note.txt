@@ -250,6 +250,13 @@ Note fix:
     thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
 
     + Phần TRAKE lọc frame trùng ra, 
+    + phần cell reasoning cách ra một chút cho với kết quả của search
+    + Chỉnh lại phần backend 
+    + Tạo text embedding, tách chunk? -> tải lên zilliz
+
+    + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn
+    + CHỉnh 
+
 
 Testing:
 - Chạy search những câu của ban tổ chức
@@ -267,6 +274,11 @@ endpoint: https://ec0eca5bfadf4b849ffcba79ad4efdd6.us-central1.gcp.cloud.es.io:4
 key: dlM0VklLQUJLOEVPekxqSFAyWE86QVJmb0JXUmVtNEV0SF9lYkk5MThuZw==
 NkM0V0lLQUJLOEVPekxqSHBtVlg6NlpER0JRRWNwaDR1VHVmMnVsUjhidw==
 
+# Ngrok
+key: 3ID14PUUiFf3PUMxiEAJz5yUZM9_uck67De6dhN9joHAk5nZ
+
+
+
 
 Còn một blocker thật: SigLIP2 runtime local ở 8003 chưa load được do lỗi tài nguyên Windows/pagefile/disk (os error 1455 / model ~4.5GB). 
 Collection SigLIP2 đã ingest và backend RRF đã sẵn sàng; hiện live search đang fallback CLIP-only trong RRF cho tới khi bật được service SigLIP2 mới.
@@ -277,3 +289,5 @@ Giao diện:
 - TRAKE thì kết quả sẽ hiện kiểu chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo sang ngang để chọn
 - QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
 thay vì submission thì cho ra file csv để tải về chứ không phải zip, UI khi agent phân tích thì hiện ra những file json hay trace phần phân tích lên UI để tôi xem, giống ChatGPT của openAI, 
+
+

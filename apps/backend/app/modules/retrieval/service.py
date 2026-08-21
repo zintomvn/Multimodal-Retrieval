@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import REPO_ROOT, get_settings
-from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video
+from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video, new_id
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.query_planning import AgentQueryPlanner
@@ -87,7 +87,6 @@ class RetrievalService:
         self.profiles = self._load_profiles()
         self.query_planner = AgentQueryPlanner.from_config(self.settings.agent_config_path)
         self._map_keyframes_cache: dict[str, dict[int, dict[str, Any]] | None] = {}
-        self._keyframe_exists_cache: dict[str, bool] = {}
         self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
         self._text_hit_sources: dict[str, dict[str, Any]] = {}
 
@@ -98,7 +97,9 @@ class RetrievalService:
         started_at = perf_counter()
         dataset = self._resolve_dataset(request.dataset_id)
         normalized = self._normalize_query(request)
+        run_id = new_id()
         run = QueryRun(
+            id=run_id,
             dataset_id=dataset.id,
             query_name=request.query_name,
             query_type=request.query_type,
@@ -108,9 +109,6 @@ class RetrievalService:
             status="RUNNING",
         )
         self.db.add(run)
-        self.db.flush()
-        run_id = run.id
-        self.db.commit()
 
         try:
             if request.query_type == "TRAKE":
@@ -127,16 +125,24 @@ class RetrievalService:
         except Exception:
             self.db.rollback()
             try:
-                failed_run = self.db.get(QueryRun, run_id)
-                if failed_run is not None:
-                    failed_run.status = "FAILED"
-                    self.db.commit()
+                failed_run = QueryRun(
+                    id=run_id,
+                    dataset_id=dataset.id,
+                    query_name=request.query_name,
+                    query_type=request.query_type,
+                    query_text=request.query_text,
+                    normalized_query=normalized,
+                    options=request.model_dump(mode="json"),
+                    status="FAILED",
+                )
+                self.db.merge(failed_run)
+                self.db.commit()
             except Exception:
                 self.db.rollback()
             raise
 
         response = SearchResponse(
-            query_run_id=run.id,
+            query_run_id=run_id,
             query_type=request.query_type,
             query_name=request.query_name,
             normalized_query=normalized,
@@ -322,9 +328,19 @@ class RetrievalService:
             options=request.options,
             top_k=request.top_k,
         )
+        qa_frames_by_id: dict[str, Frame] = {}
+        if request.query_type == "QA" and candidates:
+            top_frame_ids = [candidate.frame.id for candidate in candidates[: request.top_k]]
+            qa_frames_by_id = {
+                frame.id: frame
+                for frame in self.db.query(Frame)
+                .options(joinedload(Frame.video), selectinload(Frame.annotations))
+                .filter(Frame.id.in_(top_frame_ids))
+                .all()
+            }
         items: list[ResultItem] = []
         for rank, candidate in enumerate(candidates[: request.top_k], start=1):
-            frame = candidate.frame
+            frame = qa_frames_by_id.get(candidate.frame.id, candidate.frame)
             answer = None
             if request.query_type == "QA":
                 evidence = self._frame_text(frame)
@@ -335,6 +351,7 @@ class RetrievalService:
                     raw_answer = answer_hint
                 answer = self._postprocess_qa_answer(raw_answer)
             result = RetrievalResult(
+                id=new_id(),
                 query_run_id=run.id,
                 rank=rank,
                 video_id=frame.video_id,
@@ -356,8 +373,9 @@ class RetrievalService:
                 },
                 sequence_frames=[],
             )
+            result.frame = frame
+            result.video = frame.video
             self.db.add(result)
-            self.db.flush()
             items.append(self._result_to_item(result))
         return items
 
@@ -388,7 +406,7 @@ class RetrievalService:
                     video_code=candidate.frame.video.video_code,
                     frame_idx=candidate.frame.frame_idx,
                     score=candidate.final_score,
-                    text=self._frame_text(candidate.frame),
+                    text="",
                     event_index=event_index,
                     event_query=event_query,
                 )
@@ -463,7 +481,11 @@ class RetrievalService:
                 }
                 for idx, candidate in enumerate(sequence.candidates)
             ]
+            representative_frame = sequence_frames_by_id.get(representative.frame_id)
+            if representative_frame is None:
+                continue
             result = RetrievalResult(
+                id=new_id(),
                 query_run_id=run.id,
                 rank=rank,
                 video_id=representative.video_id,
@@ -490,8 +512,9 @@ class RetrievalService:
                 },
                 sequence_frames=sequence_frames,
             )
+            result.frame = representative_frame
+            result.video = representative_frame.video
             self.db.add(result)
-            self.db.flush()
             items.append(self._result_to_item(result))
         return items
 
@@ -557,11 +580,13 @@ class RetrievalService:
                 options=options,
             )
 
+        load_options = [joinedload(Frame.video)]
+        if self._needs_frame_annotations(options):
+            load_options.append(selectinload(Frame.annotations))
         frames = (
             self.db.query(Frame)
-            .options(joinedload(Frame.video), selectinload(Frame.annotations))
-            .join(Frame.video)
-            .filter(Video.dataset_id == dataset.id, Frame.keyframe_id.in_(candidate_ids))
+            .options(*load_options)
+            .filter(Frame.keyframe_id.in_(candidate_ids))
             .all()
         )
         if not frames:
@@ -1032,6 +1057,9 @@ class RetrievalService:
         reranked.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return reranked
 
+    def _needs_frame_annotations(self, options: SearchOptions) -> bool:
+        return bool(options.objects or (options.scene or "").strip() or options.use_reranker)
+
     def _normalize_signal(self, scores: list[float]) -> list[float]:
         if not scores:
             return []
@@ -1140,6 +1168,14 @@ class RetrievalService:
         }
 
     def _resolve_keyframe_id(self, item_id: str, metadata: dict[str, Any]) -> str | None:
+        if metadata.get("canonical_keyframe_id"):
+            return str(metadata["canonical_keyframe_id"])
+        if metadata.get("mapped_keyframe_id"):
+            return str(metadata["mapped_keyframe_id"])
+        for candidate in (metadata.get("keyframe_id"), metadata.get("frame_id"), item_id):
+            value = str(candidate or "").strip()
+            if value and FRAME_VIDEO_ID_RE.match(value):
+                return value
         for candidate in (
             metadata.get("original_keyframe_id"),
             item_id,
@@ -1147,13 +1183,9 @@ class RetrievalService:
             metadata.get("frame_id"),
         ):
             map_info = self._map_keyframe_info(str(candidate or ""), metadata)
-            if map_info and self._keyframe_exists(str(map_info["resolved_keyframe_id"])):
+            if map_info:
                 return str(map_info["resolved_keyframe_id"])
 
-        if metadata.get("canonical_keyframe_id"):
-            return str(metadata["canonical_keyframe_id"])
-        if metadata.get("mapped_keyframe_id"):
-            return str(metadata["mapped_keyframe_id"])
         for candidate in (metadata.get("keyframe_id"), metadata.get("frame_id"), item_id):
             value = str(candidate or "").strip()
             if value:
@@ -1268,13 +1300,6 @@ class RetrievalService:
                     rows[map_n] = dict(row)
         self._map_keyframes_cache[video_id] = rows
         return rows
-
-    def _keyframe_exists(self, keyframe_id: str) -> bool:
-        if keyframe_id not in self._keyframe_exists_cache:
-            self._keyframe_exists_cache[keyframe_id] = (
-                self.db.query(Frame.keyframe_id).filter(Frame.keyframe_id == keyframe_id).first() is not None
-            )
-        return self._keyframe_exists_cache[keyframe_id]
 
     def _first_int(self, *values: Any) -> int | None:
         for value in values:

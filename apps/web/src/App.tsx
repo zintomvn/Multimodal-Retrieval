@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ImageOff,
   Loader2,
   PanelLeft,
   PanelRight,
   Paperclip,
+  Plus,
   Search,
   Send,
   SlidersHorizontal,
@@ -15,6 +18,7 @@ import {
   createAndExportSubmission,
   firstMediaUrl,
   getFrameContext,
+  getVideoPreviewUrl,
   listDatasets,
   listFrames,
   mediaUrl,
@@ -65,8 +69,13 @@ interface ChatMessage {
 interface VideoPreview {
   title: string;
   subtitle: string;
+  baseUrl: string;
   url: string;
   posterUrl: string | null;
+  result: SearchResult;
+  frames: ContextFrame[];
+  frameIndex: number;
+  loadingFrames: boolean;
 }
 
 interface MapKeyframeInfo {
@@ -134,28 +143,28 @@ function uniqueMediaUrls(paths: Array<string | null | undefined>): string[] {
 
 function resultImageCandidates(result: SearchResult): string[] {
   return uniqueMediaUrls([
-    result.thumbnail_url,
     result.image_url,
     result.image_uri,
     result.image_storage_key,
+    result.thumbnail_url,
   ]);
 }
 
 function contextImageCandidates(frame: ContextFrame): string[] {
   return uniqueMediaUrls([
-    frame.thumbnail_url,
     frame.image_url,
     frame.image_uri,
     frame.image_storage_key,
+    frame.thumbnail_url,
   ]);
 }
 
 function galleryImageCandidates(frame: MediaFrame): string[] {
   return uniqueMediaUrls([
-    frame.thumbnail_url,
     frame.image_url,
     frame.image_uri,
     frame.image_storage_key,
+    frame.thumbnail_url,
   ]);
 }
 
@@ -164,12 +173,14 @@ function sequenceImageCandidates(
   fallback: SearchResult,
 ): string[] {
   return uniqueMediaUrls([
-    frame.thumbnail_url,
     frame.image_url,
     frame.image_uri,
     frame.image_storage_key,
-    fallback.thumbnail_url,
+    frame.thumbnail_url,
     fallback.image_url,
+    fallback.image_uri,
+    fallback.image_storage_key,
+    fallback.thumbnail_url,
   ]);
 }
 
@@ -192,6 +203,112 @@ function timestampLabel(timestampMs: number | null): string {
 
 function formatScore(score: number): string {
   return score.toFixed(3);
+}
+
+function scoreNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function scoreFromBreakdown(
+  result: SearchResult,
+  keys: string[],
+): number | null {
+  for (const key of keys) {
+    const value = scoreNumber(result.score_breakdown[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function scoreComponents(result: SearchResult): Array<{
+  label: string;
+  value: number;
+  kind: "visual" | "text" | "rrf" | "final";
+}> {
+  const visual =
+    scoreFromBreakdown(result, ["semantic_score", "visual_score", "semantic", "visual"]) ?? 0;
+  const text =
+    scoreFromBreakdown(result, ["text_score", "metadata_score", "text"]) ?? 0;
+  const rrf = scoreFromBreakdown(result, ["rrf_score", "rrf"]);
+  const items: Array<{
+    label: string;
+    value: number;
+    kind: "visual" | "text" | "rrf" | "final";
+  }> = [
+    { label: "Visual", value: visual, kind: "visual" },
+    { label: "Text", value: text, kind: "text" },
+  ];
+  if (rrf !== null) items.push({ label: "RRF", value: rrf, kind: "rrf" });
+  items.push({
+    label: "Final",
+    value: scoreFromBreakdown(result, ["final_score"]) ?? result.score,
+    kind: "final",
+  });
+  return items;
+}
+
+function textHitInfo(result: SearchResult): {
+  source: string;
+  score: number | null;
+  time: string | null;
+  snippet: string;
+} | null {
+  const raw = result.score_breakdown.text_hit;
+  if (!isRecord(raw)) return null;
+  const snippet = String(raw.snippet ?? "").trim();
+  const source = String(raw.source_type ?? raw.field ?? "text").trim();
+  const score = scoreNumber(raw.score);
+  const start = scoreNumber(raw.start_seconds);
+  const end = scoreNumber(raw.end_seconds);
+  const time =
+    start !== null
+      ? end !== null && end > start
+        ? `${timestampLabel(start * 1000)}-${timestampLabel(end * 1000)}`
+        : timestampLabel(start * 1000)
+      : null;
+  if (!snippet && score === null && !source) return null;
+  return { source: source || "text", score, time, snippet };
+}
+
+function csvDownloadName(raw: string, fallback = "submission.csv"): string {
+  const cleaned = (raw || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_");
+  const name = cleaned || fallback;
+  return name.toLowerCase().endsWith(".csv") ? name : `${name}.csv`;
+}
+
+function uniqueFrameIndices(
+  values: Array<number | null | undefined>,
+): number[] {
+  const seen = new Set<number>();
+  const indices: number[] = [];
+  values.forEach((value) => {
+    if (value === null || value === undefined || seen.has(value)) return;
+    seen.add(value);
+    indices.push(value);
+  });
+  return indices;
+}
+
+function contextFrameFromResult(result: SearchResult): ContextFrame | null {
+  if (!result.frame_id || result.frame_idx === null) return null;
+  return {
+    id: result.frame_id,
+    frame_idx: result.frame_idx,
+    timestamp_ms: result.timestamp_ms ?? 0,
+    thumbnail_url: result.thumbnail_url ?? "",
+    image_url: result.image_url,
+    image_uri: result.image_uri,
+    image_storage_key: result.image_storage_key,
+    text: "",
+  };
 }
 
 function mapKeyframeInfo(result: SearchResult): MapKeyframeInfo | null {
@@ -252,10 +369,6 @@ function submissionCsvLine(row: SubmissionRow): string {
   return cells.map(csvCell).join(",");
 }
 
-function queryFilename(queryName: string): string {
-  return queryName.endsWith(".csv") ? queryName : `${queryName}.csv`;
-}
-
 function buildSubmissionCsv(rows: SubmissionRow[]): string {
   const queryNames = new Set(rows.map((row) => row.query_name));
   if (queryNames.size <= 1) {
@@ -275,9 +388,26 @@ function buildSubmissionCsv(rows: SubmissionRow[]): string {
   return `${lines.join("\r\n")}\r\n`;
 }
 
-function downloadBlobUrl(previousUrl: string | null, blob: Blob): string {
-  if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
-  return URL.createObjectURL(blob);
+function triggerCsvDownload(url: string, fileName: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function downloadCsvBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  triggerCsvDownload(url, fileName);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function downloadCsvFromUrl(url: string, fileName: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`CSV download failed: ${response.status}`);
+  downloadCsvBlob(await response.blob(), fileName);
 }
 
 // Mock results generator for testing without API
@@ -603,6 +733,36 @@ function CloudFrameImage({
   );
 }
 
+function ScoreBreakdown({
+  result,
+  compact = false,
+}: {
+  result: SearchResult;
+  compact?: boolean;
+}) {
+  const hit = textHitInfo(result);
+  return (
+    <div className={`score-breakdown ${compact ? "compact" : ""}`}>
+      {scoreComponents(result).map((item) => (
+        <span className={`score-pill ${item.kind}`} key={item.label}>
+          <small>{item.label}</small>
+          <strong>{formatScore(item.value)}</strong>
+        </span>
+      ))}
+      {hit && (
+        <span className="text-hit-pill" title={hit.snippet}>
+          <small>
+            {hit.source.toUpperCase()}
+            {hit.time ? ` ${hit.time}` : ""}
+          </small>
+          <strong>{hit.score !== null ? formatScore(hit.score) : "hit"}</strong>
+          {hit.snippet && <em>{hit.snippet}</em>}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function FrameCard({
   result,
   selected,
@@ -646,6 +806,7 @@ function FrameCard({
           <span>{formatScore(result.score)}</span>
         </div>
         <p>Frame {frameText}</p>
+        <ScoreBreakdown result={result} compact />
         {mapInfo && (
           <div
             className={`map-keyframe-meta${mapMismatch ? " is-mismatch" : ""}`}
@@ -713,26 +874,54 @@ function TrakeRows({
 
   return (
     <div className="trake-board" aria-label="TRAKE ordered frame lanes">
-      {lanes.map((lane) => (
-        <section className="trake-lane" key={lane}>
+      {lanes.map((lane) => {
+        const seenLaneFrames = new Set<string>();
+        const laneCells = results.flatMap((result, resultIndex) => {
+          const sequenceFrame =
+            result.sequence_frames.find(
+              (frame) => (frame.event_index ?? frame.order_index) === lane + 1,
+            ) ?? result.sequence_frames[lane];
+          if (!sequenceFrame && lane > 0) return [];
+          const frameIdx = sequenceFrame?.frame_idx ?? result.frame_idx;
+          const timestampMs =
+            sequenceFrame?.timestamp_ms ?? result.timestamp_ms ?? null;
+          const candidates = sequenceFrame
+            ? sequenceImageCandidates(sequenceFrame, result)
+            : resultImageCandidates(result);
+          const dedupeKey =
+            frameIdx === null
+              ? ""
+              : `${sequenceFrame?.video_code ?? result.video_code}:${frameIdx}`;
+          if (dedupeKey && seenLaneFrames.has(dedupeKey)) return [];
+          if (dedupeKey) seenLaneFrames.add(dedupeKey);
+          return [
+            {
+              result,
+              resultIndex,
+              frameIdx,
+              timestampMs,
+              candidates,
+              selected: isSelected(result),
+            },
+          ];
+        });
+
+        return (
+          <section className="trake-lane" key={lane}>
           <div className="trake-lane-label">
             <strong>E{lane + 1}</strong>
-            <span>{results.length} candidates</span>
+            <span>{laneCells.length} candidates</span>
           </div>
           <div className="trake-strip">
-            {results.map((result, resultIndex) => {
-              const sequenceFrame =
-                result.sequence_frames.find(
-                  (frame) => (frame.event_index ?? frame.order_index) === lane + 1,
-                ) ?? result.sequence_frames[lane];
-              if (!sequenceFrame && lane > 0) return null;
-              const frameIdx = sequenceFrame?.frame_idx ?? result.frame_idx;
-              const timestampMs =
-                sequenceFrame?.timestamp_ms ?? result.timestamp_ms ?? null;
-              const candidates = sequenceFrame
-                ? sequenceImageCandidates(sequenceFrame, result)
-                : resultImageCandidates(result);
-              const selected = isSelected(result);
+            {laneCells.map(
+              ({
+                result,
+                resultIndex,
+                frameIdx,
+                timestampMs,
+                candidates,
+                selected,
+              }) => {
               return (
                 <article
                   className={`trake-cell ${selected ? "selected" : ""}`}
@@ -752,6 +941,7 @@ function TrakeRows({
                     <small>
                       F{frameIdx ?? "N/A"} | {timestampLabel(timestampMs)}
                     </small>
+                    <ScoreBreakdown result={result} compact />
                     <div className="trake-cell-actions">
                       <button
                         type="button"
@@ -780,7 +970,8 @@ function TrakeRows({
             })}
           </div>
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -865,10 +1056,10 @@ export function App() {
   const [queryType, setQueryType] = useState<QueryType>("KIS");
   const [queryName, setQueryName] = useState(queryNameByType.KIS);
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
-  const [topK, setTopK] = useState(100);
+  const [topK, setTopK] = useState(50);
   const [useExpansion, setUseExpansion] = useState(false);
   const [useAgentPlanning, setUseAgentPlanning] = useState(true);
-  const [useMetadata, setUseMetadata] = useState(false);
+  const [useMetadata, setUseMetadata] = useState(true);
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -887,8 +1078,6 @@ export function App() {
   const [selected, setSelected] = useState<SubmissionRow[]>([]);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [downloadName, setDownloadName] = useState("submission.csv");
   const [history, setHistory] = useState<SearchHistoryItem[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
@@ -993,12 +1182,6 @@ export function App() {
   }, [datasetId]);
 
   useEffect(() => {
-    return () => {
-      if (downloadUrl?.startsWith("blob:")) URL.revokeObjectURL(downloadUrl);
-    };
-  }, [downloadUrl]);
-
-  useEffect(() => {
     const element = composerRef.current;
     if (!element) return;
     element.style.height = "0px";
@@ -1047,7 +1230,7 @@ export function App() {
       video_code: result.video_code,
       frame_indices:
         queryType === "TRAKE" && result.sequence_frames.length > 0
-          ? result.sequence_frames.map((item) => item.frame_idx)
+          ? uniqueFrameIndices(result.sequence_frames.map((item) => item.frame_idx))
           : result.frame_idx === null
             ? []
             : [result.frame_idx],
@@ -1113,7 +1296,7 @@ export function App() {
   function addResult(result: SearchResult) {
     const frameIndices =
       queryType === "TRAKE" && result.sequence_frames.length > 0
-        ? result.sequence_frames.map((item) => item.frame_idx)
+        ? uniqueFrameIndices(result.sequence_frames.map((item) => item.frame_idx))
         : result.frame_idx === null
           ? []
           : [result.frame_idx];
@@ -1153,7 +1336,6 @@ export function App() {
 
     setLoading(true);
     setHasSearched(true);
-    setDownloadUrl(null);
     setStatus(mode === "Auto" && autoEnabled ? "Auto running" : "Searching");
     const runningTrace = makeAgentTrace(mode, queryType, 0).map(
       (step, index) => ({
@@ -1260,34 +1442,118 @@ export function App() {
     if (item.results[0]) void openFrameContext(item.results[0]);
   }
 
-  function openVideoPreview(result: SearchResult) {
-    const videoUrl = firstMediaUrl(
+  async function openVideoPreview(result: SearchResult) {
+    let videoUrl = firstMediaUrl(
       result.video_url,
       `/api/media/videos/${result.video_id}/preview`,
     );
+    setStatus("Opening video");
+    try {
+      const preview = await getVideoPreviewUrl(result.video_id);
+      videoUrl = mediaUrl(preview.url) ?? preview.url;
+    } catch {
+      // Fall back to the legacy preview redirect below.
+    }
     if (!videoUrl) {
       setStatus("Video preview unavailable");
       return;
     }
-    const frameLabel =
-      result.frame_idx === null ? "sequence" : `frame ${result.frame_idx}`;
+    const fallbackFrame = contextFrameFromResult(result);
+    const initialFrames = fallbackFrame ? [fallbackFrame] : [];
+    const initialTimestamp = fallbackFrame?.timestamp_ms ?? result.timestamp_ms;
+    const frameLabel = fallbackFrame ? `frame ${fallbackFrame.frame_idx}` : "sequence";
     setVideoPreview({
       title: result.video_code,
-      subtitle: `${frameLabel} | ${timestampLabel(result.timestamp_ms)}`,
-      url: withTimeFragment(videoUrl, result.timestamp_ms),
+      subtitle: `${frameLabel} | ${timestampLabel(initialTimestamp)}`,
+      baseUrl: videoUrl,
+      url: withTimeFragment(videoUrl, initialTimestamp),
       posterUrl: resultImageCandidates(result)[0] ?? null,
+      result,
+      frames: initialFrames,
+      frameIndex: 0,
+      loadingFrames: Boolean(result.frame_id),
     });
+    setStatus("Video ready");
+    if (!result.frame_id) return;
+    try {
+      const nextContext = await getFrameContext(result.frame_id);
+      const targetIndex = Math.max(
+        0,
+        nextContext.frames.findIndex((frame) => frame.id === nextContext.target_frame_id),
+      );
+      const activeFrame = nextContext.frames[targetIndex] ?? fallbackFrame;
+      setVideoPreview((current) => {
+        if (!current || current.result.id !== result.id) return current;
+        return {
+          ...current,
+          frames: nextContext.frames,
+          frameIndex: targetIndex,
+          loadingFrames: false,
+          subtitle: activeFrame
+            ? `frame ${activeFrame.frame_idx} | ${timestampLabel(activeFrame.timestamp_ms)}`
+            : current.subtitle,
+          url: withTimeFragment(videoUrl, activeFrame?.timestamp_ms ?? initialTimestamp),
+          posterUrl:
+            (activeFrame ? contextImageCandidates(activeFrame)[0] : null) ??
+            current.posterUrl,
+        };
+      });
+    } catch {
+      setVideoPreview((current) =>
+        current && current.result.id === result.id
+          ? { ...current, loadingFrames: false }
+          : current,
+      );
+    }
+  }
+
+  function shiftVideoPreview(delta: number) {
+    setVideoPreview((current) => {
+      if (!current || current.frames.length === 0) return current;
+      const frameIndex = Math.round(
+        clampNumber(current.frameIndex + delta, 0, current.frames.length - 1),
+      );
+      const frame = current.frames[frameIndex];
+      if (!frame) return current;
+      return {
+        ...current,
+        frameIndex,
+        subtitle: `frame ${frame.frame_idx} | ${timestampLabel(frame.timestamp_ms)}`,
+        url: withTimeFragment(current.baseUrl, frame.timestamp_ms),
+        posterUrl: contextImageCandidates(frame)[0] ?? current.posterUrl,
+      };
+    });
+  }
+
+  function addVideoPreviewFrame() {
+    if (!videoPreview) return;
+    const frame = videoPreview.frames[videoPreview.frameIndex];
+    if (!frame) {
+      setStatus("Frame index missing");
+      return;
+    }
+    const row: SubmissionRow = {
+      query_name: queryName,
+      query_type: queryType,
+      rank: selected.filter((item) => item.query_name === queryName).length + 1,
+      video_code: videoPreview.result.video_code,
+      frame_indices: [frame.frame_idx],
+      answer: queryType === "QA" ? (videoPreview.result.answer ?? "") : null,
+    };
+    setSelected((current) => {
+      if (current.some((item) => rowKey(item) === rowKey(row))) return current;
+      return normalizeRanks([...current, row]).slice(0, 100);
+    });
+    setStatus(`Added ${videoPreview.result.video_code} frame ${frame.frame_idx}`);
   }
 
   function exportLocalCsv() {
     const blob = new Blob([buildSubmissionCsv(selected)], {
       type: "text/csv;charset=utf-8",
     });
-    const url = downloadBlobUrl(downloadUrl, blob);
-    const name = `submission_${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
-    setDownloadName(name);
-    setDownloadUrl(url);
-    setStatus("CSV ready");
+    const name = csvDownloadName(queryName || "submission");
+    downloadCsvBlob(blob, name);
+    setStatus("CSV downloaded");
   }
 
   async function exportSubmission() {
@@ -1296,18 +1562,18 @@ export function App() {
     try {
       if (datasetId.startsWith("mock"))
         throw new Error("Using local mock dataset");
-      const name = `submission_${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      const csvName = csvDownloadName(queryName || "submission");
+      const name = csvName.replace(/\.csv$/i, "");
       const exported = await createAndExportSubmission(
         datasetId,
         name,
         selected,
       );
-      setDownloadName(`${name}.csv`);
-      setDownloadUrl(exported.downloadUrl);
+      await downloadCsvFromUrl(exported.downloadUrl, csvName);
       const report = exported.validation_report;
       setStatus(
         report.valid
-          ? "Submission exported"
+          ? "CSV downloaded"
           : `Invalid: ${report.errors.join(", ")}`,
       );
     } catch {
@@ -1337,6 +1603,15 @@ export function App() {
   function updateTopK(value: number) {
     setTopK(Math.round(clampNumber(value, 1, 100)));
   }
+
+  const videoPreviewFrame =
+    videoPreview?.frames[videoPreview.frameIndex] ?? null;
+  const videoPreviewCanStepBack = Boolean(
+    videoPreview && videoPreview.frameIndex > 0,
+  );
+  const videoPreviewCanStepForward = Boolean(
+    videoPreview && videoPreview.frameIndex < videoPreview.frames.length - 1,
+  );
 
   const modeCaption =
     mode === "Search" && hasSearched && !loading
@@ -1519,7 +1794,7 @@ export function App() {
                   }
                   onOpen={(result) => void openFrameContext(result)}
                   onSelect={addResult}
-                  onPreview={openVideoPreview}
+                  onPreview={(result) => void openVideoPreview(result)}
                 />
               ) : (
                 <div
@@ -1536,7 +1811,7 @@ export function App() {
                       selected={selectedKeys.has(selectionKeyForResult(result))}
                       onOpen={() => void openFrameContext(result)}
                       onSelect={() => addResult(result)}
-                      onPreview={() => openVideoPreview(result)}
+                      onPreview={() => void openVideoPreview(result)}
                     />
                   ))}
                 </div>
@@ -1560,7 +1835,7 @@ export function App() {
                       }
                       onOpen={(result) => void openFrameContext(result)}
                       onSelect={addResult}
-                      onPreview={openVideoPreview}
+                      onPreview={(result) => void openVideoPreview(result)}
                     />
                   ) : (
                     <div
@@ -1577,7 +1852,7 @@ export function App() {
                           selected={false}
                           onOpen={() => void openFrameContext(result)}
                           onSelect={() => addResult(result)}
-                          onPreview={() => openVideoPreview(result)}
+                          onPreview={() => void openVideoPreview(result)}
                         />
                       ))}
                     </div>
@@ -1594,7 +1869,7 @@ export function App() {
                   }
                   onOpen={(result) => void openFrameContext(result)}
                   onSelect={addResult}
-                  onPreview={openVideoPreview}
+                  onPreview={(result) => void openVideoPreview(result)}
                 />
               ) : (
                 <div
@@ -1611,7 +1886,7 @@ export function App() {
                       selected={false}
                       onOpen={() => void openFrameContext(result)}
                       onSelect={() => addResult(result)}
-                      onPreview={() => openVideoPreview(result)}
+                      onPreview={() => void openVideoPreview(result)}
                     />
                   ))}
                 </div>
@@ -1862,15 +2137,6 @@ export function App() {
           >
             Export CSV
           </button>
-          {downloadUrl && (
-            <a
-              className="download-link"
-              href={downloadUrl}
-              download={downloadName}
-            >
-              Download {downloadName}
-            </a>
-          )}
         </section>
       </aside>
 
@@ -1989,7 +2255,57 @@ export function App() {
               poster={videoPreview.posterUrl ?? undefined}
               controls
               autoPlay
+              preload="metadata"
+              playsInline
             />
+            <div className="video-frame-toolbar">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={!videoPreviewCanStepBack}
+                onClick={() => shiftVideoPreview(-1)}
+              >
+                <ChevronLeft size={16} />
+                Prev
+              </button>
+              <div className="video-frame-current">
+                {videoPreviewFrame ? (
+                  <>
+                    <strong>Frame {videoPreviewFrame.frame_idx}</strong>
+                    <small>
+                      {timestampLabel(videoPreviewFrame.timestamp_ms)}
+                      {videoPreview.loadingFrames ? " | loading context" : ""}
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <strong>Sequence</strong>
+                    <small>{videoPreview.loadingFrames ? "loading context" : "no frame context"}</small>
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={!videoPreviewCanStepForward}
+                onClick={() => shiftVideoPreview(1)}
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
+              <button
+                type="button"
+                className="select-button"
+                disabled={!videoPreviewFrame}
+                onClick={addVideoPreviewFrame}
+              >
+                <Plus size={15} />
+                Pick frame
+              </button>
+            </div>
+            <div className="video-score-panel">
+              <ScoreBreakdown result={videoPreview.result} />
+            </div>
           </div>
         </div>
       )}

@@ -48,7 +48,7 @@ def normalize_database_url(raw: str) -> str:
 
 def database_connect_args(database_url: str) -> dict:
     if database_url.startswith("sqlite"):
-        return {"check_same_thread": False}
+        return {"check_same_thread": False, "timeout": 30}
     if database_url.startswith("postgresql"):
         args: dict = {"prepare_threshold": None}
         parsed = urlparse(database_url)

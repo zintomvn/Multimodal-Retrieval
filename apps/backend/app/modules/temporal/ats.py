@@ -29,6 +29,8 @@ def adaptive_temporal_search(
     delta_frame_max: int,
     min_match: int,
     limit: int = 100,
+    per_query_video_limit: int = 12,
+    beam_width: int = 400,
 ) -> list[TemporalSequence]:
     grouped: dict[str, list[list[Candidate]]] = {}
     for query_idx, candidates in enumerate(candidate_sets):
@@ -38,27 +40,17 @@ def adaptive_temporal_search(
 
     final_sequences: list[TemporalSequence] = []
     for per_query in grouped.values():
-        for candidates in per_query:
-            candidates.sort(key=lambda c: c.frame_idx)
-        video_sequences: list[list[Candidate]] = []
-        _extend_sequences(per_query, 0, [], delta_frame_max, min_match, video_sequences)
-        for sequence in video_sequences:
+        pruned_per_query = [_prune_video_candidates(candidates, per_query_video_limit) for candidates in per_query]
+        for sequence in _beam_sequences(pruned_per_query, weights, delta_frame_max, min_match, beam_width):
             if len(sequence) < min_match:
                 continue
-            score_sum = 0.0
-            for idx, candidate in enumerate(sequence):
-                weight_idx = candidate.event_index - 1 if candidate.event_index > 0 else idx
-                weight = weights[min(weight_idx, len(weights) - 1)] if weights else 1.0
-                score_sum += weight * candidate.score
-            gap_penalty = _gap_penalty(sequence, delta_frame_max)
-            score = score_sum / len(sequence) - gap_penalty
             first = sequence[0]
             final_sequences.append(
                 TemporalSequence(
                     video_id=first.video_id,
                     video_code=first.video_code,
                     candidates=sequence,
-                    score=score,
+                    score=_sequence_score(sequence, weights, delta_frame_max),
                 )
             )
 
@@ -66,36 +58,67 @@ def adaptive_temporal_search(
     return final_sequences[:limit]
 
 
-def _extend_sequences(
+def _prune_video_candidates(candidates: list[Candidate], limit: int) -> list[Candidate]:
+    if not candidates:
+        return []
+    limit = max(1, limit)
+    top_by_score = sorted(candidates, key=lambda c: (c.score, -c.frame_idx), reverse=True)[:limit]
+    return sorted(top_by_score, key=lambda c: c.frame_idx)
+
+
+def _beam_sequences(
     per_query: list[list[Candidate]],
-    query_idx: int,
-    current: list[Candidate],
+    weights: list[float],
     delta_frame_max: int,
     min_match: int,
-    output: list[list[Candidate]],
-) -> None:
-    if query_idx >= len(per_query):
-        if len(current) >= min_match:
-            output.append(list(current))
-        return
+    beam_width: int,
+) -> list[list[Candidate]]:
+    beam: list[list[Candidate]] = [[]]
+    total_queries = len(per_query)
+    beam_width = max(1, beam_width)
+    for query_idx, candidates in enumerate(per_query):
+        remaining_after = total_queries - query_idx - 1
+        next_beam: list[list[Candidate]] = []
+        for sequence in beam:
+            if len(sequence) + remaining_after >= min_match:
+                next_beam.append(sequence)
 
-    remaining = len(per_query) - query_idx
-    if len(current) + remaining < min_match:
-        return
+            last_frame = sequence[-1].frame_idx if sequence else None
+            used_frame_ids = {candidate.frame_id for candidate in sequence}
+            for candidate in candidates:
+                if candidate.frame_id in used_frame_ids:
+                    continue
+                if last_frame is not None:
+                    if candidate.frame_idx <= last_frame:
+                        continue
+                    if candidate.frame_idx - last_frame > delta_frame_max:
+                        continue
+                next_beam.append([*sequence, candidate])
 
-    # Adaptive skip: allow missing ambiguous sub-events.
-    _extend_sequences(per_query, query_idx + 1, current, delta_frame_max, min_match, output)
+        beam = sorted(
+            next_beam,
+            key=lambda sequence: (
+                _sequence_score(sequence, weights, delta_frame_max),
+                len(sequence),
+                -(sequence[-1].frame_idx if sequence else 10**9),
+            ),
+            reverse=True,
+        )[:beam_width]
+        if not beam:
+            break
 
-    last_frame = current[-1].frame_idx if current else None
-    for candidate in per_query[query_idx][:30]:
-        if last_frame is not None:
-            if candidate.frame_idx <= last_frame:
-                continue
-            if candidate.frame_idx - last_frame > delta_frame_max:
-                continue
-        current.append(candidate)
-        _extend_sequences(per_query, query_idx + 1, current, delta_frame_max, min_match, output)
-        current.pop()
+    return [sequence for sequence in beam if len(sequence) >= min_match]
+
+
+def _sequence_score(sequence: list[Candidate], weights: list[float], delta_frame_max: int) -> float:
+    if not sequence:
+        return 0.0
+    score_sum = 0.0
+    for idx, candidate in enumerate(sequence):
+        weight_idx = candidate.event_index - 1 if candidate.event_index > 0 else idx
+        weight = weights[min(weight_idx, len(weights) - 1)] if weights else 1.0
+        score_sum += weight * candidate.score
+    return score_sum / len(sequence) - _gap_penalty(sequence, delta_frame_max)
 
 
 def _gap_penalty(sequence: list[Candidate], delta_frame_max: int) -> float:

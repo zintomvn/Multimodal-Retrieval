@@ -13,10 +13,11 @@ import type {
   QueryType,
   SearchResponse,
   SubmissionRow,
+  VideoPreviewUrl,
 } from "../types";
 
-// API base URL and GCS
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// Leave the base empty when the frontend is publicly proxied through Vite/ngrok.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const GCS_BUCKET = import.meta.env.VITE_GCS_BUCKET ?? "";
 const GCS_PUBLIC_BASE_URL = (
   import.meta.env.VITE_GCS_PUBLIC_BASE_URL ?? ""
@@ -45,13 +46,13 @@ function gcsMediaUrl(path: string): string | null {
 
 // JSON request
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  // call fetch with the API base URL and the provided path
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  // Prevent ngrok's browser warning page from being returned to API fetches.
+  headers.set("ngrok-skip-browser-warning", "true");
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -104,6 +105,14 @@ export async function runSearch(input: {
 
 export async function getFrameContext(frameId: string): Promise<FrameContext> {
   return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`);
+}
+
+export async function getVideoPreviewUrl(
+  videoId: string,
+): Promise<VideoPreviewUrl> {
+  return requestJson<VideoPreviewUrl>(
+    `/api/media/videos/${encodeURIComponent(videoId)}/preview-url`,
+  );
 }
 
 export async function listFrames(input: {
@@ -246,6 +255,7 @@ export async function uploadFileToGCS(
   const res = await fetch(`${API_BASE}/api/ingest/upload/file/gcs`, {
     method: "POST",
     body: form,
+    headers: { "ngrok-skip-browser-warning": "true" },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;
@@ -263,6 +273,7 @@ export async function uploadFileToMilvus(
   const res = await fetch(`${API_BASE}/api/ingest/upload/file/milvus`, {
     method: "POST",
     body: form,
+    headers: { "ngrok-skip-browser-warning": "true" },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;

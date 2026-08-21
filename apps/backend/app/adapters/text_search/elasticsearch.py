@@ -82,7 +82,11 @@ class ElasticsearchTextSearchClient:
         }
         try:
             if self.client.indices.exists(index=index):
-                self.client.indices.put_mapping(index=index, properties=properties)
+                mapping = self.client.indices.get_mapping(index=index)
+                existing = mapping.get(index, {}).get("mappings", {}).get("properties", {})
+                missing = {name: config for name, config in properties.items() if name not in existing}
+                if missing:
+                    self.client.indices.put_mapping(index=index, properties=missing)
                 return
             self.client.indices.create(
                 index=index,

@@ -268,7 +268,11 @@ def ensure_index(client: Any, index: str) -> None:
         "run_id": {"type": "keyword"},
     }
     if client.indices.exists(index=index):
-        client.indices.put_mapping(index=index, properties=properties)
+        mapping = client.indices.get_mapping(index=index)
+        existing = mapping.get(index, {}).get("mappings", {}).get("properties", {})
+        missing = {name: config for name, config in properties.items() if name not in existing}
+        if missing:
+            client.indices.put_mapping(index=index, properties=missing)
         return
     client.indices.create(
         index=index,

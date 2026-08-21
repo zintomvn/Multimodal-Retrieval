@@ -101,6 +101,13 @@ export interface FrameContext {
   frames: ContextFrame[];
 }
 
+export interface VideoPreviewUrl {
+  video_id: string;
+  url: string;
+  direct: boolean;
+  provider: string;
+}
+
 export interface MediaFrame {
   id: string;
   keyframe_id: string;

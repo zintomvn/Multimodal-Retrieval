@@ -30,7 +30,7 @@ class SearchRequest(BaseModel):
     query_name: str | None = None
     query_type: QueryType = "KIS"
     query_text: str = Field(min_length=1)
-    top_k: int = Field(default=100, ge=1, le=1000)
+    top_k: int = Field(default=50, ge=1, le=1000)
     profile: str = "competition_default"
     options: SearchOptions = Field(default_factory=SearchOptions)
 

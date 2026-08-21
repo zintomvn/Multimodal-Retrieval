@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from app.adapters.vector_db.base import VectorHit
 
 
@@ -10,6 +12,8 @@ class MilvusVectorSearchClient:
         self.uri = uri
         self.token = token
         self.client = None
+        self.connect_timeout_s = float(os.getenv("MILVUS_CONNECT_TIMEOUT", "3.0"))
+        self.search_timeout_s = float(os.getenv("MILVUS_SEARCH_TIMEOUT", "4.0"))
 
     def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
         self._ensure_client()
@@ -49,6 +53,7 @@ class MilvusVectorSearchClient:
                 "source_embedding_uri",
                 "source_map_uri",
             ],
+            timeout=self.search_timeout_s,
         )
         hits: list[VectorHit] = []
         for hit in raw_hits[0] if raw_hits else []:
@@ -94,6 +99,7 @@ class MilvusVectorSearchClient:
         kwargs: dict = {"uri": self.uri}
         if self.token:
             kwargs["token"] = self.token
+        kwargs["timeout"] = self.connect_timeout_s
         self.client = MilvusClient(**kwargs)
 
     def _to_filter_expr(self, filters: dict) -> str:
