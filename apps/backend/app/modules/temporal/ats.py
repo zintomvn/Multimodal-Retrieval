@@ -13,6 +13,9 @@ class Candidate:
     text: str
     event_index: int = 0
     event_query: str = ""
+    visual_score: float = 0.0
+    text_score: float = 0.0
+    rrf_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ def adaptive_temporal_search(
     limit: int = 100,
     per_query_video_limit: int = 12,
     beam_width: int = 400,
+    prefer_full_sequences: bool = True,
 ) -> list[TemporalSequence]:
     grouped: dict[str, list[list[Candidate]]] = {}
     for query_idx, candidates in enumerate(candidate_sets):
@@ -53,6 +57,11 @@ def adaptive_temporal_search(
                     score=_sequence_score(sequence, weights, delta_frame_max),
                 )
             )
+
+    if prefer_full_sequences:
+        full_sequences = [item for item in final_sequences if len(item.candidates) == len(candidate_sets)]
+        if full_sequences:
+            final_sequences = full_sequences
 
     final_sequences.sort(key=lambda item: item.score, reverse=True)
     return final_sequences[:limit]
@@ -118,12 +127,5 @@ def _sequence_score(sequence: list[Candidate], weights: list[float], delta_frame
         weight_idx = candidate.event_index - 1 if candidate.event_index > 0 else idx
         weight = weights[min(weight_idx, len(weights) - 1)] if weights else 1.0
         score_sum += weight * candidate.score
-    return score_sum / len(sequence) - _gap_penalty(sequence, delta_frame_max)
-
-
-def _gap_penalty(sequence: list[Candidate], delta_frame_max: int) -> float:
-    if len(sequence) < 2 or delta_frame_max <= 0:
-        return 0.0
-    gaps = [sequence[i + 1].frame_idx - sequence[i].frame_idx for i in range(len(sequence) - 1)]
-    avg_gap = sum(gaps) / len(gaps)
-    return min(0.15, avg_gap / delta_frame_max * 0.08)
+    # AIthena ATS Eq. (3): weighted average over temporally valid matched events.
+    return score_sum / len(sequence)

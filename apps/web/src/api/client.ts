@@ -95,7 +95,7 @@ export async function runSearch(input: {
         use_query_expansion: input.useExpansion,
         use_agent_query_planning: input.useAgentPlanning,
         use_metadata: input.useMetadata,
-        use_reranker: false,
+        use_reranker: true,
         strict_hybrid: false,
         delta_t_max_ms: 180000,
       },

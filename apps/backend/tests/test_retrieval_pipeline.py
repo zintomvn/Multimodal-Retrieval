@@ -420,6 +420,7 @@ def test_visual_rrf_fuses_clip_and_siglip_ranked_lists(tmp_path: Path) -> None:
 def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_LLM_PROFILE", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path, use_real_planner=True)
 
     response = service.search(
@@ -437,7 +438,7 @@ def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path
     assert response.normalized_query["variants"][:2] == ["person wearing a red shirt", "nguoi ao do"]
     agent_plan = response.normalized_query["agent_query_plan"]
     assert agent_plan["source"] == "fallback"
-    assert "missing GROQ_API_KEY" in agent_plan["error"]
+    assert "missing OPENAI_API_KEY" in agent_plan["error"]
 
     db.close()
 
@@ -560,6 +561,56 @@ def test_agent_planner_promotes_english_rewrite_when_agent_returns_raw_vietnames
         "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species",
         query,
     ]
+
+
+def test_agent_planner_extracts_evidence_driven_visual_and_text_weights() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - validates plan normalization.
+        raw_plan={
+            "summary": "find a person speaking the phrase red bicycle",
+            "variants": [{"text": "person speaking the phrase red bicycle"}],
+            "retrieval_strategy": {
+                "clauses": [
+                    {"text": "a person is visible", "evidence": "visual", "importance": 0.3},
+                    {"text": "the spoken phrase red bicycle", "evidence": "text", "importance": 0.9},
+                ],
+                "weights": {"visual": 2, "text": 8},
+                "rationale": "The exact spoken phrase needs ASR evidence.",
+            },
+        },
+        query="find the person saying red bicycle",
+        query_type="KIS",
+        max_variants=3,
+    )
+
+    assert result.retrieval_weights == {"visual": 0.2, "text": 0.8}
+    strategy = result.decomposition["retrieval_strategy"]
+    assert strategy["clauses"][1]["evidence"] == "text"
+    assert strategy["rationale"] == "The exact spoken phrase needs ASR evidence."
+
+
+def test_planner_fallback_routes_benchmark_style_fact_queries_to_text_and_trake_actions_to_visual() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    fact_plan = planner.plan(
+        "Hỏi tên xã của chương trình từ thiện tại Khánh Hòa vào năm 2024 là gì?",
+        "QA",
+        5,
+    )
+    trake_plan = planner.plan(
+        "E1: The first moment a mushroom is cut. E2: The first moment a pan is placed on the stove.",
+        "TRAKE",
+        5,
+    )
+
+    assert fact_plan.retrieval_weight_source == "heuristic"
+    assert fact_plan.retrieval_weights["text"] > fact_plan.retrieval_weights["visual"]
+    assert trake_plan.retrieval_weights["visual"] > trake_plan.retrieval_weights["text"]
+    assert all(
+        event["retrieval_weights"]["visual"] > event["retrieval_weights"]["text"]
+        for event in trake_plan.temporal_event_plans
+    )
 
 
 def test_agent_fallback_splits_labeled_trake_events() -> None:

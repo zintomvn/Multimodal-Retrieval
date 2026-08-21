@@ -245,25 +245,28 @@ Note fix:
     Video có thể nhấn play xem video, tối ưu backend cho phần hiện UI nhanh hơn 
     Bấm button Video hiện ra thì có play video và có cho xem frame bằng button tiến hoặc lùi của video đó để xem frame tiếp theo hoặc frame trước đó và cho thêm vào submission
     Hiện điểm từng thành phần của frame đó (visual, text, asr) trong khi search 
-    
     + export file submission csv cho câu thì hiện nút kế bên nút export csv x
     thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
+    + Phần TRAKE lọc frame trùng ra x
 
-    + Phần TRAKE lọc frame trùng ra, 
-    + phần cell reasoning cách ra một chút cho với kết quả của search
+
+    + phần cell reasoning cách ra một chút cho với kết quả của search 
     + Chỉnh lại phần backend 
     + Tạo text embedding, tách chunk? -> tải lên zilliz
 
-    + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn
-    + CHỉnh 
+
+    + Chỉnh lại có thể sửa cho phần nào nhiều hơn - dựa vào prompt con người x
+    + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn x
+    + Chỉnh lại algorithm của TRAKE theo visual nhiều hơn - Dùng prompt thêm để tối ưu x 
+    + Câu nào ASR chỉnh lại reasoning
+    + Phần TRAKE lọc frame trùng ra 
+    + Thêm phần video và TRAKE để search đúng hơn
+    + 
 
 
 Testing:
 - Chạy search những câu của ban tổ chức
-
 - 
-
-
 
 Note run: 
 - elasticsearch: chạy script chạy data lên 

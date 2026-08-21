@@ -48,6 +48,12 @@ VIETNAMESE_SIGNAL_TOKENS = {
     "vai",
     "vu",
 }
+TEXT_EVIDENCE_RE = re.compile(
+    r"\b(?:hoi|cau hoi|ten|la gi|cau tho|tieu de|cong thuc|loi noi|phat bieu|"
+    r"duoc san xuat|nam\s+\d{4}|chuong trinh|cau lac bo|dai hoc|tinh|xa|dia phuong|"
+    r"nghien cuu|mau tin|gioi thieu|nhiem vu|thong tin|noi dung)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -57,6 +63,9 @@ class QueryPlanningResult:
     summary: str = ""
     variants: list[str] = field(default_factory=list)
     temporal_events: list[str] = field(default_factory=list)
+    retrieval_weights: dict[str, float] = field(default_factory=dict)
+    retrieval_weight_source: str = "profile"
+    temporal_event_plans: list[dict[str, Any]] = field(default_factory=list)
     decomposition: dict[str, Any] = field(default_factory=dict)
     agent_metadata: dict[str, Any] = field(default_factory=dict)
     source: str = "fallback"
@@ -71,6 +80,9 @@ class QueryPlanningResult:
             "decomposition": self.decomposition,
             "temporal_events": self.temporal_events,
             "variants": self.variants,
+            "retrieval_weights": self.retrieval_weights,
+            "retrieval_weight_source": self.retrieval_weight_source,
+            "temporal_event_plans": self.temporal_event_plans,
             "agent_metadata": self.agent_metadata,
         }
         if self.error:
@@ -91,6 +103,7 @@ class AgentQueryPlanner:
         self.config_path = config_path
         self.agent_config = config.get("llm_query_planning", {}) if isinstance(config, dict) else {}
         self._agents: dict[str, Any] = {}
+        self._models: dict[str, Any] = {}
 
     @classmethod
     def from_config(cls, path: Path) -> "AgentQueryPlanner":
@@ -129,7 +142,6 @@ class AgentQueryPlanner:
             raise
 
     def _invoke_agent(self, query: str, query_type: str, max_variants: int) -> Any:
-        agent = self._get_agent()
         user_payload = {
             "query_text": query,
             "query_type": query_type,
@@ -149,6 +161,17 @@ class AgentQueryPlanner:
             },
             "recursion_limit": max(8, int(self.agent_config.get("max_agent_iterations", 4)) * 4),
         }
+        if self._execution_mode() == "direct":
+            planner_prompt = self._planner_system_prompt()
+            return self._get_model().invoke(
+                [
+                    {"role": "system", "content": planner_prompt},
+                    {"role": "user", "content": json.dumps(user_payload)},
+                ],
+                config=runnable_config,
+            )
+
+        agent = self._get_agent()
         trace_enabled = self._configure_langsmith()
         try:
             import langsmith as ls  # type: ignore
@@ -165,7 +188,7 @@ class AgentQueryPlanner:
 
         from deepagents import create_deep_agent  # type: ignore
 
-        llm = self._create_chat_model()
+        llm = self._get_model()
         agents = self.agent_config.get("agents", {}) if isinstance(self.agent_config.get("agents"), dict) else {}
         planner_cfg = agents.get("planner", {}) if isinstance(agents.get("planner"), dict) else {}
         subagents = []
@@ -191,6 +214,17 @@ class AgentQueryPlanner:
         )
         return self._agents[active_profile]
 
+    def _get_model(self) -> Any:
+        active_profile = self._active_profile_name()
+        if active_profile not in self._models:
+            self._models[active_profile] = self._create_chat_model()
+        return self._models[active_profile]
+
+    def _planner_system_prompt(self) -> str:
+        agents = self.agent_config.get("agents", {})
+        planner_cfg = agents.get("planner", {}) if isinstance(agents, dict) and isinstance(agents.get("planner"), dict) else {}
+        return str(planner_cfg.get("system_prompt", "")).strip()
+
     def _create_chat_model(self) -> Any:
         provider = self._provider()
         if provider == "chatgroq":
@@ -200,6 +234,9 @@ class AgentQueryPlanner:
             reasoning_format = str(self._profile_value("reasoning_format", "")).strip()
             if reasoning_format:
                 model_kwargs["reasoning_format"] = reasoning_format
+            reasoning_effort = str(self._profile_value("reasoning_effort", "")).strip()
+            if reasoning_effort:
+                model_kwargs["reasoning_effort"] = reasoning_effort
             return ChatGroq(**model_kwargs)
         if provider == "openai":
             from langchain_openai import ChatOpenAI  # type: ignore
@@ -280,6 +317,7 @@ class AgentQueryPlanner:
         search_factors = raw_plan.get("search_factors")
         if not isinstance(search_factors, dict):
             search_factors = {}
+        retrieval_strategy = self._extract_retrieval_strategy(raw_plan, query, query_type)
 
         temporal_events = self._extract_temporal_events(raw_plan, query)
         variants = self._extract_variants(raw_plan, query, max_variants)
@@ -287,6 +325,7 @@ class AgentQueryPlanner:
             variants = self._dedupe(variants + temporal_events + self._factor_variants(search_factors))[:max_variants]
         variants = self._prefer_english_values(query, variants, max_variants)
         temporal_events = self._prefer_english_temporal_events(query, temporal_events, self._max_temporal_events())
+        temporal_event_plans = self._extract_temporal_event_plans(raw_plan, temporal_events, query_type)
         summary = str(raw_plan.get("summary") or "")
         summary_rewrite = self._english_retrieval_rewrite(query)
         if summary_rewrite:
@@ -303,12 +342,17 @@ class AgentQueryPlanner:
             summary=summary,
             variants=variants,
             temporal_events=temporal_events,
+            retrieval_weights=retrieval_strategy["weights"],
+            retrieval_weight_source=retrieval_strategy["weight_source"],
+            temporal_event_plans=temporal_event_plans,
             decomposition={
                 "search_factors": search_factors,
+                "retrieval_strategy": retrieval_strategy,
+                "temporal_event_plans": temporal_event_plans,
                 "raw_temporal_events": raw_plan.get("temporal_events") if isinstance(raw_plan.get("temporal_events"), list) else [],
             },
             agent_metadata=metadata,
-            source="langchain_deep_agent",
+            source="langchain_direct_llm" if self._execution_mode() == "direct" else "langchain_deep_agent",
         )
 
     def _fallback_plan(self, query: str, query_type: str, max_variants: int, error: str | None = None) -> QueryPlanningResult:
@@ -319,12 +363,20 @@ class AgentQueryPlanner:
             max_values=self._max_temporal_events(),
         )
         tokens = [token.lower() for token in re.findall(r"[\w]+", query, flags=re.UNICODE) if len(token) > 1]
+        retrieval_strategy = self.infer_retrieval_strategy(query, query_type)
+        temporal_event_plans = [
+            self._heuristic_temporal_event_plan(event, index, query_type)
+            for index, event in enumerate(temporal_events, start=1)
+        ]
         return QueryPlanningResult(
             language="auto",
             intent=query_type,
             summary=english_query or query,
             variants=self._dedupe([item for item in [english_query, query] if item])[:max_variants],
             temporal_events=temporal_events,
+            retrieval_weights=retrieval_strategy["weights"],
+            retrieval_weight_source=retrieval_strategy["weight_source"],
+            temporal_event_plans=temporal_event_plans,
             decomposition={
                 "search_factors": {
                     "subjects": [],
@@ -337,6 +389,8 @@ class AgentQueryPlanner:
                     "negative_constraints": [],
                     "tokens": tokens,
                 },
+                "retrieval_strategy": retrieval_strategy,
+                "temporal_event_plans": temporal_event_plans,
                 "raw_temporal_events": [],
             },
             agent_metadata=self._agent_metadata(),
@@ -356,6 +410,144 @@ class AgentQueryPlanner:
         if not values:
             values.append(query)
         return self._dedupe(values)[:max_variants]
+
+    def _extract_retrieval_strategy(self, raw_plan: dict[str, Any], query: str, query_type: str) -> dict[str, Any]:
+        raw_strategy = raw_plan.get("retrieval_strategy")
+        strategy = raw_strategy if isinstance(raw_strategy, dict) else {}
+        raw_weights = strategy.get("weights")
+        if not isinstance(raw_weights, dict):
+            raw_weights = raw_plan.get("retrieval_weights")
+        weights = self._normalize_retrieval_weights(raw_weights)
+        fallback_strategy = self.infer_retrieval_strategy(query, query_type)
+        weight_source = "agent" if weights else fallback_strategy["weight_source"]
+        if not weights:
+            weights = fallback_strategy["weights"]
+
+        clauses: list[dict[str, Any]] = []
+        raw_clauses = strategy.get("clauses")
+        if isinstance(raw_clauses, list):
+            for item in raw_clauses[:12]:
+                if not isinstance(item, dict):
+                    continue
+                text = " ".join(str(item.get("text") or "").split())
+                evidence = str(item.get("evidence") or "both").strip().lower()
+                if evidence not in {"visual", "text", "both"}:
+                    evidence = "both"
+                try:
+                    importance = float(item.get("importance", 0.5))
+                except (TypeError, ValueError):
+                    importance = 0.5
+                if text:
+                    clauses.append(
+                        {
+                            "text": text,
+                            "evidence": evidence,
+                            "importance": round(min(1.0, max(0.0, importance)), 4),
+                        }
+                    )
+
+        return {
+            "clauses": clauses or fallback_strategy["clauses"],
+            "weights": weights,
+            "rationale": " ".join(str(strategy.get("rationale") or "").split())[:400]
+            or fallback_strategy["rationale"],
+            "weight_source": weight_source,
+        }
+
+    def _extract_temporal_event_plans(
+        self,
+        raw_plan: dict[str, Any],
+        temporal_events: list[str],
+        query_type: str,
+    ) -> list[dict[str, Any]]:
+        raw_events = raw_plan.get("temporal_events")
+        raw_event_items = raw_events if isinstance(raw_events, list) else []
+        plans: list[dict[str, Any]] = []
+        for index, event_query in enumerate(temporal_events, start=1):
+            raw_event = raw_event_items[index - 1] if index - 1 < len(raw_event_items) else {}
+            raw_event = raw_event if isinstance(raw_event, dict) else {}
+            raw_weights = raw_event.get("retrieval_weights")
+            if not isinstance(raw_weights, dict):
+                raw_event_strategy = raw_event.get("retrieval_strategy")
+                raw_weights = raw_event_strategy.get("weights") if isinstance(raw_event_strategy, dict) else None
+            weights = self._normalize_retrieval_weights(raw_weights)
+            fallback = self._heuristic_temporal_event_plan(event_query, index, query_type)
+            try:
+                importance = float(raw_event.get("importance", raw_event.get("weight", 1.0)))
+            except (TypeError, ValueError):
+                importance = 1.0
+            plans.append(
+                {
+                    "event_index": index,
+                    "query": event_query,
+                    "importance": round(min(1.0, max(0.0, importance)), 4),
+                    "retrieval_weights": weights or fallback["retrieval_weights"],
+                    "retrieval_weight_source": "agent" if weights else fallback["retrieval_weight_source"],
+                }
+            )
+        return plans
+
+    def _heuristic_temporal_event_plan(self, query: str, index: int, query_type: str) -> dict[str, Any]:
+        strategy = self.infer_retrieval_strategy(query, query_type)
+        return {
+            "event_index": index,
+            "query": query,
+            "importance": 1.0,
+            "retrieval_weights": strategy["weights"],
+            "retrieval_weight_source": strategy["weight_source"],
+        }
+
+    def infer_retrieval_strategy(self, query: str, query_type: str) -> dict[str, Any]:
+        folded = self._fold_for_matching(query)
+        text_evidence = len(TEXT_EVIDENCE_RE.findall(folded))
+        if re.search(r"[\"'\u201c\u201d]", query):
+            text_evidence += 1
+        if re.search(r"\b(?:19|20)\d{2}\b", folded):
+            text_evidence += 1
+        if re.search(r"\b[a-z]{2,}(?:\s+[a-z]{2,}){1,}\b", folded) and any(
+            marker in folded for marker in ("noi", "hoi", "ten", "cau tho", "tieu de", "cong thuc")
+        ):
+            text_evidence += 1
+
+        if query_type == "TRAKE" and text_evidence < 2:
+            weights = {"visual": 0.78, "text": 0.22}
+            rationale = "Ordered actions and object-contact moments are primarily verified from visual keyframes."
+        elif text_evidence >= 2:
+            weights = {"visual": 0.28, "text": 0.72}
+            rationale = "Named facts, speech, titles, dates, or quoted wording are best supported by ASR/metadata."
+        elif text_evidence == 1:
+            weights = {"visual": 0.45, "text": 0.55}
+            rationale = "The query includes a lexical or narrated fact, so ASR/metadata receives a slight priority."
+        else:
+            weights = {"visual": 0.67, "text": 0.33}
+            rationale = "The query is primarily an observable scene, action, or appearance description."
+
+        clauses = [
+            {
+                "text": "lexical, spoken, or named fact evidence" if text_evidence else "observable scene and action evidence",
+                "evidence": "text" if text_evidence else "visual",
+                "importance": 1.0,
+            }
+        ]
+        return {
+            "clauses": clauses,
+            "weights": weights,
+            "rationale": rationale,
+            "weight_source": "heuristic",
+        }
+
+    def _normalize_retrieval_weights(self, raw_weights: Any) -> dict[str, float]:
+        if not isinstance(raw_weights, dict):
+            return {}
+        try:
+            visual = max(0.0, float(raw_weights.get("visual")))
+            text = max(0.0, float(raw_weights.get("text")))
+        except (TypeError, ValueError):
+            return {}
+        total = visual + text
+        if total <= 0:
+            return {}
+        return {"visual": round(visual / total, 6), "text": round(text / total, 6)}
 
     def _prefer_english_values(self, query: str, values: list[str], max_values: int) -> list[str]:
         deduped = self._dedupe(values)
@@ -568,6 +760,10 @@ class AgentQueryPlanner:
         if configured:
             return configured
         return "legacy"
+
+    def _execution_mode(self) -> str:
+        mode = str(self.agent_config.get("execution_mode", "deep_agent")).strip().lower()
+        return mode if mode in {"direct", "deep_agent"} else "deep_agent"
 
     def _profile_config(self) -> dict[str, Any]:
         profiles = self.agent_config.get("profiles")

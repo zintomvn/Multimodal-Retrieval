@@ -26,6 +26,9 @@ export interface SearchResult {
     video_code: string;
     timestamp_ms?: number | null;
     score: number;
+    visual_score?: number;
+    text_score?: number;
+    rrf_score?: number;
     order_index?: number;
     event_index?: number;
     event_query?: string;
@@ -52,6 +55,15 @@ export interface SearchResponse {
     temporal_events?: string[];
     temporal_event_count?: number;
     temporal_event_source?: string;
+    retrieval_weights?: { visual?: number; text?: number };
+    retrieval_weight_source?: string;
+    temporal_event_plans?: Array<{
+      event_index?: number;
+      query?: string;
+      importance?: number;
+      retrieval_weights?: { visual?: number; text?: number };
+      retrieval_weight_source?: string;
+    }>;
     raw_temporal_events?: string[];
     profile?: string;
     latency_ms?: number;
@@ -62,10 +74,15 @@ export interface SearchResponse {
       summary?: string;
       decomposition?: {
         search_factors?: Record<string, unknown>;
+        retrieval_strategy?: Record<string, unknown>;
+        temporal_event_plans?: Array<Record<string, unknown>>;
         raw_temporal_events?: unknown[];
       };
       temporal_events?: string[];
       variants?: string[];
+      retrieval_weights?: { visual?: number; text?: number };
+      retrieval_weight_source?: string;
+      temporal_event_plans?: Array<Record<string, unknown>>;
       agent_metadata?: {
         enabled?: boolean;
         active_profile?: string;

@@ -633,6 +633,8 @@ function makeTraceFromResponse(
     metadata?.langsmith_trace_enabled && metadata.langsmith_api_key_configured
       ? "LangSmith on"
       : "LangSmith off";
+  const retrievalWeights = plan?.retrieval_weights ?? normalized.retrieval_weights;
+  const weightSource = plan?.retrieval_weight_source ?? normalized.retrieval_weight_source ?? "profile";
 
   return [
     {
@@ -652,6 +654,17 @@ function makeTraceFromResponse(
       detail: summarizeFactors(plan?.decomposition?.search_factors),
       status: traceStatus,
       raw: plan?.decomposition?.search_factors ?? null,
+    },
+    {
+      title: "Route modalities",
+      detail: retrievalWeights
+        ? `Visual ${formatScore(retrievalWeights.visual ?? 0)} | Text ${formatScore(retrievalWeights.text ?? 0)} | ${weightSource}`
+        : "Using retrieval profile weights.",
+      status: traceStatus,
+      raw: plan?.decomposition?.retrieval_strategy ?? {
+        weights: retrievalWeights,
+        source: weightSource,
+      },
     },
     {
       title: "Split events",
@@ -759,6 +772,33 @@ function ScoreBreakdown({
           {hit.snippet && <em>{hit.snippet}</em>}
         </span>
       )}
+    </div>
+  );
+}
+
+function TrakeFrameScores({
+  frame,
+}: {
+  frame: SearchResult["sequence_frames"][number];
+}) {
+  return (
+    <div className="score-breakdown compact trake-frame-scores">
+      <span className="score-pill visual">
+        <small>Visual</small>
+        <strong>{formatScore(frame.visual_score ?? 0)}</strong>
+      </span>
+      <span className="score-pill text">
+        <small>Text</small>
+        <strong>{formatScore(frame.text_score ?? 0)}</strong>
+      </span>
+      <span className="score-pill rrf">
+        <small>RRF</small>
+        <strong>{formatScore(frame.rrf_score ?? 0)}</strong>
+      </span>
+      <span className="score-pill final">
+        <small>Event</small>
+        <strong>{formatScore(frame.score)}</strong>
+      </span>
     </div>
   );
 }
@@ -875,7 +915,6 @@ function TrakeRows({
   return (
     <div className="trake-board" aria-label="TRAKE ordered frame lanes">
       {lanes.map((lane) => {
-        const seenLaneFrames = new Set<string>();
         const laneCells = results.flatMap((result, resultIndex) => {
           const sequenceFrame =
             result.sequence_frames.find(
@@ -888,16 +927,11 @@ function TrakeRows({
           const candidates = sequenceFrame
             ? sequenceImageCandidates(sequenceFrame, result)
             : resultImageCandidates(result);
-          const dedupeKey =
-            frameIdx === null
-              ? ""
-              : `${sequenceFrame?.video_code ?? result.video_code}:${frameIdx}`;
-          if (dedupeKey && seenLaneFrames.has(dedupeKey)) return [];
-          if (dedupeKey) seenLaneFrames.add(dedupeKey);
           return [
             {
               result,
               resultIndex,
+              sequenceFrame,
               frameIdx,
               timestampMs,
               candidates,
@@ -917,6 +951,7 @@ function TrakeRows({
               ({
                 result,
                 resultIndex,
+                sequenceFrame,
                 frameIdx,
                 timestampMs,
                 candidates,
@@ -941,7 +976,11 @@ function TrakeRows({
                     <small>
                       F{frameIdx ?? "N/A"} | {timestampLabel(timestampMs)}
                     </small>
-                    <ScoreBreakdown result={result} compact />
+                    {sequenceFrame ? (
+                      <TrakeFrameScores frame={sequenceFrame} />
+                    ) : (
+                      <ScoreBreakdown result={result} compact />
+                    )}
                     <div className="trake-cell-actions">
                       <button
                         type="button"
@@ -1057,7 +1096,7 @@ export function App() {
   const [queryName, setQueryName] = useState(queryNameByType.KIS);
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
   const [topK, setTopK] = useState(50);
-  const [useExpansion, setUseExpansion] = useState(false);
+  const [useExpansion, setUseExpansion] = useState(true);
   const [useAgentPlanning, setUseAgentPlanning] = useState(true);
   const [useMetadata, setUseMetadata] = useState(true);
   const [weights, setWeights] = useState({
@@ -1113,6 +1152,7 @@ export function App() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
 
   // Effects
   useEffect(() => {
@@ -1135,6 +1175,10 @@ export function App() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
+
+  useEffect(() => {
+    videoPreviewRef.current?.pause();
+  }, [videoPreview?.url]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2250,13 +2294,14 @@ export function App() {
               </button>
             </div>
             <video
+              ref={videoPreviewRef}
               className="video-preview-player"
               src={videoPreview.url}
               poster={videoPreview.posterUrl ?? undefined}
               controls
-              autoPlay
               preload="metadata"
               playsInline
+              onLoadedMetadata={(event) => event.currentTarget.pause()}
             />
             <div className="video-frame-toolbar">
               <button

@@ -1,6 +1,7 @@
 llm_query_planning:
   enabled: true
-  active_profile: groq_gpt_oss_120b
+  active_profile: openai_gpt4o
+  execution_mode: direct
   max_agent_iterations: 4
   max_variants_default: 5
   max_temporal_events: 8
@@ -11,10 +12,11 @@ llm_query_planning:
       model: openai/gpt-oss-120b
       api_key_env: GROQ_API_KEY
       temperature: 0.1
-      max_tokens: 768
+      max_tokens: 2048
       timeout_s: 30
       max_retries: 2
       reasoning_format: parsed
+      reasoning_effort: low
       description: Default fast text-only query planning profile.
     openai_gpt4o:
       provider: openai
@@ -59,11 +61,24 @@ llm_query_planning:
             "time_cues": ["before, after, start, end, duration"],
             "negative_constraints": ["things that must be absent"]
           },
+          "retrieval_strategy": {
+            "clauses": [
+              {
+                "text": "an atomic requirement from the query",
+                "evidence": "visual|text|both",
+                "importance": 0.0
+              }
+            ],
+            "weights": {"visual": 0.0, "text": 0.0},
+            "rationale": "short evidence-based explanation"
+          },
           "temporal_events": [
             {
               "order": 1,
               "query": "standalone event query for search",
-              "must_have": ["critical factors for this event"]
+              "must_have": ["critical factors for this event"],
+              "importance": 1.0,
+              "retrieval_weights": {"visual": 0.0, "text": 0.0}
             }
           ],
           "variants": [
@@ -76,6 +91,10 @@ llm_query_planning:
 
         Rules:
         - Preserve the original meaning. Do not invent entities, brands, or text.
+        - First split the query into atomic requirements. Classify each requirement as `visual` when it is primarily visible in a frame (person, object, action, colour, layout, scene), `text` when it depends on spoken/narrated words, ASR, OCR, a quoted phrase, a name, number, or other lexical fact, and `both` when both sources are needed.
+        - Infer `retrieval_strategy.weights` from those clauses, not from a fixed default. `visual` controls vector/image retrieval and `text` controls caption/ASR/OCR/metadata retrieval. The two weights must be numeric, non-negative, and sum to exactly 1.0.
+        - Give text substantial or dominant weight for speech, narration, dialogue, quoted/on-screen text, names, numbers, or facts unlikely to be inferred from pixels alone. Give visual substantial or dominant weight for appearance, actions, objects, colours, spatial relations, and scenes. For mixed queries, balance the weights according to the importance of the clauses.
+        - Include every important clause in `retrieval_strategy.clauses`, assign its importance from 0.0 to 1.0, and state a short rationale. Do not make visual dominant merely because this is video retrieval.
         - Write `summary`, `temporal_events.query`, and semantic/metadata variants in English, even when the user query is Vietnamese.
         - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose variants.
         - Prefer concrete visual words that may appear in captions, OCR, and object tags.
@@ -84,15 +103,17 @@ llm_query_planning:
         - For simple KIS/QA queries, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
         - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
+        - For every temporal event, set `importance` from 0.0 to 1.0 based on how diagnostic that event is for identifying the sequence, and infer its own `retrieval_weights` using the same visual/text evidence rules. The event weights must sum to 1.0. Cooking actions, body motion, object contact, and spatial changes are usually visual; spoken facts, dialogue, named places, titles, numbers, and quoted phrases are text-heavy.
     query_decomposition:
       name: query_decomposition_agent
       description: Extracts visual, textual, object, scene, and temporal factors from the query.
       system_prompt: |
         You decompose natural-language video retrieval queries into observable
-        search factors. Focus on what can be found in keyframes: subjects, actions,
-        objects, colors, clothing, scene, OCR text, and temporal ordering. Keep
-        ambiguous details as optional factors, and do not infer facts not stated
-        by the user.
+        search factors. For each factor, decide whether its evidence is visual,
+        text (ASR/OCR/caption/metadata), or both. Focus on what can be found in
+        keyframes: subjects, actions, objects, colors, clothing, scene, OCR text,
+        spoken words, and temporal ordering. Keep ambiguous details as optional
+        factors, and do not infer facts not stated by the user.
     query_expansion:
       name: query_expansion_agent
       description: Generates concise search rewrites from decomposed factors.

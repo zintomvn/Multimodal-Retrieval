@@ -236,6 +236,17 @@ class RetrievalService:
                 variants = self._expand_query_variants(query_text, max_variants=max_variants)
         temporal_parse = self._parse_temporal_events(query_text)
         temporal_events, temporal_source = self._resolve_temporal_events(request, agent_plan, temporal_parse)
+        retrieval_weights, retrieval_weight_source = self._resolve_retrieval_weights(
+            profile,
+            agent_plan,
+            query_text,
+            request.query_type,
+        )
+        temporal_event_plans = (
+            self._resolve_temporal_event_plans(temporal_events, agent_plan, request.query_type)
+            if request.query_type == "TRAKE"
+            else []
+        )
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
             "variants": variants,
@@ -243,6 +254,9 @@ class RetrievalService:
             "temporal_events": temporal_events,
             "temporal_event_count": len(temporal_events),
             "temporal_event_source": temporal_source,
+            "temporal_event_plans": temporal_event_plans,
+            "retrieval_weights": retrieval_weights,
+            "retrieval_weight_source": retrieval_weight_source,
             "raw_temporal_events": temporal_parse.events,
             "profile": request.profile,
             "filters": self._normalized_filter_options(request.options),
@@ -250,6 +264,83 @@ class RetrievalService:
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
         return normalized
+
+    def _resolve_retrieval_weights(
+        self,
+        profile: dict[str, Any],
+        agent_plan: Any,
+        query_text: str,
+        query_type: str,
+    ) -> tuple[dict[str, float], str]:
+        agent_weights = getattr(agent_plan, "retrieval_weights", {}) if agent_plan else {}
+        normalized_agent_weights = self._normalize_retrieval_weights(agent_weights)
+        if normalized_agent_weights:
+            source = str(getattr(agent_plan, "retrieval_weight_source", "agent") or "agent")
+            return normalized_agent_weights, source
+
+        heuristic = self._infer_retrieval_strategy(query_text, query_type)
+        heuristic_weights = self._normalize_retrieval_weights(heuristic.get("weights"))
+        if heuristic_weights:
+            return heuristic_weights, "heuristic"
+
+        profile_weights = {
+            "visual": float(profile.get("semantic_weight", 0.6)),
+            "text": float(profile.get("metadata_weight", profile.get("text_weight", 0.25))),
+        }
+        return self._normalize_retrieval_weights(profile_weights) or {"visual": 0.5, "text": 0.5}, "profile"
+
+    def _resolve_temporal_event_plans(
+        self,
+        events: list[str],
+        agent_plan: Any,
+        query_type: str,
+    ) -> list[dict[str, Any]]:
+        raw_plans = getattr(agent_plan, "temporal_event_plans", []) if agent_plan else []
+        raw_plans = raw_plans if isinstance(raw_plans, list) else []
+        plans: list[dict[str, Any]] = []
+        for index, event_query in enumerate(events, start=1):
+            raw_plan = raw_plans[index - 1] if index - 1 < len(raw_plans) else {}
+            raw_plan = raw_plan if isinstance(raw_plan, dict) else {}
+            weights = self._normalize_retrieval_weights(raw_plan.get("retrieval_weights"))
+            if not weights:
+                heuristic = self._infer_retrieval_strategy(event_query, query_type)
+                weights = self._normalize_retrieval_weights(heuristic.get("weights")) or {"visual": 0.5, "text": 0.5}
+            try:
+                importance = float(raw_plan.get("importance", 1.0))
+            except (TypeError, ValueError):
+                importance = 1.0
+            plans.append(
+                {
+                    "event_index": index,
+                    "query": event_query,
+                    "importance": max(0.0, importance),
+                    "retrieval_weights": weights,
+                    "retrieval_weight_source": str(raw_plan.get("retrieval_weight_source") or "heuristic"),
+                }
+            )
+        return plans
+
+    @staticmethod
+    def _normalize_retrieval_weights(raw_weights: Any) -> dict[str, float]:
+        if not isinstance(raw_weights, dict):
+            return {}
+        try:
+            visual = max(0.0, float(raw_weights.get("visual")))
+            text = max(0.0, float(raw_weights.get("text")))
+        except (TypeError, ValueError):
+            return {}
+        total = visual + text
+        if total <= 0:
+            return {}
+        return {"visual": visual / total, "text": text / total}
+
+    def _infer_retrieval_strategy(self, query_text: str, query_type: str) -> dict[str, Any]:
+        infer = getattr(self.query_planner, "infer_retrieval_strategy", None)
+        if callable(infer):
+            strategy = infer(query_text, query_type)
+            if isinstance(strategy, dict):
+                return strategy
+        return AgentQueryPlanner(config={}).infer_retrieval_strategy(query_text, query_type)
 
     def _dedupe_query_variants(self, values: list[str], max_variants: int) -> list[str]:
         deduped: list[str] = []
@@ -327,6 +418,8 @@ class RetrievalService:
             profile_name=request.profile,
             options=request.options,
             top_k=request.top_k,
+            retrieval_weights=normalized.get("retrieval_weights"),
+            use_agent_retrieval_weights=normalized.get("retrieval_weight_source") == "agent",
         )
         qa_frames_by_id: dict[str, Frame] = {}
         if request.query_type == "QA" and candidates:
@@ -368,6 +461,8 @@ class RetrievalService:
                     "rerank_detail": candidate.rerank_detail,
                     "semantic_hit": candidate.source_hit,
                     "text_hit": candidate.text_hit,
+                    "retrieval_weights": normalized.get("retrieval_weights", {}),
+                    "retrieval_weight_source": normalized.get("retrieval_weight_source", "profile"),
                     "final_score": round(candidate.final_score, 6),
                     "filter_debug": candidate.filter_debug,
                 },
@@ -387,10 +482,17 @@ class RetrievalService:
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
         events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
+        event_plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
         candidate_sets: list[list[Candidate]] = []
         event_summaries: list[dict[str, Any]] = []
         per_event_top_k = max(80, min(500, request.top_k * 20))
         for event_index, event_query in enumerate(events, start=1):
+            event_plan = event_plans[event_index - 1] if event_index - 1 < len(event_plans) else {}
+            event_plan = event_plan if isinstance(event_plan, dict) else {}
+            event_weights = self._normalize_retrieval_weights(event_plan.get("retrieval_weights"))
+            if not event_weights:
+                event_weights = normalized.get("retrieval_weights")
+            event_weight_source = str(event_plan.get("retrieval_weight_source") or normalized.get("retrieval_weight_source") or "profile")
             ranked = self._rank_frames(
                 dataset=dataset,
                 variants=[event_query],
@@ -398,6 +500,8 @@ class RetrievalService:
                 profile_name=request.profile,
                 options=request.options,
                 top_k=per_event_top_k,
+                retrieval_weights=event_weights,
+                use_agent_retrieval_weights=event_weight_source == "agent",
             )
             event_candidates = [
                 Candidate(
@@ -409,6 +513,9 @@ class RetrievalService:
                     text="",
                     event_index=event_index,
                     event_query=event_query,
+                    visual_score=candidate.semantic_score,
+                    text_score=candidate.text_score,
+                    rrf_score=candidate.rrf_score,
                 )
                 for candidate in ranked
             ]
@@ -418,16 +525,28 @@ class RetrievalService:
                     "event_index": event_index,
                     "query": event_query,
                     "candidate_count": len(event_candidates),
+                    "importance": round(float(event_plan.get("importance", 1.0)), 4),
+                    "retrieval_weights": event_weights,
+                    "retrieval_weight_source": event_weight_source,
                 }
             )
         delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
         min_match = request.options.min_match or len(events)
+        event_importances = [max(0.0, float(plan.get("importance", 1.0))) for plan in event_plans[: len(events)]]
+        if len(event_importances) != len(events) or sum(event_importances) <= 0:
+            event_importances = [1.0 for _ in events]
+        else:
+            scale = len(events) / sum(event_importances)
+            event_importances = [value * scale for value in event_importances]
+        profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
+        temporal_cfg = profile.get("temporal", {}) if isinstance(profile.get("temporal"), dict) else {}
         sequences = adaptive_temporal_search(
             candidate_sets=candidate_sets,
-            weights=[1.0 for _ in events],
+            weights=event_importances,
             delta_frame_max=delta_frames,
             min_match=min_match,
             limit=request.top_k,
+            prefer_full_sequences=bool(temporal_cfg.get("prefer_full_sequences", True)),
         )
         sequences = sorted(
             sequences,
@@ -466,6 +585,9 @@ class RetrievalService:
                     if sequence_frames_by_id.get(candidate.frame_id)
                     else None,
                     "score": round(candidate.score, 4),
+                    "visual_score": round(candidate.visual_score, 4),
+                    "text_score": round(candidate.text_score, 4),
+                    "rrf_score": round(candidate.rrf_score, 4),
                     "order_index": idx + 1,
                     "event_index": candidate.event_index or idx + 1,
                     "event_query": candidate.event_query,
@@ -484,6 +606,9 @@ class RetrievalService:
             representative_frame = sequence_frames_by_id.get(representative.frame_id)
             if representative_frame is None:
                 continue
+            sequence_visual_score = sum(candidate.visual_score for candidate in sequence.candidates) / len(sequence.candidates)
+            sequence_text_score = sum(candidate.text_score for candidate in sequence.candidates) / len(sequence.candidates)
+            sequence_rrf_score = sum(candidate.rrf_score for candidate in sequence.candidates) / len(sequence.candidates)
             result = RetrievalResult(
                 id=new_id(),
                 query_run_id=run.id,
@@ -493,11 +618,18 @@ class RetrievalService:
                 score=sequence.score,
                 score_breakdown={
                     "temporal_score": round(sequence.score, 4),
+                    "semantic_score": round(sequence_visual_score, 6),
+                    "text_score": round(sequence_text_score, 6),
+                    "rrf_score": round(sequence_rrf_score, 6),
+                    "final_score": round(sequence.score, 6),
                     "matched_events": len(sequence.candidates),
                     "expected_events": len(events),
                     "min_match": min_match,
                     "requires_full_sequence": request.options.min_match is None,
                     "event_queries": event_summaries,
+                    "event_weights": [round(weight, 6) for weight in event_importances],
+                    "temporal_reranker": "aithena_weighted_ats",
+                    "partial_match_enabled": min_match < len(events),
                     "ordering": {
                         "is_strictly_increasing": all(delta > 0 for delta in delta_frames_seq) if delta_frames_seq else True,
                         "frame_indices": frame_indices,
@@ -526,17 +658,28 @@ class RetrievalService:
         profile_name: str,
         options: SearchOptions,
         top_k: int,
+        retrieval_weights: dict[str, float] | None = None,
+        use_agent_retrieval_weights: bool = False,
     ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
         text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
         quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
+        modality_weights = self._normalize_retrieval_weights(retrieval_weights)
+        if modality_weights:
+            modality_total = semantic_weight + text_weight
+            semantic_weight = modality_total * modality_weights["visual"]
+            text_weight = modality_total * modality_weights["text"]
         rrf_config = profile.get("rrf", {})
         rrf_enabled = bool(rrf_config.get("enabled", False))
         rrf_k = max(1.0, float(rrf_config.get("k", 60)))
         rrf_blend = min(1.0, max(0.0, float(rrf_config.get("blend", 0.35))))
         rrf_semantic_weight = float(rrf_config.get("semantic_weight", semantic_weight))
         rrf_text_weight = float(rrf_config.get("text_weight", text_weight))
+        if use_agent_retrieval_weights and modality_weights:
+            rrf_total = rrf_semantic_weight + rrf_text_weight
+            rrf_semantic_weight = rrf_total * modality_weights["visual"]
+            rrf_text_weight = rrf_total * modality_weights["text"]
         ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
 
         dataset_video_ids = self._dataset_video_ids(dataset)

@@ -218,8 +218,14 @@ def test_m5_trake_returns_stable_ordering_metadata(tmp_path: Path) -> None:
     assert sequence[0]["order_index"] == 1
     assert sequence[1]["order_index"] == 2
     assert sequence[1]["delta_from_previous"] > 0
+    assert {"visual_score", "text_score", "rrf_score"} <= set(sequence[0])
 
-    ordering = first.results[0].score_breakdown["ordering"]
+    score_breakdown = first.results[0].score_breakdown
+    assert "semantic_score" in score_breakdown
+    assert "text_score" in score_breakdown
+    assert "rrf_score" in score_breakdown
+
+    ordering = score_breakdown["ordering"]
     assert ordering["is_strictly_increasing"] is True
     assert ordering["delta_frames"][0] > 0
     db.close()
