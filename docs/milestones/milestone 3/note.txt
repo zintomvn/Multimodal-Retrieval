@@ -249,19 +249,26 @@ Note fix:
     thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
     + Phần TRAKE lọc frame trùng ra x
 
-
-    + phần cell reasoning cách ra một chút cho với kết quả của search 
-    + Chỉnh lại phần backend 
-    + Tạo text embedding, tách chunk? -> tải lên zilliz
-
-
     + Chỉnh lại có thể sửa cho phần nào nhiều hơn - dựa vào prompt con người x
     + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn x
     + Chỉnh lại algorithm của TRAKE theo visual nhiều hơn - Dùng prompt thêm để tối ưu x 
+    
+
+    + Đưa data db từ  lên cloud 
+    + phần cell reasoning cách ra một chút cho với kết quả của search 
+    + Chỉnh lại phần backend 
+    + Tạo text embedding, tách chunk? -> tải lên zilliz
     + Câu nào ASR chỉnh lại reasoning
     + Phần TRAKE lọc frame trùng ra 
-    + Thêm phần video và TRAKE để search đúng hơn
+    + Thêm phần video có thể đưa  và TRAKE để search đúng hơn
     + 
+
+ở trong ô selected frames có thể thay đổi thứ tự trong frame 
+
+
+
+
+
 
 
 Testing:
@@ -293,4 +300,4 @@ Giao diện:
 - QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
 thay vì submission thì cho ra file csv để tải về chứ không phải zip, UI khi agent phân tích thì hiện ra những file json hay trace phần phân tích lên UI để tôi xem, giống ChatGPT của openAI, 
 
-
+liên kết relational data của tôi vào supabase cloud để có thể dùng chung trong nhiều máy khi chạy, 

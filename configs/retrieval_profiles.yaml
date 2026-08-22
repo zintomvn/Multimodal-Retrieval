@@ -46,6 +46,7 @@ competition_default:
   temporal:
     delta_t_max_ms: 180000
     min_match_ratio: 0.67
+    per_query_video_limit: 24
     prefer_full_sequences: true
 
 semantic_fast:

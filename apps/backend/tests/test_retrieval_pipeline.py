@@ -435,7 +435,8 @@ def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path
 
     assert response.results
     assert response.results[0].frame_id == frame_a.keyframe_id
-    assert response.normalized_query["variants"][:2] == ["person wearing a red shirt", "nguoi ao do"]
+    assert response.normalized_query["semantic_variants"] == ["person wearing a red shirt"]
+    assert response.normalized_query["text_variants"] == ["nguoi ao do"]
     agent_plan = response.normalized_query["agent_query_plan"]
     assert agent_plan["source"] == "fallback"
     assert "missing OPENAI_API_KEY" in agent_plan["error"]
@@ -479,7 +480,8 @@ def test_m4_agent_query_planning_runs_even_when_expansion_is_disabled(tmp_path: 
 
     assert response.results
     assert response.results[0].frame_id == frame_a.keyframe_id
-    assert response.normalized_query["variants"] == ["nguoi ao do"]
+    assert response.normalized_query["semantic_variants"] == ["red shirt person walking"]
+    assert response.normalized_query["text_variants"] == ["nguoi ao do"]
     assert response.normalized_query["temporal_events"] == ["person in red shirt walking"]
     agent_plan = response.normalized_query["agent_query_plan"]
     assert agent_plan["source"] == "langchain_deep_agent"
@@ -561,6 +563,38 @@ def test_agent_planner_promotes_english_rewrite_when_agent_returns_raw_vietnames
         "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species",
         query,
     ]
+
+
+def test_agent_planner_repairs_vietnamese_temporal_events_for_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+    vietnamese_events = [
+        "Kho\u1ea3nh kh\u1eafc b\u1ed9t \u0111\u01b0\u1ee3c b\u1ecf v\u00e0o t\u00f4 m\u0103ng t\u00e2y",
+        "Kho\u1ea3nh kh\u1eafc mi\u1ebfng m\u0103ng t\u00e2y r\u1eddi kh\u1ecfi ch\u1ea3o",
+    ]
+    english_events = [
+        "batter is added to a bowl of asparagus",
+        "a piece of asparagus is removed from the pan",
+    ]
+
+    def translate(values: list[str]) -> list[str]:
+        return english_events if len(values) == len(vietnamese_events) else ["asparagus cooking"]
+
+    monkeypatch.setattr(planner, "_translate_vietnamese_values", translate)
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - verifies routing after an LLM repair.
+        raw_plan={
+            "language": "vi",
+            "intent": "TRAKE",
+            "temporal_events": [{"query": event} for event in vietnamese_events],
+            "variants": [{"text": vietnamese_events[0]}],
+        },
+        query="\n".join(f"E{index}: {event}" for index, event in enumerate(vietnamese_events, start=1)),
+        query_type="TRAKE",
+        max_variants=3,
+    )
+
+    assert result.temporal_events == english_events
+    assert result.variants
+    assert all(not planner._looks_vietnamese(variant) for variant in result.variants)  # noqa: SLF001
 
 
 def test_agent_planner_extracts_evidence_driven_visual_and_text_weights() -> None:

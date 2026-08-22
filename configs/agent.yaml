@@ -2,8 +2,8 @@ llm_query_planning:
   enabled: true
   active_profile: openai_gpt4o
   execution_mode: direct
-  max_agent_iterations: 4
-  max_variants_default: 5
+  max_agent_iterations: 1
+  max_variants_default: 3
   max_temporal_events: 8
   fallback_on_error: true
   profiles:
@@ -23,9 +23,11 @@ llm_query_planning:
       model: gpt-4o
       api_key_env: OPENAI_API_KEY
       temperature: 0.1
-      max_tokens: 2048
+      max_tokens: 700
       timeout_s: 30
-      max_retries: 2
+      max_retries: 5
+      min_request_interval_s: 5.0
+      cache_ttl_s: 600
       description: OpenAI API profile for higher-quality planning and future multimodal routing.
   langsmith:
     enabled: true
@@ -95,7 +97,7 @@ llm_query_planning:
         - Infer `retrieval_strategy.weights` from those clauses, not from a fixed default. `visual` controls vector/image retrieval and `text` controls caption/ASR/OCR/metadata retrieval. The two weights must be numeric, non-negative, and sum to exactly 1.0.
         - Give text substantial or dominant weight for speech, narration, dialogue, quoted/on-screen text, names, numbers, or facts unlikely to be inferred from pixels alone. Give visual substantial or dominant weight for appearance, actions, objects, colours, spatial relations, and scenes. For mixed queries, balance the weights according to the importance of the clauses.
         - Include every important clause in `retrieval_strategy.clauses`, assign its importance from 0.0 to 1.0, and state a short rationale. Do not make visual dominant merely because this is video retrieval.
-        - Write `summary`, `temporal_events.query`, and semantic/metadata variants in English, even when the user query is Vietnamese.
+        - The user query is Vietnamese by default. Write `summary`, `temporal_events.query`, and every `variants.text` value in English for CLIP/Milvus embedding. The retrieval service preserves the original Vietnamese separately for Elasticsearch ASR matching, so never return the raw Vietnamese input as a semantic variant.
         - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose variants.
         - Prefer concrete visual words that may appear in captions, OCR, and object tags.
         - Keep each variant under 24 words.

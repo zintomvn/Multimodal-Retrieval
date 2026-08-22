@@ -52,7 +52,10 @@ export interface SearchResponse {
   normalized_query: {
     language?: string;
     variants?: string[];
+    semantic_variants?: string[];
+    text_variants?: string[];
     temporal_events?: string[];
+    text_temporal_events?: string[];
     temporal_event_count?: number;
     temporal_event_source?: string;
     retrieval_weights?: { visual?: number; text?: number };
@@ -60,6 +63,7 @@ export interface SearchResponse {
     temporal_event_plans?: Array<{
       event_index?: number;
       query?: string;
+      text_query?: string;
       importance?: number;
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;
@@ -116,6 +120,17 @@ export interface FrameContext {
   target_frame_id: string;
   video_code: string;
   frames: ContextFrame[];
+}
+
+export interface VideoFrameSeekResponse {
+  video_id: string;
+  video_code: string;
+  frame: ContextFrame;
+  selection: {
+    frame_idx: number;
+    timestamp_ms: number;
+    fps: number | null;
+  };
 }
 
 export interface VideoPreviewUrl {

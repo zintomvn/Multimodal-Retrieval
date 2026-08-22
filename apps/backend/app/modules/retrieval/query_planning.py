@@ -4,7 +4,10 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 import unicodedata
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -98,6 +101,11 @@ class AgentQueryPlanner:
     plan and can continue with the existing search path.
     """
 
+    _plan_cache: dict[tuple[str, str, str, int], tuple[float, QueryPlanningResult]] = {}
+    _plan_cache_lock = threading.Lock()
+    _openai_gate_lock = threading.Lock()
+    _openai_next_allowed_at: dict[str, float] = {}
+
     def __init__(self, config: dict[str, Any], config_path: Path | None = None) -> None:
         self.config = config
         self.config_path = config_path
@@ -118,6 +126,11 @@ class AgentQueryPlanner:
         if not query:
             return self._fallback_plan(query, query_type, max_variants, error="blank query")
 
+        cache_key = (self._active_profile_name(), query_type, query, max_variants)
+        cached = self._get_cached_plan(cache_key)
+        if cached is not None:
+            return cached
+
         unavailable_reason = self._unavailable_reason()
         if unavailable_reason:
             return self._fallback_plan(query, query_type, max_variants, error=unavailable_reason)
@@ -133,6 +146,7 @@ class AgentQueryPlanner:
                 max_variants=max_variants,
             )
             if result.variants:
+                self._cache_plan(cache_key, result)
                 return result
             return self._fallback_plan(query, query_type, max_variants, error="agent returned no variants")
         except Exception as exc:  # pragma: no cover - exercised in integration environments.
@@ -163,6 +177,7 @@ class AgentQueryPlanner:
         }
         if self._execution_mode() == "direct":
             planner_prompt = self._planner_system_prompt()
+            self._wait_for_openai_slot()
             return self._get_model().invoke(
                 [
                     {"role": "system", "content": planner_prompt},
@@ -176,10 +191,48 @@ class AgentQueryPlanner:
         try:
             import langsmith as ls  # type: ignore
         except ImportError:
+            self._wait_for_openai_slot()
             return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload)}]}, config=runnable_config)
 
         with ls.tracing_context(enabled=trace_enabled):
+            self._wait_for_openai_slot()
             return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload)}]}, config=runnable_config)
+
+    def _get_cached_plan(self, cache_key: tuple[str, str, str, int]) -> QueryPlanningResult | None:
+        ttl_s = max(0, int(self._profile_value("cache_ttl_s", 600)))
+        if ttl_s <= 0:
+            return None
+        now = time.monotonic()
+        with self._plan_cache_lock:
+            cached = self._plan_cache.get(cache_key)
+            if cached is None:
+                return None
+            created_at, result = cached
+            if now - created_at > ttl_s:
+                self._plan_cache.pop(cache_key, None)
+                return None
+            return deepcopy(result)
+
+    def _cache_plan(self, cache_key: tuple[str, str, str, int], result: QueryPlanningResult) -> None:
+        if result.source == "fallback" or not result.variants:
+            return
+        with self._plan_cache_lock:
+            self._plan_cache[cache_key] = (time.monotonic(), deepcopy(result))
+
+    def _wait_for_openai_slot(self) -> None:
+        if self._provider() != "openai":
+            return
+        interval_s = max(0.0, float(self._profile_value("min_request_interval_s", 0.0)))
+        if interval_s <= 0:
+            return
+        key = f"{self._provider()}:{self._model_name()}"
+        with self._openai_gate_lock:
+            now = time.monotonic()
+            allowed_at = self._openai_next_allowed_at.get(key, now)
+            wait_s = max(0.0, allowed_at - now)
+            self._openai_next_allowed_at[key] = max(now, allowed_at) + interval_s
+        if wait_s:
+            time.sleep(wait_s)
 
     def _get_agent(self) -> Any:
         active_profile = self._active_profile_name()
@@ -552,18 +605,56 @@ class AgentQueryPlanner:
     def _prefer_english_values(self, query: str, values: list[str], max_values: int) -> list[str]:
         deduped = self._dedupe(values)
         rewrite = self._english_retrieval_rewrite(query)
-        if not rewrite:
-            return deduped[:max_values]
-        if not deduped:
-            return [rewrite]
-        return self._dedupe([rewrite, *deduped])[:max_values]
+        preferred = [rewrite] if rewrite else []
+        preferred.extend(deduped)
+        return self._translate_vietnamese_values(preferred)[:max_values]
 
     def _prefer_english_temporal_events(self, query: str, values: list[str], max_values: int) -> list[str]:
         deduped = self._dedupe(values)
-        if len(deduped) > 1:
-            rewritten = [self._english_retrieval_rewrite(value) or value for value in deduped]
-            return self._dedupe(rewritten)[:max_values]
-        return self._prefer_english_values(query, deduped, max_values)
+        if len(deduped) <= 1:
+            return self._prefer_english_values(query, deduped, max_values)
+        rewritten = [self._english_retrieval_rewrite(value) or value for value in deduped]
+        return self._translate_vietnamese_values(rewritten)[:max_values]
+
+    def _translate_vietnamese_values(self, values: list[str]) -> list[str]:
+        """Repair a plan that ignored the English-only embedding contract."""
+        normalized = [" ".join(str(value).split()) for value in values if str(value).strip()]
+        if not any(self._looks_vietnamese(value) for value in normalized):
+            return normalized
+        if self._unavailable_reason():
+            return normalized
+
+        prompt = (
+            "Translate each Vietnamese retrieval query to concise English. "
+            "Keep the same order, preserve every event, and do not add or omit details. "
+            "Return exactly one JSON object with this schema and no markdown: "
+            '{"translations":["English query 1","English query 2"]}. '
+            "Every translation must be English."
+        )
+        try:
+            self._wait_for_openai_slot()
+            output = self._get_model().invoke(
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": json.dumps({"queries": normalized}, ensure_ascii=False)},
+                ],
+                config={
+                    "run_name": "llm_query_translation_repair",
+                    "tags": ["retrieval", "query-translation", self._provider()],
+                    "metadata": {"active_profile": self._active_profile_name()},
+                },
+            )
+            raw = self._parse_json_object(self._extract_content(output))
+            translations = raw.get("translations")
+            if not isinstance(translations, list) or len(translations) != len(normalized):
+                return normalized
+            repaired = [" ".join(str(value).split()) for value in translations]
+            if any(not value or self._looks_vietnamese(value) for value in repaired):
+                return normalized
+            return repaired
+        except Exception:
+            logger.warning("LLM translation repair failed; semantic retrieval keeps the original plan.")
+            return normalized
 
     def _should_prefer_english(self, query: str, value: str) -> bool:
         value = str(value or "").strip()

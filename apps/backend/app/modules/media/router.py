@@ -4,9 +4,12 @@ from mimetypes import guess_type
 from pathlib import Path
 from collections.abc import Iterator
 import re
+from statistics import median
+from typing import Literal
 from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy import func, or_
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -371,10 +374,58 @@ def _frame_media_payload(frame: Frame) -> dict:
     }
 
 
+def _context_frame_payload(frame: Frame) -> dict:
+    return {
+        "id": frame.id,
+        "frame_idx": frame.frame_idx,
+        "timestamp_ms": frame.timestamp_ms,
+        "thumbnail_url": f"/api/media/frames/{frame.id}/thumbnail",
+        "image_url": frame.thumbnail_uri
+        or frame.image_url
+        or gcs_public_url(
+            frame.image_uri or "",
+            default_bucket=settings.gcs_bucket,
+            public_base_url=settings.gcs_public_url,
+        )
+        or gcs_public_url(
+            frame.image_storage_key or "",
+            default_bucket=settings.gcs_bucket,
+            public_base_url=settings.gcs_public_url,
+        ),
+        "image_uri": frame.image_uri,
+        "image_storage_key": frame.image_storage_key,
+        "text": " ".join(annotation.text_value or "" for annotation in frame.annotations),
+    }
+
+
+def _video_fps(video: Video, db: Session) -> float | None:
+    if video.fps is not None and 1 <= video.fps <= 240:
+        return float(video.fps)
+
+    # Older imported videos may not have fps on the video record. Their indexed
+    # keyframes still preserve source frame indices and presentation timestamps.
+    samples = (
+        db.query(Frame.frame_idx, Frame.frame_seconds)
+        .filter(
+            Frame.video_id == video.video_id,
+            Frame.frame_idx > 0,
+            Frame.frame_seconds > 0,
+        )
+        .order_by(Frame.frame_idx.asc())
+        .limit(24)
+        .all()
+    )
+    candidates = [frame_idx / frame_seconds for frame_idx, frame_seconds in samples]
+    candidates = [value for value in candidates if 1 <= value <= 240]
+    return float(median(candidates)) if candidates else None
+
+
 @router.get("/frames")
 def list_frames(
     dataset_id: str | None = None,
     video_id: str | None = None,
+    video_code: str | None = None,
+    frame_idx: int | None = None,
     limit: int = 60,
     offset: int = 0,
     present_only: bool = True,
@@ -387,13 +438,21 @@ def list_frames(
         query = query.filter(Video.dataset_id == dataset_id)
     if video_id:
         query = query.filter(Frame.video_id == video_id)
+    if video_code and video_code.strip():
+        pattern = f"%{video_code.strip()}%"
+        query = query.filter(or_(Video.video_code.ilike(pattern), Video.video_name.ilike(pattern)))
     if present_only:
         query = query.filter(Frame.is_media_present.is_(True))
 
     total = query.count()
+    order_by = (
+        (func.abs(Frame.frame_idx - frame_idx), Video.video_code.asc(), Frame.frame_idx.asc(), Frame.keyframe_id.asc())
+        if frame_idx is not None
+        else (Video.video_code.asc(), Frame.frame_idx.asc(), Frame.keyframe_id.asc())
+    )
     frames = (
         query.options(joinedload(Frame.video))
-        .order_by(Video.video_code.asc(), Frame.frame_idx.asc(), Frame.keyframe_id.asc())
+        .order_by(*order_by)
         .offset(offset)
         .limit(limit)
         .all()
@@ -440,30 +499,7 @@ def frame_context(frame_id: str, window: int = 4, db: Session = Depends(get_db))
     return {
         "target_frame_id": frame.id,
         "video_code": frame.video.video_code,
-        "frames": [
-            {
-                "id": item.id,
-                "frame_idx": item.frame_idx,
-                "timestamp_ms": item.timestamp_ms,
-                "thumbnail_url": f"/api/media/frames/{item.id}/thumbnail",
-                "image_url": item.thumbnail_uri
-                or item.image_url
-                or gcs_public_url(
-                    item.image_uri or "",
-                    default_bucket=settings.gcs_bucket,
-                    public_base_url=settings.gcs_public_url,
-                )
-                or gcs_public_url(
-                    item.image_storage_key or "",
-                    default_bucket=settings.gcs_bucket,
-                    public_base_url=settings.gcs_public_url,
-                ),
-                "image_uri": item.image_uri,
-                "image_storage_key": item.image_storage_key,
-                "text": " ".join(annotation.text_value or "" for annotation in item.annotations),
-            }
-            for item in frames
-        ],
+        "frames": [_context_frame_payload(item) for item in frames],
     }
 
 
@@ -501,6 +537,68 @@ def frame_thumbnail(frame_id: str, db: Session = Depends(get_db)) -> Response:
             return RedirectResponse(url=raw_url, status_code=307, headers=CACHE_HEADERS)
 
     raise HTTPException(status_code=404, detail="Frame cloud media is not available")
+
+
+@router.get("/videos/{video_id}/frames/seek")
+def seek_video_frame(
+    video_id: str,
+    seconds: float | None = None,
+    frame_idx: int | None = None,
+    direction: Literal["nearest", "next", "previous"] = "nearest",
+    db: Session = Depends(get_db),
+) -> dict:
+    """Resolve an indexed frame by video time or step to its adjacent indexed frame."""
+    if seconds is not None and seconds < 0:
+        raise HTTPException(status_code=422, detail="seconds must be zero or greater")
+    if seconds is None and frame_idx is None:
+        raise HTTPException(status_code=422, detail="Provide seconds or frame_idx")
+
+    video = db.query(Video).filter(Video.video_id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    query = (
+        db.query(Frame)
+        .options(joinedload(Frame.video), selectinload(Frame.annotations))
+        .filter(Frame.video_id == video_id, Frame.is_media_present.is_(True))
+    )
+
+    if direction == "next":
+        if frame_idx is None:
+            raise HTTPException(status_code=422, detail="frame_idx is required for next frame")
+        frame = query.filter(Frame.frame_idx > frame_idx).order_by(Frame.frame_idx.asc()).first()
+    elif direction == "previous":
+        if frame_idx is None:
+            raise HTTPException(status_code=422, detail="frame_idx is required for previous frame")
+        frame = query.filter(Frame.frame_idx < frame_idx).order_by(Frame.frame_idx.desc()).first()
+    elif seconds is not None:
+        target_ms = round(seconds * 1000)
+        frame = query.order_by(func.abs(Frame.timestamp_ms - target_ms).asc(), Frame.frame_idx.asc()).first()
+    else:
+        frame = query.order_by(func.abs(Frame.frame_idx - frame_idx).asc(), Frame.frame_idx.asc()).first()
+
+    if not frame:
+        label = "next" if direction == "next" else "previous" if direction == "previous" else "indexed"
+        raise HTTPException(status_code=404, detail=f"No {label} frame is available")
+
+    fps = _video_fps(video, db)
+    if direction == "nearest" and seconds is not None:
+        selected_frame_idx = round(seconds * fps) if fps is not None else frame.frame_idx
+        selected_timestamp_ms = round(seconds * 1000)
+    else:
+        selected_frame_idx = frame.frame_idx
+        selected_timestamp_ms = frame.timestamp_ms
+
+    return {
+        "video_id": video.video_id,
+        "video_code": video.video_code,
+        "frame": _context_frame_payload(frame),
+        "selection": {
+            "frame_idx": selected_frame_idx,
+            "timestamp_ms": selected_timestamp_ms,
+            "fps": fps,
+        },
+    }
 
 
 @router.get("/videos/{video_id}/preview")

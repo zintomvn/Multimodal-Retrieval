@@ -466,6 +466,16 @@ button:disabled {
   min-width: 140px;
 }
 
+.video-code-field input {
+  min-width: 128px;
+  font-family: var(--mono);
+}
+
+.video-frame-field input {
+  min-width: 104px;
+  font-family: var(--mono);
+}
+
 .filter-row {
   display: flex;
   align-items: center;
@@ -850,6 +860,126 @@ button:disabled {
   gap: 6px;
 }
 
+.trake-selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+.trake-selection-toolbar > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.trake-selection-toolbar small {
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.trake-selection-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.trake-picked-sequence {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+
+.trake-picked-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trake-picked-heading small {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.trake-picked-strip {
+  display: grid;
+  grid-auto-columns: minmax(150px, 190px);
+  grid-auto-flow: column;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.trake-picked-frame {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 56px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-1);
+  text-align: left;
+}
+
+.trake-picked-frame.picked {
+  cursor: pointer;
+}
+
+.trake-picked-frame.picked:hover {
+  border-color: var(--accent);
+}
+
+.trake-picked-frame img,
+.trake-picked-placeholder {
+  width: 64px;
+  height: 56px;
+  object-fit: cover;
+}
+
+.trake-picked-placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--bg-panel);
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.trake-picked-frame > span:last-child {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.trake-picked-frame strong,
+.trake-picked-frame small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trake-picked-frame strong {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.trake-picked-frame small {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
 .ghost-button,
 .select-button {
   display: inline-flex;
@@ -1198,6 +1328,26 @@ button:disabled {
   scrollbar-width: none;
   -ms-overflow-style: none;
   word-break: break-word;
+}
+
+.video-lookup-composer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px 4px;
+  color: var(--text-2);
+}
+
+.video-lookup-composer strong {
+  color: var(--text-1);
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+.video-lookup-composer span {
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .composer textarea::-webkit-scrollbar {
@@ -1600,9 +1750,44 @@ button:disabled {
 .video-preview-player {
   display: block;
   width: 100%;
-  max-height: calc(100dvh - 150px);
+  max-height: calc(100dvh - 190px);
   aspect-ratio: 16 / 9;
   background: black;
+}
+
+.video-current-frame-actions {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  gap: 10px;
+}
+
+.video-current-frame-actions .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+}
+
+.trake-video-slot {
+  display: grid;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trake-video-slot select {
+  min-height: 34px;
+  padding: 0 26px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-1);
+  font: inherit;
 }
 
 .video-frame-toolbar {
@@ -1838,6 +2023,19 @@ button:disabled {
   .video-frame-toolbar,
   .video-score-panel .score-breakdown {
     grid-template-columns: 1fr;
+  }
+
+  .video-current-frame-actions .ghost-button {
+    width: 100%;
+  }
+
+  .video-current-frame-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .trake-video-slot select {
+    width: 100%;
   }
 
   .video-backdrop {

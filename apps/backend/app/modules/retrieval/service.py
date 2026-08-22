@@ -31,6 +31,25 @@ logger = logging.getLogger(__name__)
 TOKEN_RE = re.compile(r"[\wÀ-ỹ]+", re.UNICODE)
 FRAME_VIDEO_ID_RE = re.compile(r"^(?P<video_id>.+)_F\d+$")
 VECTOR_KEYFRAME_ID_RE = re.compile(r"^(?P<video_id>L\d{2}_V\d{3})_(?P<n>\d+)$")
+VIETNAMESE_CHAR_RE = re.compile(r"[\u00c0-\u1ef9\u0110\u0111]")
+VIETNAMESE_SIGNAL_TOKENS = {
+    "ao",
+    "ban",
+    "cau",
+    "cua",
+    "dang",
+    "den",
+    "do",
+    "duoc",
+    "gi",
+    "la",
+    "nguoi",
+    "nhung",
+    "noi",
+    "o",
+    "trong",
+    "voi",
+}
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -218,7 +237,8 @@ class RetrievalService:
         max_variants = int(expansion_profile.get("max_variants", 5))
         expansion_default_enabled = bool(expansion_profile.get("enabled_default", True))
         query_text = request.query_text.strip()
-        variants = [query_text]
+        semantic_variants = [query_text]
+        text_variants = [query_text]
         agent_plan = None
         if request.options.use_agent_query_planning:
             agent_plan = self.query_planner.plan(
@@ -226,16 +246,21 @@ class RetrievalService:
                 query_type=request.query_type,
                 max_variants=max_variants,
             )
+        if agent_plan is not None and agent_plan.variants:
+            semantic_variants = list(agent_plan.variants)
         if request.options.use_query_expansion and expansion_default_enabled:
-            if agent_plan is not None and agent_plan.variants:
-                variants = self._dedupe_query_variants(
-                    [*agent_plan.variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
-                    max_variants=max_variants,
-                )
-            else:
-                variants = self._expand_query_variants(query_text, max_variants=max_variants)
+            semantic_variants = self._dedupe_query_variants(
+                [*semantic_variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
+                max_variants=max_variants,
+            )
+        semantic_variants = self._english_semantic_variants(
+            query_text,
+            semantic_variants,
+            max_variants=max_variants,
+        )
         temporal_parse = self._parse_temporal_events(query_text)
         temporal_events, temporal_source = self._resolve_temporal_events(request, agent_plan, temporal_parse)
+        text_temporal_events = self._text_temporal_events(request, temporal_parse, temporal_events)
         retrieval_weights, retrieval_weight_source = self._resolve_retrieval_weights(
             profile,
             agent_plan,
@@ -243,15 +268,23 @@ class RetrievalService:
             request.query_type,
         )
         temporal_event_plans = (
-            self._resolve_temporal_event_plans(temporal_events, agent_plan, request.query_type)
+            self._resolve_temporal_event_plans(
+                temporal_events,
+                text_temporal_events,
+                agent_plan,
+                request.query_type,
+            )
             if request.query_type == "TRAKE"
             else []
         )
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
-            "variants": variants,
-            "tokens": normalize_tokens(" ".join(variants)),
+            "variants": semantic_variants,
+            "semantic_variants": semantic_variants,
+            "text_variants": text_variants,
+            "tokens": normalize_tokens(" ".join([*semantic_variants, *text_variants])),
             "temporal_events": temporal_events,
+            "text_temporal_events": text_temporal_events,
             "temporal_event_count": len(temporal_events),
             "temporal_event_source": temporal_source,
             "temporal_event_plans": temporal_event_plans,
@@ -292,6 +325,7 @@ class RetrievalService:
     def _resolve_temporal_event_plans(
         self,
         events: list[str],
+        text_events: list[str],
         agent_plan: Any,
         query_type: str,
     ) -> list[dict[str, Any]]:
@@ -313,12 +347,31 @@ class RetrievalService:
                 {
                     "event_index": index,
                     "query": event_query,
+                    "text_query": text_events[index - 1] if index - 1 < len(text_events) else event_query,
                     "importance": max(0.0, importance),
                     "retrieval_weights": weights,
                     "retrieval_weight_source": str(raw_plan.get("retrieval_weight_source") or "heuristic"),
                 }
             )
         return plans
+
+    def _text_temporal_events(
+        self,
+        request: SearchRequest,
+        temporal_parse: TemporalEventParse,
+        semantic_events: list[str],
+    ) -> list[str]:
+        option_events = self._dedupe_query_variants(request.options.temporal_events, max_variants=8)
+        if option_events:
+            return option_events
+        raw_events = self._dedupe_query_variants(temporal_parse.events, max_variants=8)
+        if len(raw_events) == len(semantic_events):
+            return raw_events
+        if len(semantic_events) <= 1:
+            return [request.query_text.strip()]
+        if self._looks_vietnamese(request.query_text):
+            return [request.query_text.strip()] * len(semantic_events)
+        return semantic_events
 
     @staticmethod
     def _normalize_retrieval_weights(raw_weights: Any) -> dict[str, float]:
@@ -352,6 +405,26 @@ class RetrievalService:
                 deduped.append(value)
                 seen.add(key)
         return deduped[: max(1, max_variants)]
+
+    def _english_semantic_variants(
+        self,
+        query_text: str,
+        values: list[str],
+        max_variants: int,
+    ) -> list[str]:
+        variants = self._dedupe_query_variants(values, max_variants=max_variants)
+        if not self._looks_vietnamese(query_text):
+            return variants
+        english = [value for value in variants if not self._looks_vietnamese(value)]
+        # Do not turn an offline/degraded translation into an empty visual search.
+        return english[:max_variants] or variants[:1]
+
+    @staticmethod
+    def _looks_vietnamese(value: str) -> bool:
+        if VIETNAMESE_CHAR_RE.search(value):
+            return True
+        tokens = {token.lower() for token in re.findall(r"[a-z]+", value)}
+        return len(tokens.intersection(VIETNAMESE_SIGNAL_TOKENS)) >= 2
 
     def _expand_query_variants(self, query: str, max_variants: int) -> list[str]:
         try:
@@ -413,7 +486,8 @@ class RetrievalService:
     ) -> list[ResultItem]:
         candidates = self._rank_frames(
             dataset=dataset,
-            variants=normalized["variants"],
+            semantic_variants=normalized["semantic_variants"],
+            text_variants=normalized["text_variants"],
             query_text=request.query_text,
             profile_name=request.profile,
             options=request.options,
@@ -495,8 +569,9 @@ class RetrievalService:
             event_weight_source = str(event_plan.get("retrieval_weight_source") or normalized.get("retrieval_weight_source") or "profile")
             ranked = self._rank_frames(
                 dataset=dataset,
-                variants=[event_query],
-                query_text=event_query,
+                semantic_variants=[event_query],
+                text_variants=[str(event_plan.get("text_query") or event_query)],
+                query_text=str(event_plan.get("text_query") or event_query),
                 profile_name=request.profile,
                 options=request.options,
                 top_k=per_event_top_k,
@@ -546,6 +621,7 @@ class RetrievalService:
             delta_frame_max=delta_frames,
             min_match=min_match,
             limit=request.top_k,
+            per_query_video_limit=max(1, int(temporal_cfg.get("per_query_video_limit", 24))),
             prefer_full_sequences=bool(temporal_cfg.get("prefer_full_sequences", True)),
         )
         sequences = sorted(
@@ -653,7 +729,8 @@ class RetrievalService:
     def _rank_frames(
         self,
         dataset: Dataset,
-        variants: list[str],
+        semantic_variants: list[str],
+        text_variants: list[str],
         query_text: str,
         profile_name: str,
         options: SearchOptions,
@@ -680,12 +757,25 @@ class RetrievalService:
             rrf_total = rrf_semantic_weight + rrf_text_weight
             rrf_semantic_weight = rrf_total * modality_weights["visual"]
             rrf_text_weight = rrf_total * modality_weights["text"]
-        ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", max(200, top_k * 4)))
+        configured_ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", 0))
+        # TRAKE asks this method for a wider per-event pool; honor that recall target
+        # even when the interactive KIS profile uses a small default ANN limit.
+        ann_top_k = max(configured_ann_top_k, top_k, 1)
 
         dataset_video_ids = self._dataset_video_ids(dataset)
-        semantic_scores, semantic_backend_error = self._semantic_scores(variants, ann_top_k, dataset_video_ids, profile)
+        semantic_scores, semantic_backend_error = self._semantic_scores(
+            semantic_variants,
+            ann_top_k,
+            dataset_video_ids,
+            profile,
+        )
         if options.use_metadata:
-            text_scores, text_backend_error = self._text_scores(variants, ann_top_k, dataset_video_ids, profile)
+            text_scores, text_backend_error = self._text_scores(
+                text_variants,
+                ann_top_k,
+                dataset_video_ids,
+                profile,
+            )
         else:
             text_scores, text_backend_error = {}, False
 
@@ -709,7 +799,7 @@ class RetrievalService:
                 )
             return self._fallback_rank_frames(
                 dataset=dataset,
-                variants=variants,
+                variants=text_variants,
                 query_text=query_text,
                 profile=profile,
                 semantic_weight=semantic_weight,

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ImageOff,
   Loader2,
+  LocateFixed,
   PanelLeft,
   PanelRight,
   Paperclip,
@@ -23,6 +24,7 @@ import {
   listFrames,
   mediaUrl,
   runSearch,
+  seekVideoFrame,
 } from "./api/client";
 import type {
   ContextFrame,
@@ -37,12 +39,13 @@ import type {
 
 type AppMode = "Search" | "Auto" | "Chat";
 type ThemeMode = "light" | "dark" | "system";
+type SearchTask = QueryType | "VIDEO";
 
 // Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
   id: string;
   mode: AppMode;
-  queryType: QueryType;
+  queryType: SearchTask;
   queryName: string;
   queryText: string;
   resultCount: number;
@@ -69,13 +72,24 @@ interface ChatMessage {
 interface VideoPreview {
   title: string;
   subtitle: string;
-  baseUrl: string;
   url: string;
   posterUrl: string | null;
   result: SearchResult;
   frames: ContextFrame[];
   frameIndex: number;
   loadingFrames: boolean;
+  targetSeconds: number;
+  selectedFrameIdx: number | null;
+  selectedTimestampMs: number;
+  trakeEventIndex: number | null;
+}
+
+type TrakeSequenceFrame = SearchResult["sequence_frames"][number];
+
+interface TrakeFrameChoice {
+  eventIndex: number;
+  result: SearchResult;
+  frame: TrakeSequenceFrame;
 }
 
 interface MapKeyframeInfo {
@@ -89,20 +103,22 @@ interface MapKeyframeInfo {
 }
 
 // Mock data
-const sampleQueries: Record<QueryType, string> = {
-  KIS: "The clip shows an exhibition program with a royal-style decorative panel, dragon and cloud motifs, and the text PHU XUAN GIA DINH.",
-  QA: "Identify the name of the world-famous company whose logo was inspired by a castle in Bavaria, Germany.",
+const sampleQueries: Record<SearchTask, string> = {
+  KIS: "Tìm cảnh chương trình triển lãm có bảng trang trí phong cách cung đình, họa tiết rồng mây và dòng chữ PHU XUAN GIA DINH.",
+  QA: "Tên công ty nổi tiếng thế giới nào có logo lấy cảm hứng từ một lâu đài ở Bavaria, Đức?",
   TRAKE:
-    "In a bicycle race, first a cyclist with a pink helmet crosses the finish line, then a cyclist with a blue helmet, then a cyclist with a red helmet.",
+    "Trong cuộc đua xe đạp, đầu tiên người đội mũ bảo hiểm màu hồng qua vạch đích, sau đó người đội mũ xanh, rồi đến người đội mũ đỏ.",
+  VIDEO: "L26_V194",
 };
 
-const queryNameByType: Record<QueryType, string> = {
+const queryNameByType: Record<SearchTask, string> = {
   KIS: "query-1-kis",
   QA: "query-2-qa",
   TRAKE: "query-3-trake",
+  VIDEO: "video-lookup-kis",
 };
 
-const queryLabels: Record<QueryType, { title: string; caption: string }> = {
+const queryLabels: Record<SearchTask, { title: string; caption: string }> = {
   KIS: {
     title: "KIS",
     caption: "Find exact scene",
@@ -114,6 +130,10 @@ const queryLabels: Record<QueryType, { title: string; caption: string }> = {
   TRAKE: {
     title: "TRAKE",
     caption: "Order key events",
+  },
+  VIDEO: {
+    title: "Video",
+    caption: "Find video and frame",
   },
 };
 
@@ -184,11 +204,30 @@ function sequenceImageCandidates(
   ]);
 }
 
-function withTimeFragment(url: string, timestampMs: number | null): string {
-  if (timestampMs === null) return url;
-  const seconds = Math.max(0, timestampMs / 1000);
-  const [base] = url.split("#", 1);
-  return `${base}#t=${seconds.toFixed(2)}`;
+function resultForTrakeFrame(
+  result: SearchResult,
+  frame: TrakeSequenceFrame,
+): SearchResult {
+  return {
+    ...result,
+    id: `${result.id}:event:${frame.event_index ?? frame.order_index ?? 0}:${frame.frame_id}`,
+    frame_id: frame.frame_id,
+    frame_idx: frame.frame_idx,
+    timestamp_ms: frame.timestamp_ms ?? result.timestamp_ms,
+    score: frame.score,
+    score_breakdown: {
+      ...result.score_breakdown,
+      visual_score: frame.visual_score ?? result.score_breakdown.visual_score,
+      text_score: frame.text_score ?? result.score_breakdown.text_score,
+      rrf_score: frame.rrf_score ?? result.score_breakdown.rrf_score,
+      final_score: frame.score,
+    },
+    sequence_frames: [],
+    thumbnail_url: frame.thumbnail_url ?? result.thumbnail_url,
+    image_url: frame.image_url ?? result.image_url,
+    image_uri: frame.image_uri ?? result.image_uri,
+    image_storage_key: frame.image_storage_key ?? result.image_storage_key,
+  };
 }
 
 function timestampLabel(timestampMs: number | null): string {
@@ -532,7 +571,7 @@ function mockContextForResult(result: SearchResult): FrameContext | null {
 
 function makeAgentTrace(
   mode: AppMode,
-  queryType: QueryType,
+  queryType: SearchTask,
   resultCount: number,
 ): AgentStep[] {
   const action = mode === "Auto" ? "Shortlist" : "Answer trace";
@@ -559,6 +598,31 @@ function makeAgentTrace(
     {
       title: "Submission check",
       detail: "CSV rows are checked before export.",
+      status: "queued",
+    },
+  ];
+}
+
+function makeVideoLookupTrace(
+  videoCode: string,
+  frameIdx: number | null,
+  resultCount: number,
+): AgentStep[] {
+  const target = frameIdx === null ? "all indexed keyframes" : `nearest keyframes to F${frameIdx}`;
+  return [
+    {
+      title: "Resolve video",
+      detail: `Matched video code ${videoCode}.`,
+      status: resultCount > 0 ? "done" : "warning",
+    },
+    {
+      title: "Locate frames",
+      detail: `Loaded ${target}.`,
+      status: resultCount > 0 ? "done" : "queued",
+    },
+    {
+      title: "Submission check",
+      detail: "Picked frames export as KIS-compatible CSV rows.",
       status: "queued",
     },
   ];
@@ -626,9 +690,10 @@ function makeTraceFromResponse(
         : "key status unavailable";
   const traceStatus: AgentStep["status"] = plan?.error ? "warning" : "done";
   const temporalEvents = plan?.temporal_events ?? normalized.temporal_events ?? [];
-  const plannedVariants = plan?.variants ?? [];
-  const retrievalVariants = normalized.variants ?? [];
-  const summary = plan?.summary || response.normalized_query.variants?.[0] || "Query parsed.";
+  const textTemporalEvents = normalized.text_temporal_events ?? [];
+  const semanticVariants = normalized.semantic_variants ?? normalized.variants ?? [];
+  const textVariants = normalized.text_variants ?? [];
+  const summary = plan?.summary || semanticVariants[0] || "Query parsed.";
   const traceLabel =
     metadata?.langsmith_trace_enabled && metadata.langsmith_api_key_configured
       ? "LangSmith on"
@@ -667,26 +732,34 @@ function makeTraceFromResponse(
       },
     },
     {
-      title: "Split events",
-      detail: summarizeList(temporalEvents, "No temporal split needed."),
+      title: "Embedding query",
+      detail: `English: ${summarizeList(semanticVariants, "No semantic rewrite returned.")}`,
       status: traceStatus,
-      raw: temporalEvents,
+      raw: { language: "en", variants: semanticVariants },
     },
     {
-      title: "Generate variants",
-      detail: summarizeList(
-        plannedVariants.length > 0 ? plannedVariants : retrievalVariants,
-        "Using original query only.",
-      ),
+      title: "ASR query",
+      detail: `Vietnamese: ${summarizeList(textVariants, "No Vietnamese text query returned.")}`,
       status: traceStatus,
       raw: {
-        planned_variants: plannedVariants,
-        retrieval_variants: retrievalVariants,
+        language: "vi",
+        variants: textVariants,
+      },
+    },
+    {
+      title: "Split events",
+      detail: temporalEvents.length > 1
+        ? `Embedding (English): ${summarizeList(temporalEvents, "-")} | ASR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
+        : "No temporal split needed.",
+      status: traceStatus,
+      raw: {
+        semantic_events: temporalEvents,
+        text_events: textTemporalEvents,
       },
     },
     {
       title: "Retrieve candidates",
-      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using ${retrievalVariants.length || 1} retrieval variant(s). Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
+      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using ${semanticVariants.length || 1} English embedding variant(s) and ${textVariants.length || 1} Vietnamese ASR query. Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
       status: resultCount > 0 ? "done" : "warning",
       raw: {
         query_run_id: response.query_run_id,
@@ -895,13 +968,25 @@ function TrakeRows({
   onOpen,
   onSelect,
   onPreview,
+  selectedFrames,
+  selectedEventCount,
+  selectedVideoCode,
+  canAddSequence,
+  onAddSequence,
+  onClearSelection,
 }: {
   results: SearchResult[];
   eventCount: number;
-  isSelected: (result: SearchResult) => boolean;
+  isSelected: (result: SearchResult, frame: TrakeSequenceFrame, eventIndex: number) => boolean;
   onOpen: (result: SearchResult) => void;
-  onSelect: (result: SearchResult) => void;
-  onPreview: (result: SearchResult) => void;
+  onSelect: (result: SearchResult, frame: TrakeSequenceFrame, eventIndex: number) => void;
+  onPreview: (result: SearchResult, eventIndex?: number) => void;
+  selectedFrames: TrakeFrameChoice[];
+  selectedEventCount: number;
+  selectedVideoCode: string | null;
+  canAddSequence: boolean;
+  onAddSequence: () => void;
+  onClearSelection: () => void;
 }) {
   const inferredEventCount = Math.max(
     1,
@@ -935,19 +1020,32 @@ function TrakeRows({
               frameIdx,
               timestampMs,
               candidates,
-              selected: isSelected(result),
+              selected:
+                sequenceFrame !== undefined
+                  ? isSelected(result, sequenceFrame, lane + 1)
+                  : false,
             },
           ];
+        });
+        const seenFrameKeys = new Set<string>();
+        const uniqueLaneCells = laneCells.filter((cell) => {
+          const frameKey = [
+            cell.result.video_code,
+            cell.frameIdx ?? cell.sequenceFrame?.frame_id ?? cell.result.frame_id ?? cell.result.id,
+          ].join(":");
+          if (seenFrameKeys.has(frameKey)) return false;
+          seenFrameKeys.add(frameKey);
+          return true;
         });
 
         return (
           <section className="trake-lane" key={lane}>
           <div className="trake-lane-label">
             <strong>E{lane + 1}</strong>
-            <span>{laneCells.length} candidates</span>
+            <span>{uniqueLaneCells.length} candidates</span>
           </div>
           <div className="trake-strip">
-            {laneCells.map(
+            {uniqueLaneCells.map(
               ({
                 result,
                 resultIndex,
@@ -957,11 +1055,14 @@ function TrakeRows({
                 candidates,
                 selected,
               }) => {
+              const frameResult = sequenceFrame
+                ? resultForTrakeFrame(result, sequenceFrame)
+                : result;
               return (
                 <article
                   className={`trake-cell ${selected ? "selected" : ""}`}
-                  key={`${result.id}-${lane}`}
-                  onClick={() => onOpen(result)}
+                  key={`${result.video_code}-${frameIdx ?? sequenceFrame?.frame_id ?? result.id}`}
+                  onClick={() => onOpen(frameResult)}
                 >
                   <div className="trake-thumb">
                     <CloudFrameImage
@@ -987,7 +1088,7 @@ function TrakeRows({
                         className="ghost-button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          onPreview(result);
+                          onPreview(frameResult, lane + 1);
                         }}
                       >
                         Video
@@ -997,10 +1098,11 @@ function TrakeRows({
                         className="select-button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          onSelect(result);
+                          if (sequenceFrame) onSelect(result, sequenceFrame, lane + 1);
                         }}
+                        disabled={!sequenceFrame}
                       >
-                        {selected ? "Added" : "Pick"}
+                        {selected ? "Picked" : "Pick"}
                       </button>
                     </div>
                   </div>
@@ -1011,6 +1113,79 @@ function TrakeRows({
         </section>
         );
       })}
+      <div className="trake-selection-toolbar" aria-live="polite">
+        <div>
+          <strong>{selectedEventCount}/{inferredEventCount} events picked</strong>
+          <small>
+            {selectedVideoCode
+              ? `Video ${selectedVideoCode}`
+              : "Pick one frame for each event"}
+          </small>
+        </div>
+        <div className="trake-selection-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onClearSelection}
+            disabled={selectedEventCount === 0}
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            className="select-button"
+            onClick={onAddSequence}
+            disabled={!canAddSequence}
+          >
+            Add sequence
+          </button>
+        </div>
+      </div>
+      <section className="trake-picked-sequence" aria-label="Selected TRAKE sequence">
+        <div className="trake-picked-heading">
+          <strong>Sequence draft</strong>
+          <small>Click a chosen frame to review it in the video.</small>
+        </div>
+        <div className="trake-picked-strip">
+          {lanes.map((lane) => {
+            const eventIndex = lane + 1;
+            const choice = selectedFrames.find((item) => item.eventIndex === eventIndex);
+            const frameResult = choice
+              ? resultForTrakeFrame(choice.result, choice.frame)
+              : null;
+            return (
+              <button
+                type="button"
+                className={`trake-picked-frame ${choice ? "picked" : "empty"}`}
+                key={eventIndex}
+                disabled={!choice || !frameResult}
+                onClick={() => {
+                  if (frameResult) onPreview(frameResult, eventIndex);
+                }}
+              >
+                {choice ? (
+                  <CloudFrameImage
+                    candidates={sequenceImageCandidates(choice.frame, choice.result)}
+                    alt={`Selected event ${eventIndex}, frame ${choice.frame.frame_idx}`}
+                  />
+                ) : (
+                  <span className="trake-picked-placeholder">No frame</span>
+                )}
+                <span>
+                  <strong>E{eventIndex}</strong>
+                  {choice ? (
+                    <small>
+                      {choice.result.video_code} | F{choice.frame.frame_idx} | {timestampLabel(choice.frame.timestamp_ms ?? null)}
+                    </small>
+                  ) : (
+                    <small>Not selected</small>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1092,9 +1267,11 @@ export function App() {
   const [mode, setMode] = useState<AppMode>("Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetId, setDatasetId] = useState("");
-  const [queryType, setQueryType] = useState<QueryType>("KIS");
+  const [queryType, setQueryType] = useState<SearchTask>("KIS");
   const [queryName, setQueryName] = useState(queryNameByType.KIS);
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
+  const [videoCodeQuery, setVideoCodeQuery] = useState(sampleQueries.VIDEO);
+  const [videoFrameQuery, setVideoFrameQuery] = useState("");
   const [topK, setTopK] = useState(50);
   const [useExpansion, setUseExpansion] = useState(true);
   const [useAgentPlanning, setUseAgentPlanning] = useState(true);
@@ -1109,6 +1286,7 @@ export function App() {
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [trakeEventCount, setTrakeEventCount] = useState(4);
+  const [trakeFrameChoices, setTrakeFrameChoices] = useState<TrakeFrameChoice[]>([]);
   const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -1181,6 +1359,26 @@ export function App() {
   }, [videoPreview?.url]);
 
   useEffect(() => {
+    const player = videoPreviewRef.current;
+    const targetSeconds = videoPreview?.targetSeconds;
+    if (!player || targetSeconds === undefined) return;
+
+    const seek = () => {
+      player.pause();
+      const upperBound = Number.isFinite(player.duration)
+        ? Math.max(0, player.duration)
+        : targetSeconds;
+      player.currentTime = Math.min(Math.max(0, targetSeconds), upperBound);
+    };
+    if (player.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      seek();
+      return;
+    }
+    player.addEventListener("loadedmetadata", seek, { once: true });
+    return () => player.removeEventListener("loadedmetadata", seek);
+  }, [videoPreview?.targetSeconds, videoPreview?.url]);
+
+  useEffect(() => {
     let cancelled = false;
     listDatasets()
       .then((items) => {
@@ -1247,7 +1445,11 @@ export function App() {
   );
 
   const visibleResults = useMemo(() => {
-    const source = hasSearched ? results : galleryResults;
+    const source = hasSearched
+      ? results
+      : queryType === "VIDEO"
+        ? []
+        : galleryResults;
     const needle = resultFilter.trim().toLowerCase();
     if (!needle) return source;
     return source.filter((result) => {
@@ -1261,15 +1463,27 @@ export function App() {
         .toLowerCase();
       return frameText.includes(needle);
     });
-  }, [galleryResults, hasSearched, resultFilter, results]);
+  }, [galleryResults, hasSearched, queryType, resultFilter, results]);
 
   const selectedKeys = useMemo(() => new Set(selected.map(rowKey)), [selected]);
+  const selectedTrakeVideoCode = trakeFrameChoices[0]?.result.video_code ?? null;
+  const sortedTrakeFrameChoices = useMemo(
+    () => [...trakeFrameChoices].sort((left, right) => left.eventIndex - right.eventIndex),
+    [trakeFrameChoices],
+  );
+  const canAddTrakeSequence =
+    sortedTrakeFrameChoices.length === trakeEventCount &&
+    new Set(sortedTrakeFrameChoices.map((choice) => choice.result.video_code)).size === 1 &&
+    sortedTrakeFrameChoices.every(
+      (choice, index, choices) =>
+        index === 0 || choices[index - 1].frame.frame_idx < choice.frame.frame_idx,
+    );
 
   // Functions
   function selectionKeyForResult(result: SearchResult): string {
     return rowKey({
       query_name: queryName,
-      query_type: queryType,
+      query_type: queryType === "VIDEO" ? "KIS" : queryType,
       rank: 0,
       video_code: result.video_code,
       frame_indices:
@@ -1282,13 +1496,14 @@ export function App() {
     });
   }
 
-  function changeType(type: QueryType) {
+  function changeType(type: SearchTask) {
     setQueryType(type);
     setQueryName(queryNameByType[type]);
     setQueryText(sampleQueries[type]);
     setResults([]);
     setHasSearched(false);
     setContext(null);
+    setTrakeFrameChoices([]);
     setActiveResultId(null);
     setAutoTrace(makeAgentTrace(mode, type, 0));
   }
@@ -1308,7 +1523,11 @@ export function App() {
     }
   }
 
-  function rememberSearch(nextResults: SearchResult[], trace: AgentStep[]) {
+  function rememberSearch(
+    nextResults: SearchResult[],
+    trace: AgentStep[],
+    searchText = queryText,
+  ) {
     const createdAt = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -1318,7 +1537,7 @@ export function App() {
       mode,
       queryType,
       queryName,
-      queryText,
+      queryText: searchText,
       resultCount: nextResults.length,
       createdAt,
       results: nextResults,
@@ -1352,7 +1571,7 @@ export function App() {
 
     const row: SubmissionRow = {
       query_name: queryName,
-      query_type: queryType,
+      query_type: queryType === "VIDEO" ? "KIS" : queryType,
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: result.video_code,
       frame_indices: frameIndices,
@@ -1363,6 +1582,79 @@ export function App() {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
       return normalizeRanks([...current, row]).slice(0, 100);
     });
+  }
+
+  function isTrakeFramePicked(
+    result: SearchResult,
+    frame: TrakeSequenceFrame,
+    eventIndex: number,
+  ) {
+    return trakeFrameChoices.some(
+      (choice) =>
+        choice.eventIndex === eventIndex &&
+        choice.result.video_code === result.video_code &&
+        choice.frame.frame_idx === frame.frame_idx,
+    );
+  }
+
+  function pickTrakeFrame(
+    result: SearchResult,
+    frame: TrakeSequenceFrame,
+    eventIndex: number,
+  ) {
+    setTrakeFrameChoices((current) => {
+      const sameChoice = current.some(
+        (choice) =>
+          choice.eventIndex === eventIndex &&
+          choice.result.video_code === result.video_code &&
+          choice.frame.frame_idx === frame.frame_idx,
+      );
+      if (sameChoice) {
+        setStatus(`E${eventIndex} already uses frame ${frame.frame_idx}`);
+        return current;
+      }
+
+      const remainingChoices = current.filter((choice) => choice.eventIndex !== eventIndex);
+      const selectedVideoCode = remainingChoices[0]?.result.video_code;
+      if (selectedVideoCode && selectedVideoCode !== result.video_code) {
+        setStatus(`TRAKE frames must belong to ${selectedVideoCode}`);
+        return current;
+      }
+
+      setStatus(`Set E${eventIndex} to frame ${frame.frame_idx}`);
+      return [
+        ...remainingChoices,
+        { eventIndex, result, frame },
+      ];
+    });
+  }
+
+  function addTrakeSequence() {
+    if (trakeFrameChoices.length !== trakeEventCount) {
+      setStatus(`Pick a frame for all ${trakeEventCount} TRAKE events`);
+      return;
+    }
+    if (!canAddTrakeSequence) {
+      setStatus("TRAKE frames must be from one video and ordered by time");
+      return;
+    }
+
+    const firstChoice = sortedTrakeFrameChoices[0];
+    if (!firstChoice) return;
+    const row: SubmissionRow = {
+      query_name: queryName,
+      query_type: "TRAKE",
+      rank: selected.filter((item) => item.query_name === queryName).length + 1,
+      video_code: firstChoice.result.video_code,
+      frame_indices: sortedTrakeFrameChoices.map((choice) => choice.frame.frame_idx),
+      answer: null,
+    };
+    setSelected((current) => {
+      if (current.some((item) => rowKey(item) === rowKey(row))) return current;
+      return normalizeRanks([...current, row]).slice(0, 100);
+    });
+    setTrakeFrameChoices([]);
+    setStatus(`Added TRAKE sequence for ${row.video_code}`);
   }
 
   function removeSelected(key: string) {
@@ -1376,10 +1668,15 @@ export function App() {
       submitChat();
       return;
     }
+    if (queryType === "VIDEO") {
+      await submitVideoLookup();
+      return;
+    }
     if (!datasetId || !queryText.trim()) return;
 
     setLoading(true);
     setHasSearched(true);
+    if (queryType === "TRAKE") setTrakeFrameChoices([]);
     setStatus(mode === "Auto" && autoEnabled ? "Auto running" : "Searching");
     const runningTrace = makeAgentTrace(mode, queryType, 0).map(
       (step, index) => ({
@@ -1400,22 +1697,25 @@ export function App() {
         useAgentPlanning,
         useMetadata,
       });
-      const nextResults =
-        response.results.length > 0
-          ? response.results
-          : makeMockResults(queryType, queryName);
+      const nextResults = response.results;
       if (queryType === "TRAKE") {
         setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
       }
       setResults(nextResults);
-      setStatus(`${nextResults.length} results`);
+      setStatus(
+        nextResults.length > 0
+          ? `${nextResults.length} results`
+          : queryType === "TRAKE"
+            ? "No complete ordered sequence found"
+            : "No results found",
+      );
       const trace = makeTraceFromResponse(mode, queryType, response, nextResults.length);
       setAutoTrace(trace);
       rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
-      const nextResults = makeMockResults(queryType, queryName);
-      const trace = makeAgentTrace(mode, queryType, nextResults.length).map(
+      const nextResults: SearchResult[] = [];
+      const trace = makeAgentTrace(mode, queryType, 0).map(
         (step, index) =>
           index === 0
             ? {
@@ -1431,12 +1731,76 @@ export function App() {
       setResults(nextResults);
       setStatus(
         error instanceof Error
-          ? `Mock results: ${error.message.slice(0, 64)}`
-          : "Mock results",
+          ? `Search failed: ${error.message.slice(0, 64)}`
+          : "Search failed",
       );
       setAutoTrace(trace);
       rememberSearch(nextResults, trace);
+      setContext(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitVideoLookup() {
+    const videoCode = videoCodeQuery.trim();
+    const parsedFrame = Number(videoFrameQuery);
+    const frameIdx =
+      videoFrameQuery.trim() && Number.isInteger(parsedFrame) && parsedFrame >= 0
+        ? parsedFrame
+        : null;
+    if (!datasetId || !videoCode) {
+      setStatus("Enter a video code");
+      return;
+    }
+
+    setLoading(true);
+    setHasSearched(true);
+    setResults([]);
+    setContext(null);
+    setActiveResultId(null);
+    setStatus("Finding indexed frames");
+    setAutoTrace(
+      makeVideoLookupTrace(videoCode, frameIdx, 0).map((step, index) => ({
+        ...step,
+        status: index < 2 ? ("running" as const) : step.status,
+      })),
+    );
+
+    try {
+      const response = await listFrames({
+        datasetId,
+        videoCode,
+        frameIdx: frameIdx ?? undefined,
+        limit: frameIdx === null ? Math.min(topK, 200) : Math.min(Math.max(topK, 12), 200),
+        offset: 0,
+        presentOnly: true,
+      });
+      const nextResults = response.frames.map((frame, index) =>
+        frameToResult(frame, index + 1),
+      );
+      const trace = makeVideoLookupTrace(videoCode, frameIdx, nextResults.length);
+      setResults(nextResults);
+      setQueryText(videoCode);
+      setAutoTrace(trace);
+      setStatus(
+        nextResults.length > 0
+          ? `${nextResults.length} indexed frames`
+          : "No indexed frames match this video",
+      );
+      rememberSearch(nextResults, trace, videoCode);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 64) : "Video lookup failed";
+      const trace = makeVideoLookupTrace(videoCode, frameIdx, 0).map((step, index) =>
+        index === 0
+          ? { ...step, detail, status: "warning" as const }
+          : step,
+      );
+      setAutoTrace(trace);
+      setStatus(`Video lookup failed: ${detail}`);
+      rememberSearch([], trace, videoCode);
     } finally {
       setLoading(false);
     }
@@ -1480,13 +1844,14 @@ export function App() {
     setQueryType(item.queryType);
     setQueryName(item.queryName);
     setQueryText(item.queryText);
+    if (item.queryType === "VIDEO") setVideoCodeQuery(item.queryText);
     setResults(item.results);
     setHasSearched(true);
     setAutoTrace(item.trace);
     if (item.results[0]) void openFrameContext(item.results[0]);
   }
 
-  async function openVideoPreview(result: SearchResult) {
+  async function openVideoPreview(result: SearchResult, trakeEventIndex: number | null = null) {
     let videoUrl = firstMediaUrl(
       result.video_url,
       `/api/media/videos/${result.video_id}/preview`,
@@ -1506,16 +1871,20 @@ export function App() {
     const initialFrames = fallbackFrame ? [fallbackFrame] : [];
     const initialTimestamp = fallbackFrame?.timestamp_ms ?? result.timestamp_ms;
     const frameLabel = fallbackFrame ? `frame ${fallbackFrame.frame_idx}` : "sequence";
+    const initialSeconds = Math.max(0, (initialTimestamp ?? 0) / 1000);
     setVideoPreview({
       title: result.video_code,
       subtitle: `${frameLabel} | ${timestampLabel(initialTimestamp)}`,
-      baseUrl: videoUrl,
-      url: withTimeFragment(videoUrl, initialTimestamp),
+      url: videoUrl,
       posterUrl: resultImageCandidates(result)[0] ?? null,
       result,
       frames: initialFrames,
       frameIndex: 0,
       loadingFrames: Boolean(result.frame_id),
+      targetSeconds: initialSeconds,
+      selectedFrameIdx: fallbackFrame?.frame_idx ?? result.frame_idx,
+      selectedTimestampMs: initialTimestamp ?? 0,
+      trakeEventIndex,
     });
     setStatus("Video ready");
     if (!result.frame_id) return;
@@ -1536,7 +1905,10 @@ export function App() {
           subtitle: activeFrame
             ? `frame ${activeFrame.frame_idx} | ${timestampLabel(activeFrame.timestamp_ms)}`
             : current.subtitle,
-          url: withTimeFragment(videoUrl, activeFrame?.timestamp_ms ?? initialTimestamp),
+          targetSeconds: Math.max(
+            0,
+            (activeFrame?.timestamp_ms ?? initialTimestamp ?? 0) / 1000,
+          ),
           posterUrl:
             (activeFrame ? contextImageCandidates(activeFrame)[0] : null) ??
             current.posterUrl,
@@ -1551,44 +1923,140 @@ export function App() {
     }
   }
 
-  function shiftVideoPreview(delta: number) {
+  function applyVideoPreviewFrame(
+    resultId: string,
+    frame: ContextFrame,
+    selection: { frame_idx: number; timestamp_ms: number },
+    targetSeconds = selection.timestamp_ms / 1000,
+  ) {
     setVideoPreview((current) => {
-      if (!current || current.frames.length === 0) return current;
-      const frameIndex = Math.round(
-        clampNumber(current.frameIndex + delta, 0, current.frames.length - 1),
-      );
-      const frame = current.frames[frameIndex];
-      if (!frame) return current;
+      if (!current || current.result.id !== resultId) return current;
       return {
         ...current,
-        frameIndex,
+        frames: [frame],
+        frameIndex: 0,
+        loadingFrames: false,
         subtitle: `frame ${frame.frame_idx} | ${timestampLabel(frame.timestamp_ms)}`,
-        url: withTimeFragment(current.baseUrl, frame.timestamp_ms),
+        targetSeconds: Math.max(0, targetSeconds),
+        selectedFrameIdx: selection.frame_idx,
+        selectedTimestampMs: selection.timestamp_ms,
         posterUrl: contextImageCandidates(frame)[0] ?? current.posterUrl,
       };
     });
   }
 
+  async function selectCurrentVideoFrame() {
+    const current = videoPreview;
+    const seconds = videoPreviewRef.current?.currentTime;
+    if (!current || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+      setStatus("Video time is not ready yet");
+      return;
+    }
+    setVideoPreview((preview) =>
+      preview && preview.result.id === current.result.id
+        ? { ...preview, loadingFrames: true }
+        : preview,
+    );
+    setStatus("Resolving the current video frame");
+    try {
+      const resolved = await seekVideoFrame({
+        videoId: current.result.video_id,
+        seconds,
+      });
+      applyVideoPreviewFrame(
+        current.result.id,
+        resolved.frame,
+        resolved.selection,
+        seconds,
+      );
+      setStatus(`Frame ${resolved.selection.frame_idx} selected`);
+    } catch {
+      setVideoPreview((preview) =>
+        preview && preview.result.id === current.result.id
+          ? { ...preview, loadingFrames: false }
+          : preview,
+      );
+      setStatus("No indexed frame is available at the current video time");
+    }
+  }
+
+  async function shiftVideoPreview(delta: number) {
+    const current = videoPreview;
+    const frame = videoPreviewFrame;
+    if (!current || !frame || current.loadingFrames) return;
+    const direction = delta < 0 ? "previous" : "next";
+    setVideoPreview((preview) =>
+      preview && preview.result.id === current.result.id
+        ? { ...preview, loadingFrames: true }
+        : preview,
+    );
+    setStatus(`Loading ${direction} indexed frame`);
+    try {
+      const resolved = await seekVideoFrame({
+        videoId: current.result.video_id,
+        frameIdx: frame.frame_idx,
+        direction,
+      });
+      applyVideoPreviewFrame(current.result.id, resolved.frame, resolved.selection);
+      setStatus(`Frame ${resolved.selection.frame_idx} selected`);
+    } catch {
+      setVideoPreview((preview) =>
+        preview && preview.result.id === current.result.id
+          ? { ...preview, loadingFrames: false }
+          : preview,
+      );
+      setStatus(`No ${direction} indexed frame is available`);
+    }
+  }
+
   function addVideoPreviewFrame() {
-    if (!videoPreview) return;
+    if (!videoPreview || videoPreview.selectedFrameIdx === null) return;
     const frame = videoPreview.frames[videoPreview.frameIndex];
     if (!frame) {
       setStatus("Frame index missing");
       return;
     }
+    if (videoPreview.trakeEventIndex !== null) {
+      const trakeFrame: TrakeSequenceFrame = {
+        frame_id: frame.id,
+        frame_idx: videoPreview.selectedFrameIdx,
+        video_code: videoPreview.result.video_code,
+        timestamp_ms: videoPreview.selectedTimestampMs,
+        score: videoPreview.result.score,
+        visual_score: scoreFromBreakdown(videoPreview.result, [
+          "semantic_score",
+          "visual_score",
+          "semantic",
+          "visual",
+        ]) ?? undefined,
+        text_score: scoreFromBreakdown(videoPreview.result, [
+          "text_score",
+          "metadata_score",
+          "text",
+        ]) ?? undefined,
+        rrf_score: scoreFromBreakdown(videoPreview.result, ["rrf_score", "rrf"]) ?? undefined,
+        event_index: videoPreview.trakeEventIndex,
+        thumbnail_url: frame.thumbnail_url,
+        image_url: frame.image_url ?? null,
+        image_uri: frame.image_uri ?? null,
+        image_storage_key: frame.image_storage_key ?? null,
+      };
+      pickTrakeFrame(videoPreview.result, trakeFrame, videoPreview.trakeEventIndex);
+      return;
+    }
     const row: SubmissionRow = {
       query_name: queryName,
-      query_type: queryType,
+      query_type: queryType === "VIDEO" ? "KIS" : queryType,
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: videoPreview.result.video_code,
-      frame_indices: [frame.frame_idx],
+      frame_indices: [videoPreview.selectedFrameIdx],
       answer: queryType === "QA" ? (videoPreview.result.answer ?? "") : null,
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
       return normalizeRanks([...current, row]).slice(0, 100);
     });
-    setStatus(`Added ${videoPreview.result.video_code} frame ${frame.frame_idx}`);
+    setStatus(`Added ${videoPreview.result.video_code} frame ${videoPreview.selectedFrameIdx}`);
   }
 
   function exportLocalCsv() {
@@ -1651,10 +2119,10 @@ export function App() {
   const videoPreviewFrame =
     videoPreview?.frames[videoPreview.frameIndex] ?? null;
   const videoPreviewCanStepBack = Boolean(
-    videoPreview && videoPreview.frameIndex > 0,
+    videoPreview && videoPreviewFrame && !videoPreview.loadingFrames,
   );
   const videoPreviewCanStepForward = Boolean(
-    videoPreview && videoPreview.frameIndex < videoPreview.frames.length - 1,
+    videoPreview && videoPreviewFrame && !videoPreview.loadingFrames,
   );
 
   const modeCaption =
@@ -1677,7 +2145,7 @@ export function App() {
         </button>
 
         <nav className="task-nav" aria-label="Query type">
-          {(Object.keys(queryLabels) as QueryType[]).map((type) => (
+          {(Object.keys(queryLabels) as SearchTask[]).map((type) => (
             <button
               type="button"
               key={type}
@@ -1794,6 +2262,41 @@ export function App() {
                   ))}
                 </select>
               </label>
+              {queryType === "VIDEO" && mode !== "Chat" && (
+                <>
+                  <label className="compact-field video-code-field">
+                    Video name / code
+                    <input
+                      value={videoCodeQuery}
+                      onChange={(event) => setVideoCodeQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void submitVideoLookup();
+                        }
+                      }}
+                      placeholder="L26_V194"
+                    />
+                  </label>
+                  <label className="compact-field video-frame-field">
+                    Frame index
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={videoFrameQuery}
+                      onChange={(event) => setVideoFrameQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void submitVideoLookup();
+                        }
+                      }}
+                      placeholder="Optional"
+                    />
+                  </label>
+                </>
+              )}
               <label className="compact-field query-file">
                 Query file
                 <input
@@ -1829,16 +2332,28 @@ export function App() {
                     <div className="skeleton-card" key={index} />
                   ))}
                 </div>
+              ) : hasSearched && visibleResults.length === 0 ? (
+                <p className="empty-note search-empty-note">
+                  {queryType === "TRAKE"
+                    ? "No complete ordered sequence matches this query."
+                    : "No frames match this query."}
+                </p>
               ) : queryType === "TRAKE" && hasSearched ? (
                 <TrakeRows
                   results={visibleResults}
                   eventCount={trakeEventCount}
-                  isSelected={(result) =>
-                    selectedKeys.has(selectionKeyForResult(result))
-                  }
+                  isSelected={isTrakeFramePicked}
                   onOpen={(result) => void openFrameContext(result)}
-                  onSelect={addResult}
-                  onPreview={(result) => void openVideoPreview(result)}
+                  onSelect={pickTrakeFrame}
+                  onPreview={(result, eventIndex) =>
+                    void openVideoPreview(result, eventIndex ?? null)
+                  }
+                  selectedFrames={sortedTrakeFrameChoices}
+                  selectedEventCount={trakeFrameChoices.length}
+                  selectedVideoCode={selectedTrakeVideoCode}
+                  canAddSequence={canAddTrakeSequence}
+                  onAddSequence={addTrakeSequence}
+                  onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
                 <div
@@ -1870,16 +2385,28 @@ export function App() {
                   <ReasoningDisclosure steps={autoTrace} />
                   {loading ? (
                     <SearchLoadingStage frameColumns={frameColumns} />
+                  ) : hasSearched && visibleResults.length === 0 ? (
+                    <p className="empty-note search-empty-note">
+                      {queryType === "TRAKE"
+                        ? "No complete ordered sequence matches this query."
+                        : "No frames match this query."}
+                    </p>
                   ) : queryType === "TRAKE" && hasSearched ? (
                     <TrakeRows
                       results={visibleResults}
                       eventCount={trakeEventCount}
-                      isSelected={(result) =>
-                        selectedKeys.has(selectionKeyForResult(result))
-                      }
+                      isSelected={isTrakeFramePicked}
                       onOpen={(result) => void openFrameContext(result)}
-                      onSelect={addResult}
-                      onPreview={(result) => void openVideoPreview(result)}
+                      onSelect={pickTrakeFrame}
+                      onPreview={(result, eventIndex) =>
+                        void openVideoPreview(result, eventIndex ?? null)
+                      }
+                      selectedFrames={sortedTrakeFrameChoices}
+                      selectedEventCount={trakeFrameChoices.length}
+                      selectedVideoCode={selectedTrakeVideoCode}
+                      canAddSequence={canAddTrakeSequence}
+                      onAddSequence={addTrakeSequence}
+                      onClearSelection={() => setTrakeFrameChoices([])}
                     />
                   ) : (
                     <div
@@ -1904,16 +2431,28 @@ export function App() {
                 </>
               ) : loading ? (
                 <SearchLoadingStage frameColumns={frameColumns} />
+              ) : hasSearched && visibleResults.length === 0 ? (
+                <p className="empty-note search-empty-note">
+                  {queryType === "TRAKE"
+                    ? "No complete ordered sequence matches this query."
+                    : "No frames match this query."}
+                </p>
               ) : queryType === "TRAKE" && hasSearched ? (
                 <TrakeRows
                   results={visibleResults}
                   eventCount={trakeEventCount}
-                  isSelected={(result) =>
-                    selectedKeys.has(selectionKeyForResult(result))
-                  }
+                  isSelected={isTrakeFramePicked}
                   onOpen={(result) => void openFrameContext(result)}
-                  onSelect={addResult}
-                  onPreview={(result) => void openVideoPreview(result)}
+                  onSelect={pickTrakeFrame}
+                  onPreview={(result, eventIndex) =>
+                    void openVideoPreview(result, eventIndex ?? null)
+                  }
+                  selectedFrames={sortedTrakeFrameChoices}
+                  selectedEventCount={trakeFrameChoices.length}
+                  selectedVideoCode={selectedTrakeVideoCode}
+                  canAddSequence={canAddTrakeSequence}
+                  onAddSequence={addTrakeSequence}
+                  onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
                 <div
@@ -1989,24 +2528,35 @@ export function App() {
             </div>
           )}
           <div className="composer">
-            <textarea
-              ref={composerRef}
-              rows={1}
-              aria-label={mode === "Chat" ? "Chat message" : "Search query"}
-              value={queryText}
-              onChange={(event) => setQueryText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submitSearch();
+            {queryType === "VIDEO" && mode !== "Chat" ? (
+              <div className="video-lookup-composer" aria-live="polite">
+                <strong>{videoCodeQuery.trim() || "Video code required"}</strong>
+                <span>
+                  {videoFrameQuery.trim()
+                    ? `nearest to F${videoFrameQuery}`
+                    : "indexed keyframes"}
+                </span>
+              </div>
+            ) : (
+              <textarea
+                ref={composerRef}
+                rows={1}
+                aria-label={mode === "Chat" ? "Chat message" : "Search query"}
+                value={queryText}
+                onChange={(event) => setQueryText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitSearch();
+                  }
+                }}
+                placeholder={
+                  mode === "Chat"
+                    ? "Ask about a video or upload one for QA"
+                    : "Search frames, events, OCR text, or visual details"
                 }
-              }}
-              placeholder={
-                mode === "Chat"
-                  ? "Ask about a video or upload one for QA"
-                  : "Search frames, events, OCR text, or visual details"
-              }
-            />
+              />
+            )}
             <div className="composer-actions">
               <div className="composer-left-actions">
                 <input
@@ -2303,6 +2853,43 @@ export function App() {
               playsInline
               onLoadedMetadata={(event) => event.currentTarget.pause()}
             />
+            <div className="video-current-frame-actions">
+              {videoPreview.trakeEventIndex !== null && (
+                <label className="trake-video-slot">
+                  <span>Sequence slot</span>
+                  <select
+                    value={videoPreview.trakeEventIndex}
+                    onChange={(event) => {
+                      const nextIndex = Number.parseInt(event.target.value, 10);
+                      if (!Number.isInteger(nextIndex)) return;
+                      setVideoPreview((current) =>
+                        current
+                          ? { ...current, trakeEventIndex: nextIndex }
+                          : current,
+                      );
+                    }}
+                  >
+                    {Array.from({ length: trakeEventCount }, (_, index) => index + 1).map(
+                      (eventIndex) => (
+                        <option key={eventIndex} value={eventIndex}>
+                          E{eventIndex}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={videoPreview.loadingFrames}
+                onClick={() => void selectCurrentVideoFrame()}
+                title="Select the frame currently shown in the video"
+              >
+                <LocateFixed size={16} />
+                Select current frame
+              </button>
+            </div>
             <div className="video-frame-toolbar">
               <button
                 type="button"
@@ -2316,9 +2903,9 @@ export function App() {
               <div className="video-frame-current">
                 {videoPreviewFrame ? (
                   <>
-                    <strong>Frame {videoPreviewFrame.frame_idx}</strong>
+                    <strong>Frame {videoPreview.selectedFrameIdx ?? videoPreviewFrame.frame_idx}</strong>
                     <small>
-                      {timestampLabel(videoPreviewFrame.timestamp_ms)}
+                      {timestampLabel(videoPreview.selectedTimestampMs)}
                       {videoPreview.loadingFrames ? " | loading context" : ""}
                     </small>
                   </>
@@ -2345,7 +2932,9 @@ export function App() {
                 onClick={addVideoPreviewFrame}
               >
                 <Plus size={15} />
-                Pick frame
+                {videoPreview.trakeEventIndex !== null
+                  ? `Add to E${videoPreview.trakeEventIndex} sequence`
+                  : "Pick frame"}
               </button>
             </div>
             <div className="video-score-panel">

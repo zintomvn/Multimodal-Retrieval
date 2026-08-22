@@ -13,6 +13,7 @@ import type {
   QueryType,
   SearchResponse,
   SubmissionRow,
+  VideoFrameSeekResponse,
   VideoPreviewUrl,
 } from "../types";
 
@@ -115,9 +116,26 @@ export async function getVideoPreviewUrl(
   );
 }
 
+export async function seekVideoFrame(input: {
+  videoId: string;
+  seconds?: number;
+  frameIdx?: number;
+  direction?: "nearest" | "next" | "previous";
+}): Promise<VideoFrameSeekResponse> {
+  const params = new URLSearchParams();
+  if (input.seconds !== undefined) params.set("seconds", String(input.seconds));
+  if (input.frameIdx !== undefined) params.set("frame_idx", String(input.frameIdx));
+  params.set("direction", input.direction ?? "nearest");
+  return requestJson<VideoFrameSeekResponse>(
+    `/api/media/videos/${encodeURIComponent(input.videoId)}/frames/seek?${params.toString()}`,
+  );
+}
+
 export async function listFrames(input: {
   datasetId?: string;
   videoId?: string;
+  videoCode?: string;
+  frameIdx?: number;
   limit?: number;
   offset?: number;
   presentOnly?: boolean;
@@ -125,6 +143,8 @@ export async function listFrames(input: {
   const params = new URLSearchParams();
   if (input.datasetId) params.set("dataset_id", input.datasetId);
   if (input.videoId) params.set("video_id", input.videoId);
+  if (input.videoCode) params.set("video_code", input.videoCode);
+  if (input.frameIdx !== undefined) params.set("frame_idx", String(input.frameIdx));
   params.set("limit", String(input.limit ?? 60));
   params.set("offset", String(input.offset ?? 0));
   params.set("present_only", String(input.presentOnly ?? true));

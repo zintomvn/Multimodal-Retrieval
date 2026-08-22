@@ -18,6 +18,9 @@ class ElasticsearchTextSearchClient:
 
     def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
         boosts = boosts or {}
+        query = " ".join((query or "").split())
+        if not query:
+            return []
         fields = [f"{field}^{boost}" for field, boost in boosts.items()] or [
             "text_value",
             "caption",
@@ -36,7 +39,9 @@ class ElasticsearchTextSearchClient:
                     "multi_match": {
                         "query": query,
                         "fields": fields,
-                        "fuzziness": "AUTO",
+                        "type": "best_fields",
+                        "operator": "or",
+                        "minimum_should_match": self._minimum_should_match(query),
                     }
                 },
             )
@@ -47,6 +52,15 @@ class ElasticsearchTextSearchClient:
             TextHit(id=hit["_id"], score=float(hit["_score"]), metadata=hit.get("_source", {}))
             for hit in response.get("hits", {}).get("hits", [])
         ]
+
+    @staticmethod
+    def _minimum_should_match(query: str) -> str:
+        token_count = len(query.split())
+        if token_count <= 2:
+            return "100%"
+        if token_count <= 4:
+            return "75%"
+        return "50%"
 
     def upsert(self, index: str, documents: list[tuple[str, dict]]) -> int:
         self._ensure_index(index)
