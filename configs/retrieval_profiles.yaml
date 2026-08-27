@@ -34,6 +34,10 @@ competition_default:
     asr_boost: 2.5
     object_boost: 1.8
     caption_boost: 5.0
+    text_source_weights:
+      asr: 0.35
+      caption: 0.50
+      ocr: 0.15
   reranking:
     enabled: false
     top_k: 50
@@ -48,6 +52,9 @@ competition_default:
     min_match_ratio: 0.67
     per_query_video_limit: 24
     prefer_full_sequences: true
+    compactness_weight: 0.35
+    gap_penalty: 0.20
+    per_video_sequence_limit: 4
 
 semantic_fast:
   semantic_weight: 0.85
@@ -71,6 +78,10 @@ semantic_fast:
     asr_boost: 2.0
     object_boost: 1.2
     caption_boost: 1.0
+    text_source_weights:
+      asr: 0.35
+      caption: 0.50
+      ocr: 0.15
   temporal:
     delta_t_max_ms: 120000
     min_match_ratio: 0.67
@@ -135,6 +146,10 @@ competition_mvp_v1:
     asr_boost: 2.8
     object_boost: 1.8
     caption_boost: 1.6
+    text_source_weights:
+      asr: 0.35
+      caption: 0.50
+      ocr: 0.15
   reranking:
     enabled: true
     top_k: 80
