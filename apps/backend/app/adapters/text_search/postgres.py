@@ -36,7 +36,15 @@ class PostgresTextSearchClient:
         self.database_url = database_url
         self.engine = create_engine(database_url, pool_pre_ping=True, connect_args=database_connect_args(database_url))
 
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+    def search(
+        self,
+        index: str,
+        query: str,
+        top_k: int,
+        boosts: dict[str, float] | None = None,
+        source_types: list[str] | None = None,
+    ) -> list[TextHit]:
+        _ = source_types
         _ = index
         query = (query or "").strip()
         if not query:

@@ -16,7 +16,14 @@ class ElasticsearchTextSearchClient:
 
         self.client = self._connect_with_fallback(Elasticsearch=Elasticsearch, url=url)
 
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+    def search(
+        self,
+        index: str,
+        query: str,
+        top_k: int,
+        boosts: dict[str, float] | None = None,
+        source_types: list[str] | None = None,
+    ) -> list[TextHit]:
         boosts = boosts or {}
         query = " ".join((query or "").split())
         if not query:
@@ -30,20 +37,29 @@ class ElasticsearchTextSearchClient:
             "normalized_asr_text",
         ]
         try:
+            match_query = {
+                "multi_match": {
+                    "query": query,
+                    "fields": fields,
+                    "type": "best_fields",
+                    "operator": "or",
+                    "minimum_should_match": self._minimum_should_match(query),
+                }
+            }
+            query_body = match_query
+            if source_types:
+                query_body = {
+                    "bool": {
+                        "filter": [{"terms": {"source_type": source_types}}],
+                        "must": [match_query],
+                    }
+                }
             response = self.client.search(
                 index=index,
                 size=top_k,
                 ignore_unavailable=True,
                 request_timeout=3,
-                query={
-                    "multi_match": {
-                        "query": query,
-                        "fields": fields,
-                        "type": "best_fields",
-                        "operator": "or",
-                        "minimum_should_match": self._minimum_should_match(query),
-                    }
-                },
+                query=query_body,
             )
         except Exception:  # noqa: BLE001 - text search is optional in hybrid retrieval.
             logger.warning("Elasticsearch search failed for index '%s'; returning no text hits.", index, exc_info=True)
