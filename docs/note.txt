@@ -1,0 +1,359 @@
+Kết quả Elasticsearch keyframe_annotations: 286,605 docs
+L21: 1,890
+L22: 31,212
+L23: 2,514
+L24: 7,176
+L25: 36,249
+L26: 154,242
+L27: 8,964
+L28: 16,002
+L29: 15,078
+L30: 13,278
+Local staging DB data/dev_search_local.db: 286,610 keyframes L21-L30, đủ metadata khung hình để frontend materialize kết quả search. Feature thiếu được để rỗng/list rỗng:
+Caption: chỉ có L21, 1,890 rows.
+OCR: có L21-L24, tổng 42,503 rows.
+Object detection: có L21-L30, 256,044 rows có object label.
+
+# Data
+
+Kết luận ngắn: Elasticsearch/local DB có L21-L30, nhưng caption chỉ có L21_V001/V002, còn Supabase/Zilliz cloud hiện chưa đọc được. Vì bạn đang tăng caption_boost=5.0, các query dạng mô tả tự nhiên sẽ bị L21_V001/V002 lấn lên.
+
+data/dev_search_local.db
+Local Metadata DB Backend Đang Dùng
+datasets: 1
+videos: 846
+keyframes: 286,610
+frame_annotations: 286,610
+
+Summary:
+
+L21 videos=2   frames=1,890   caption=1,890  ocr=1,825   objects=1,542
+L22 videos=31  frames=31,212  caption=0      ocr=31,209  objects=27,414
+L23 videos=25  frames=2,514   caption=0      ocr=2,514   objects=2,425
+L24 videos=43  frames=7,176   caption=0      ocr=6,955   objects=6,264
+L25 videos=88  frames=36,254  caption=0      ocr=0       objects=31,283
+L26 videos=498 frames=154,242 caption=0      ocr=0       objects=145,552
+L27 videos=16  frames=8,964   caption=0      ocr=0       objects=7,020
+L28 videos=24  frames=16,002  caption=0      ocr=0       objects=11,971
+L29 videos=23  frames=15,078  caption=0      ocr=0       objects=12,144
+L30 videos=96  frames=13,278  caption=0      ocr=0       objects=11,429
+
+Elasticsearch
+Index keyframe_annotations cũng có L21-L30:
+total L21-L30 docs: 286,605
+
+L21 videos=2   docs=1,890   caption=1,890  ocr=1,825   objects=1,542
+L22 videos=31  docs=31,212  caption=0      ocr=31,209  objects=27,414
+L23 videos=25  docs=2,514   caption=0      ocr=2,514   objects=2,425
+L24 videos=43  docs=7,176   caption=0      ocr=6,955   objects=6,264
+L25 videos=88  docs=36,249  caption=0      ocr=0       objects=31,283
+L26 videos=498 docs=154,242 caption=0      ocr=0       objects=145,552
+L27 videos=16  docs=8,964   caption=0      ocr=0       objects=7,020
+L28 videos=24  docs=16,002  caption=0      ocr=0       objects=11,971
+L29 videos=23  docs=15,078  caption=0      ocr=0       objects=12,144
+L30 videos=96  docs=13,278  caption=0      ocr=0       objects=11,429
+
+GCS Cloud
+
+L21 videos=29 images=25,581
+L22 videos=31 images=31,212
+L23 videos=25 images=2,514
+L24 videos=43 images=7,176
+L25 videos=88 images=36,254
+L26 videos=498 images=154,242
+L27 videos=16 images=8,964
+L28 videos=24 images=16,002
+L29 videos=23 images=15,078
+L30 videos=96 images=13,278
+
+
+Supabase / Zilliz
+Supabase: chưa kiểm/insert được vì connection hiện tại lỗi tenant/user ... not found.
+Zilliz: chưa kiểm được vì cluster đang STOPPED.
+Vì Zilliz chưa chạy nên search hiện tại có semantic_score=0.0, tức vector không góp điểm.
+
+L21: 7,800 vectors
+L22: 9,096 vectors
+L23: 2,326 vectors
+L24: 6,781 vectors
+L25: 37,445 vectors
+
+Total: 63,448 vectors / 216 videos
+Dim: 768
+Mismatch: 0
+Zilliz row_count: 63,448
+
+# Note
+
+Problems:
+
+- Data hiện lên chỉ có V001, V002 -> kiểm tra lỗi
+- Embedding lại vector bằng tự host
+- Kiểm tra database trên cloud
+- Kiểm tra cách chạy của elasticsearch
+
+
+Đã chỉnh backend sang SigLIP2 và test được từ frontend xuống backend.
+Thông số model/search đang ở đây
+- configs/model_registry.yaml: khai bao model embedder. Hien clip_vith14_quickgelu_dfn5b_v2 enabled, dim 1024, collection keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2; SigLIP2 So400M de disabled cho lan extract sau.
+- configs/retrieval_profiles.yaml: profile search trỏ Milvus sang collection SigLIP2.
+- apps/backend/app/core/deps.py: backend chọn runtime embedder.
+- apps/backend/app/adapters/model_runtime/siglip2.py: adapter SigLIP2 mới.
+- apps/web/src/api/client.ts: frontend mặc định gọi API base URL, có thể override bằng VITE_API_BASE_URL.
+Đã chạy
+- Upsert bridge metadata vào Zilliz cho L21-L25: 63,448 vectors, 216 videos, không thiếu DB frame.
+- Lý do cần bridge: vector ID trên Zilliz dạng L21_V015_212, còn DB/frontend dùng frame thật dạng L21_V015_F027730.
+Kết quả test
+- Backend test đang chạy: http://127.0.0.1:8010
+- Frontend test đang chạy: http://127.0.0.1:5174
+- Playwright đã bấm search từ frontend: response /api/retrieval/search status 200, trả 100 results và render card thành công.
+- Với query của bạn, backend semantic SigLIP2 tìm thấy L21_V015 ở rank 10: L21_V015_F027730, frame 27730.
+Lưu ý quan trọng: ground truth bạn đưa là L21_V015, 25800; video đã vào top 10, nhưng frame lệch vì CSV vector trên GCS không có frame index gốc, chỉ có số thứ tự 212.jpg. Muốn match frame exact 25800, cần file map gốc L21_V015_212 -> frame_idx 25800 hoặc re-extract vector trực tiếp từ bộ AutoShot keyframes hiện tại.
+Một blocker còn lại: DATABASE_URL trong .env hiện bị Supabase báo tenant/user not found, nên mình không restart backend 8000 cũ. Backend 8010 đang dùng SQLite local data/dev_search_local.db. Không cần chạy server ViT-B-32/OpenAI embedding ở port 8002 nữa.
+
+
+KIS
+QA
+TRAKE
+
+gắn thêm các metadata vào
+- Chạy object detection
+- Chạy ASR cho video song song với chạy với frame
+
+
+# MODEL
+asr: whisper-large3-turbo
+
+CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
+SigLIP2-400m - 1152-dims
+
+
+| Pipeline                      | Mục đích                                  | Model được paper ghi               | Tên nên load khi implement                                            | Output                               | Có đưa vào vector DB? |
+| ----------------------------- | ----------------------------------------- | ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------ | --------------------- |
+| **Shot Boundary Detection**   | Chia video thành các shot                 | **AutoShot**                       | `wentaozhu/AutoShot` implementation                                   | Danh sách `[start_frame, end_frame]` | ❌                     |
+| **Keyframe filtering**        | Loại frame gần giống nhau trong từng shot | **CLIP ViT-L-14-quickgelu, DFN2B** | OpenCLIP: `ViT-L-14-quickgelu` + `pretrained="dfn2b"`                 | embedding tạm để tính L2             | ❌                     |
+| **Global semantic embedding** | Search semantic tổng quát                 | **CLIP (DFN5B)**                   | Khả năng cao OpenCLIP `ViT-H-14-quickgelu` + `dfn5b`                  | **1024-dim**                         | ✅ Milvus              |
+| **Fine-grained embedding**    | Search chi tiết/object/visual concept     | **SigLIP2**                        | nên dùng **So400m family**, ví dụ `google/siglip2-so400m-patch14-384` | **1152-dim**                         | ✅ Milvus              |
+| **Captioning**                | Sinh description cho keyframe             | **Qwen2.5-VL-3B-Instruct**         | `Qwen/Qwen2.5-VL-3B-Instruct`                                         | Text caption                         | ❌ Elasticsearch       |
+| **OCR**                       | Đọc chữ trong keyframe                    | **Qwen2.5-VL-3B-Instruct**         | cùng model trên                                                       | OCR text                             | ❌ Elasticsearch       |
+| **ASR**                       | Speech → text                             | **Whisper**                        | Paper **không nói rõ variant**                                        | transcript + timestamp               | ❌ Elasticsearch       |
+| Object annotation             | Object filter                             | Faster R-CNN / OpenImagesV4        | Dataset AIC đã cung cấp                                               | object labels                        | ❌ Elasticsearch       |
+
+
+| Batch | Videos trên GCS | Frames `.jpg` | Caption | OCR | Objects |
+|---|---:|---:|---:|---:|---:|
+| L21   | 29 | 25,581 | 1,890 | 1,825 | 1,542 |
+| L22   | 31 | 31,212 | 0 | 31,209 | 27,414 |
+| L23   | 25 | 2,514 | 0 | 2,514 | 2,425 |
+| L24   | 43 | 7,176 | 0 | 6,955 | 6,264 |
+| L25   | 88 | 36,254 | 0 | 0 | 31,283 |
+| L26   | 498 | 154,242 | 0 | 0 | 145,552 |
+| L27   | 16 | 8,964 | 0 | 0 | 7,020 |
+| L28   | 24 | 16,002 | 0 | 0 | 11,971 |
+| L29   | 23 | 15,078 | 0 | 0 | 12,144 |
+| L30   | 96 | 13,278 | 0 | 0 | 11,429 |
+
+
+
+
+1. LLM planners: 
+- variants
+- tách frame cho temporal search 
+2. Search theo frame
+3. 
+
+
+
+
+
+# Strategy 1: CLIP-Based
+
+USER QUERY
+    │
+    ↓
+Qwen3-4B-Instruct-2507
+Query interpretation / decomposition
+    │
+    ├─────────────────────────────────┐
+    ↓                                 ↓
+ SigLIP2                           CLIP / other
+    ↓                                 ↓
+top 300                            top 300
+    └──────────────┬──────────────────┘
+                   ↓
+                  RRF
+                   ↓
+                top 50
+                   ↓
+       Model Reranker (Qwen3-VL-Reranker-2B)
+                   ↓
+                top 10
+                   ↓
+          Temporal Re-ranking
+                   ↓
+              final result
+
+Temporal Search: lấy thuật toán của vortex và anh Trường test xem sao
+Reranking:
+- RFF
+- Model rerank 
+- Query Refinement with Relevance Feedback
++ Rocchio algorithm
+
+reranker: 
+
+
+# Strategy 2: Text-based
+
+reranker:   
+nvidia/llama-nemotron-rerank-vl-1b-v2
+
+embedding:
+Qwen3-Embedding-0.6B
+https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+
+Prompt:
+P1: đọc paper [2606.19682v1-1.pdf](d:/University/Projects/Individual projects/Multimodal-Retrieval/docs/papers/2606.19682v1-1.pdf) làm ra một phiên bản markdown của nó, hiện tại tôi đã chạy extract feature từ model CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1152-dims trong paper và để nó trong các extractor_version=clip-vit-h14-quickgelu-dfn5b-v2/ như hình tôi gửi, giờ chạy nó ingest vào milvus, lưu ý tôi sẽ chạy feature extract thêm bằng model siglip2 để làm giống kỹ thuật trong paper nên là thiết kế trên milvus và metadata sao tôi sẽ dùng được như yêu cầu, sau đó kết nối với backend để tôi chạy, không dùng model siglip2 baseline cũ nữa, xóa model baseline SigLIP2 c? ?? g? khỏi dự án giúp tôi, vì cái đó tôi feature extraction sai logic, xóa cho đỡ nặng máy và chạy trên backend model mới giúp tôi
+
+P2: Dựa vào paper, viết lại cho tôi giải thuật để tìm cho dạng TRAKE hay Temporal Search và rerank lại 
+
+Dựa vào data của asr viết cho tôi script chạy insert vào elasticsearch, 
+
+
+
+
+# Strategy 3: Search with algorithm (Temporal Sequential Queries)
+
+Strategy 3.1 - Vortex: Search frame -> Tìm video -> re-scoring -> re-ranking
+1. LLM sinh ra các text để search theo 
+Independent Retrieval: lọc ra các frame cần thiết 
+2. tìm frame 
+3. 
+
+
+Idea: 
+- Lọc theo frame đang có  
+- Tìm từ frame giữa -> chỉa ra tìm prev và post
+- Tìm từ frame rồi lọc theo video
+- Tìm theo chuỗi frame -> ranking 
+
+
+
+
+Thịnh:
+- Note chạy local
+- 
+
+Note code:
+- gom data text lại thành một bộ
+    + Metadata: Captioning + OCR + Object detection
+    + Captioning -> chạy đưa lên elasticsearch luôn
+    + ASR -> chạy đưa lên elasticsearch luôn
+- upload lên elasticsearch local + viết script
+- metadata thì upload lên lại supabase cloud
+- chạy embedding text của elasticsearch -> upload lên milvus (3 loại embeddings: 2 visual-text + 1 text)
+- liên kết với backend chạy được hiện lên web
+- Chạy ingest embedding -> test liên kết rồi viết script test benchmark
+
+Note fix:
+- Chạy thêm database quan hệ vào supabase
+- giao diện của trake chỉnh lại có thêm nút lựa chọn frame nào
+- Bấm ảnh hiện ra thì có play video và có cho xem frame lên xuống của video đó -> cho vào submission
+- QA thêm suy luận bằng LLM 
+- thêm tài khoản và lịch sử vào redis 
+    Giao diện: 
+    + KIS: như cũ
+    + TRAKE thì chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo 
+    + QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
+
+- Improving version 1 (Round 1): 
+    + host model online (siglip2, openclip, qwen3-vl-embedding)
+    + UI: Làm thêm phần hiện từng chỉ số ra để cho thấy độ tương đồng từng thành phần khi nhấn vào video
+    + Chỉnh lại logic x
+    + Câu TRAKE bug chưa hiện hết 4 event x
+    + Chỉnh lại output câu TRAKE x
+    + xem tối ưu tốc độ search và hiện lên màn hình x
+    + UI: x
+    Video có thể nhấn play xem video, tối ưu backend cho phần hiện UI nhanh hơn 
+    Bấm button Video hiện ra thì có play video và có cho xem frame bằng button tiến hoặc lùi của video đó để xem frame tiếp theo hoặc frame trước đó và cho thêm vào submission
+    Hiện điểm từng thành phần của frame đó (visual, text, asr) trong khi search 
+    + export file submission csv cho câu thì hiện nút kế bên nút export csv x
+    thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
+    + Phần TRAKE lọc frame trùng ra x
+    + ở trong ô selected frames có thể thay đổi thứ tự trong frame x
+    + Chỉnh lại có thể sửa cho phần nào nhiều hơn - dựa vào prompt con người x
+    + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn x
+    + Chỉnh lại algorithm của TRAKE theo visual nhiều hơn - Dùng prompt thêm để tối ưu x 
+    + phần cell reasoning cách ra một chút cho với kết quả của search x
+
+Problem: 
+- web mình relational data nó đang trên local máy tui bữa agent chạy test trên supabase mà k biết sao lỗi 
+- Chưa có VQA pipeline (model VLM or LLM ?) -> support giving information
+- Data metadata thiếu phần captioning, ocr, object -> QA hơi khó tự động hóa
+- Thuật toán tìm TRAKE còn quá cùi, chưa xử lý được dạng thời gian
+- Chưa có VLM reranker
+- LLM suy luận chưa phải là model ngon nhất
+
+
+
+
+- Improving version 2 (Round 2) - Milestone 5: 
+    + UI chỉnh lại phần hiện trong video sao cho có minh chứng của đoạn text từ ASR, Captioning x
+    + Phần OCR, ASR và Captioning hiện ngắn, chỉ hiện phần ASR, OCR, Captioning phần mà lấy dùng để search và các đoạn xung quanh không phải hiện hết x
+    + Câu nào ASR chỉnh lại reasoning, dùng search bằng elasticsearch x
+    + Chunking phần captioning, asr chuyển vào database x
+    + chỉnh khi chọn frame trong phần video thì, phải hiện ra bên phải các evidence tương ứng, không chỉ cố định một chỗ x
+    + Chỉnh lại code không gán cứng mà dùng dùng system prompt agent để suy luận ra không phải gán cứng sẽ bị overfit trong planning x
+    
+    + Chỉnh lại câu prompt sao cho nó có thể suy luận đúng ngữ cảnh hơn (Nghĩ logic khúc này)
+    + chỉnh lại không cần hiện trải dài câu reasoning chỉ là lúc suy luận thì có ký tự xoay trong phần reasoning để biết agent đang suy luận 
+    + Đưa data db relational và text lên cloud 
+    + Tạo text embedding, tách chunk? -> tải lên zilliz -> tốn thêm phần model embedding cho text
+    + Chỉnh lại phần QA sao cho nó nhận diện được video và tìm trong video đó
+    + Phần TRAKE lọc frame trùng ra 
+    + Thêm phần video có thể đưa và TRAKE để search đúng hơn
+    + Sau khi tìm ra evidence thì bỏ vào cho model suy luận để đưa ra câu trả lời QA
+    + lấy phần video bỏ vào VLM cho nó phân tích được không? 
+    + host slm làm reranker cho text và visual
+    
+
+Future work: 
+- Refactor lại cấu trúc code 
+
+
+Note run: 
+- elasticsearch: chạy script chạy data captioning + ocr + asr 
+- Chạy host server cho model:
+    + CLIP and SigLIP2
+    + Model Text embedding
+    + Model reranker
+- docker: 
+    + backend
+    + elasticsearch
+    + milvus -> cloud zilliz
+    + redis
+    + postgre
+
+
+# Tech stack
+Elasticsearch: bỏ qua chạy host bằng docker -> import lên elasticsearch
+endpoint: https://ec0eca5bfadf4b849ffcba79ad4efdd6.us-central1.gcp.cloud.es.io:443
+key: dlM0VklLQUJLOEVPekxqSFAyWE86QVJmb0JXUmVtNEV0SF9lYkk5MThuZw==
+NkM0V0lLQUJLOEVPekxqSHBtVlg6NlpER0JRRWNwaDR1VHVmMnVsUjhidw==
+
+# Ngrok
+key: 3ID14PUUiFf3PUMxiEAJz5yUZM9_uck67De6dhN9joHAk5nZ
+url: https://pope-strode-produce.ngrok-free.dev/
+
+
+Còn một blocker thật: SigLIP2 runtime local ở 8003 chưa load được do lỗi tài nguyên Windows/pagefile/disk (os error 1455 / model ~4.5GB). 
+Collection SigLIP2 đã ingest và backend RRF đã sẵn sàng; hiện live search đang fallback CLIP-only trong RRF cho tới khi bật được service SigLIP2 mới.
+
+fix lỗi của elasticsearch, dùng data của supabase tôi đã khởi động lại và chỉnh lại chỉ dùng model CLIP làm baseline trước để search, khi search thì lưu lịch sử vào redis và lưu lịch sử search vào supabase
+Giao diện:
+- KIS: như cũ
+- TRAKE thì kết quả sẽ hiện kiểu chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo sang ngang để chọn
+- QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
+thay vì submission thì cho ra file csv để tải về chứ không phải zip, UI khi agent phân tích thì hiện ra những file json hay trace phần phân tích lên UI để tôi xem, giống ChatGPT của openAI, 
+
+liên kết relational data của tôi vào supabase cloud để có thể dùng chung trong nhiều máy khi chạy, 

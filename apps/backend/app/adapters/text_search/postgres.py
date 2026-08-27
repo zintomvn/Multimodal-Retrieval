@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import create_engine, text
 
 from app.adapters.text_search.base import TextHit
+from app.core.config import database_connect_args
 
 
 TOKEN_RE = re.compile(r"[\wÀ-ỹ]+", re.UNICODE)
@@ -33,14 +34,17 @@ class PostgresTextSearchClient:
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
-        connect_args = {}
-        if database_url.startswith("postgresql"):
-            connect_args["prepare_threshold"] = None
-        elif database_url.startswith("sqlite"):
-            connect_args["check_same_thread"] = False
-        self.engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
+        self.engine = create_engine(database_url, pool_pre_ping=True, connect_args=database_connect_args(database_url))
 
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+    def search(
+        self,
+        index: str,
+        query: str,
+        top_k: int,
+        boosts: dict[str, float] | None = None,
+        source_types: list[str] | None = None,
+    ) -> list[TextHit]:
+        _ = source_types
         _ = index
         query = (query or "").strip()
         if not query:

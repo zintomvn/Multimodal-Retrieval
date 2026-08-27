@@ -15,6 +15,7 @@ from app.adapters.text_search.base import TextHit
 from app.adapters.vector_db.base import VectorHit
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, Shot, Video
 from app.modules.models.service import ModelRegistryService
+from app.modules.retrieval.query_planning import QueryPlanningResult
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
 from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel
@@ -243,6 +244,44 @@ def test_m4_weighted_and_rrf_profiles_change_expected_order(tmp_path: Path) -> N
     assert rrf_response.results[0].frame_id == "L30_V001_F000005"
     assert weighted_response.results[0].score_breakdown["rrf_score"] == 0
     assert rrf_response.results[0].score_breakdown["rrf_score"] > 0
+
+    db.close()
+
+
+def test_agent_text_weight_can_override_visual_profile_for_mixed_evidence(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+
+    class TextFirstPlanner:
+        def plan(self, query: str, query_type: str, max_variants: int) -> QueryPlanningResult:
+            return QueryPlanningResult(
+                language="en",
+                intent=query_type,
+                summary=query,
+                variants=[query],
+                temporal_events=[query],
+                retrieval_weights={"visual": 0.1, "text": 0.9},
+                retrieval_weight_source="agent",
+                decomposition={"search_factors": {}, "retrieval_strategy": {"clauses": []}},
+                source="langchain_deep_agent",
+            )
+
+    service.query_planner = TextFirstPlanner()  # type: ignore[assignment]
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="agent-text-first",
+            query_text="person says red shirt",
+            profile="m4_weighted",
+            top_k=3,
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=True),
+        )
+    )
+
+    assert response.results[0].frame_id == "L30_V001_F000005"
+    assert response.normalized_query["retrieval_weights"] == {"visual": 0.1, "text": 0.9}
+    assert response.normalized_query["retrieval_weight_source"] == "agent"
+    assert response.results[0].score_breakdown["retrieval_weight_source"] == "agent"
 
     db.close()
 

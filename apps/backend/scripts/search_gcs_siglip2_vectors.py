@@ -7,9 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import numpy as np
-import torch
-from transformers import AutoModel, AutoProcessor
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parents[1]
@@ -37,7 +36,7 @@ from src.artifact_io import gcs_client  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Search GCS SigLIP2 .npy embeddings without Milvus.")
+    parser = argparse.ArgumentParser(description="Search GCS .npy embeddings without Milvus using an OpenAI-compatible embedding endpoint.")
     parser.add_argument("--query", required=True)
     parser.add_argument("--batches", default=DEFAULT_BATCHES)
     parser.add_argument("--top-k", type=int, default=20)
@@ -50,18 +49,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gcs-credentials-file", default="")
     parser.add_argument("--gcs-timeout", type=float, default=60.0)
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--embedding-base-url", default="http://127.0.0.1:8001/v1")
     return parser.parse_args()
 
 
-def text_embedding(query: str, model_name: str) -> np.ndarray:
-    processor = AutoProcessor.from_pretrained(model_name, local_files_only=True)
-    model = AutoModel.from_pretrained(model_name, local_files_only=True)
-    model.eval()
-    inputs = processor(text=[query], padding="max_length", return_tensors="pt")
-    with torch.no_grad():
-        output = model.get_text_features(**inputs)
-    tensor = output if isinstance(output, torch.Tensor) else output.pooler_output
-    vector = tensor.detach().cpu().numpy().astype("float32")[0]
+def text_embedding(query: str, model_name: str, base_url: str) -> np.ndarray:
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(
+            f"{base_url.rstrip('/')}/embeddings",
+            json={"model": model_name, "input": query},
+        )
+    response.raise_for_status()
+    body = response.json()
+    data = body.get("data") or []
+    if not data or not isinstance(data[0].get("embedding"), list):
+        raise RuntimeError("Embedding endpoint returned no vector.")
+    vector = np.asarray([float(value) for value in data[0]["embedding"]], dtype=np.float32)
     norm = float(np.linalg.norm(vector))
     if norm > 0:
         vector = vector / norm
@@ -88,7 +91,7 @@ def main() -> None:
     if not bucket_name:
         raise RuntimeError("Set --gcs-bucket or GCS_BUCKET.")
 
-    query_vector = text_embedding(args.query, args.model_name)
+    query_vector = text_embedding(args.query, args.model_name, args.embedding_base_url)
     storage_client = gcs_client(credentials_file)
     artifacts = []
     for batch_id in split_batches(args.batches):
@@ -139,6 +142,7 @@ def main() -> None:
     output = {
         "query": args.query,
         "model_name": args.model_name,
+        "embedding_base_url": args.embedding_base_url,
         "batches": split_batches(args.batches),
         "vectors_scanned": total_vectors,
         "videos_scanned": len(video_best),

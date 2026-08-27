@@ -286,5 +286,55 @@ def test_media_router_lists_imported_frames_for_gallery() -> None:
         assert response["frames"][0]["id"] == "L21_V001_F000000"
         assert response["frames"][0]["thumbnail_url"] == "/api/media/frames/L21_V001_F000000/thumbnail"
         assert response["frames"][0]["image_storage_key"].startswith("processed/keyframes/")
+
+        nearest = media_router.list_frames(
+            dataset_id=session.query(Dataset).filter_by(dataset_code="aic-2026").one().dataset_id,
+            video_code="V001",
+            frame_idx=30,
+            limit=1,
+            db=session,
+        )
+        assert nearest["total"] == 2
+        assert nearest["frames"][0]["id"] == "L21_V001_F000037"
+    finally:
+        session.close()
+
+
+def test_media_router_seeks_indexed_frames_by_time_and_direction() -> None:
+    config = _config()
+    rows = normalize_loaded_batches([LoadedBatch(source=_source(), rows=_rows())], config)
+    payloads = build_payloads(rows, config)
+    Session = _session_factory()
+
+    session = Session()
+    try:
+        upsert_payloads(session, payloads)
+
+        nearest = media_router.seek_video_frame(
+            video_id="L21_V001",
+            seconds=1.3,
+            direction="nearest",
+            db=session,
+        )
+        previous = media_router.seek_video_frame(
+            video_id="L21_V001",
+            frame_idx=37,
+            direction="previous",
+            db=session,
+        )
+        following = media_router.seek_video_frame(
+            video_id="L21_V001",
+            frame_idx=0,
+            direction="next",
+            db=session,
+        )
+
+        assert nearest["frame"]["frame_idx"] == 37
+        assert nearest["frame"]["timestamp_ms"] == 1480
+        assert nearest["selection"]["frame_idx"] == 32
+        assert nearest["selection"]["timestamp_ms"] == 1300
+        assert previous["frame"]["frame_idx"] == 0
+        assert following["frame"]["frame_idx"] == 37
+        assert following["frame"]["thumbnail_url"].endswith("L21_V001_F000037/thumbnail")
     finally:
         session.close()

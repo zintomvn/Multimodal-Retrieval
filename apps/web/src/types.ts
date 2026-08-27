@@ -24,7 +24,18 @@ export interface SearchResult {
     frame_id: string;
     frame_idx: number;
     video_code: string;
+    timestamp_ms?: number | null;
     score: number;
+    visual_score?: number;
+    text_score?: number;
+    rrf_score?: number;
+    order_index?: number;
+    event_index?: number;
+    event_query?: string;
+    thumbnail_url?: string | null;
+    image_url?: string | null;
+    image_uri?: string | null;
+    image_storage_key?: string | null;
   }>;
   thumbnail_url: string | null;
   image_url: string | null;
@@ -39,11 +50,73 @@ export interface SearchResponse {
   query_type: QueryType;
   query_name: string | null;
   normalized_query: {
+    language?: string;
     variants?: string[];
+    semantic_variants?: string[];
+    text_variants?: string[];
     temporal_events?: string[];
+    text_temporal_events?: string[];
+    temporal_event_count?: number;
+    temporal_event_source?: string;
+    temporal_mode?: boolean;
+    temporal_strategy?: "vortex_k_context" | "aithena_weighted_ats" | null;
+    temporal_anchor_index?: number;
+    retrieval_weights?: { visual?: number; text?: number };
+    retrieval_weight_source?: string;
+    text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+    text_source_weight_source?: string;
+    temporal_event_plans?: Array<{
+      event_index?: number;
+      query?: string;
+      text_query?: string;
+      importance?: number;
+      retrieval_weights?: { visual?: number; text?: number };
+      retrieval_weight_source?: string;
+      text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+      text_source_weight_source?: string;
+    }>;
+    raw_temporal_events?: string[];
     profile?: string;
+    latency_ms?: number;
+    agent_query_plan?: {
+      source?: string;
+      language?: string;
+      intent?: string;
+      summary?: string;
+      decomposition?: {
+        search_factors?: Record<string, unknown>;
+        retrieval_strategy?: Record<string, unknown>;
+        temporal_event_plans?: Array<Record<string, unknown>>;
+        raw_temporal_events?: unknown[];
+      };
+      temporal_events?: string[];
+      temporal_anchor_index?: number | null;
+      variants?: string[];
+      retrieval_weights?: { visual?: number; text?: number };
+      retrieval_weight_source?: string;
+      text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+      text_source_weight_source?: string;
+      temporal_event_plans?: Array<Record<string, unknown>>;
+      agent_metadata?: {
+        enabled?: boolean;
+        active_profile?: string;
+        provider?: string;
+        model?: string;
+        api_key_env?: string;
+        api_key_configured?: boolean;
+        langsmith_api_key_env?: string;
+        langsmith_api_key_configured?: boolean;
+        langsmith_trace_enabled?: boolean;
+        config_path?: string | null;
+      };
+      error?: string;
+    };
   };
   results: SearchResult[];
+}
+
+export interface QueryPlanResponse {
+  normalized_query: SearchResponse["normalized_query"];
 }
 
 export interface ContextFrame {
@@ -61,6 +134,44 @@ export interface FrameContext {
   target_frame_id: string;
   video_code: string;
   frames: ContextFrame[];
+}
+
+export interface VideoEvidenceItem {
+  text: string;
+  start_seconds: number | null;
+  end_seconds: number | null;
+  frame_id: string | null;
+  segment_id: string | null;
+  model_version: string | null;
+  matches_selected_frame: boolean;
+}
+
+export interface VideoEvidence {
+  video_id: string;
+  video_code: string;
+  evidence: {
+    asr: VideoEvidenceItem[];
+    ocr: VideoEvidenceItem[];
+    captions: VideoEvidenceItem[];
+  };
+}
+
+export interface VideoFrameSeekResponse {
+  video_id: string;
+  video_code: string;
+  frame: ContextFrame;
+  selection: {
+    frame_idx: number;
+    timestamp_ms: number;
+    fps: number | null;
+  };
+}
+
+export interface VideoPreviewUrl {
+  video_id: string;
+  url: string;
+  direct: boolean;
+  provider: string;
 }
 
 export interface MediaFrame {

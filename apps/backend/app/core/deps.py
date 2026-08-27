@@ -110,22 +110,31 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
             return value
         return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+    def embedder_base_url(embedder_name: str, embedder_cfg: dict[str, Any]) -> str:
+        env_name = f"{embedder_name.upper()}_BASE_URL"
+        base_url = os.getenv(env_name, "").strip()
+        if not base_url and embedder_name.startswith("clip_"):
+            base_url = os.getenv("CLIP_EMBEDDING_BASE_URL", "").strip()
+        if not base_url and embedder_name.startswith("siglip2_"):
+            base_url = os.getenv("SIGLIP2_EMBEDDING_BASE_URL", "").strip()
+        return (base_url or str(embedder_cfg.get("base_url", "")).strip()).rstrip("/")
+
     embedder: TextImageEmbedder
     query_expander: QueryExpander
     visual_qa: VisualQaModel
     reranker: TextReranker
 
     siglip2_providers = {"siglip2", "transformers_siglip2", "huggingface_siglip2"}
-    embedder_entry = first_enabled_entry("embedders", {"openai_compatible", *siglip2_providers})
-    if embedder_entry:
-        embedder_name, embedder_cfg = embedder_entry
+    supported_embedder_providers = {"openai_compatible", *siglip2_providers}
+
+    def build_text_image_embedder(embedder_name: str, embedder_cfg: dict[str, Any]) -> TextImageEmbedder:
         provider = str(embedder_cfg.get("provider", "")).lower()
         configured_dim = int(embedder_cfg.get("dim", 0))
         if provider == "openai_compatible":
-            base_url = str(embedder_cfg.get("base_url", "")).strip().rstrip("/")
+            base_url = embedder_base_url(embedder_name, embedder_cfg)
             model = str(embedder_cfg.get("model", "")).strip()
             if base_url and model:
-                embedder = OpenAICompatibleTextEmbedder(
+                return OpenAICompatibleTextEmbedder(
                     base_url=base_url,
                     model=model,
                     api_key=api_key(embedder_cfg),
@@ -137,7 +146,7 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
         elif provider in siglip2_providers:
             model = str(embedder_cfg.get("model") or embedder_cfg.get("checkpoint_uri") or "").strip()
             if model:
-                embedder = Siglip2TextEmbedder(
+                return Siglip2TextEmbedder(
                     model_name=model,
                     device=str(embedder_cfg.get("device", "")).strip() or None,
                     cache_dir=str(embedder_cfg.get("cache_dir", "")).strip() or None,
@@ -149,6 +158,22 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
                 raise RuntimeError(f"Enabled embedder '{embedder_name}' is missing model/checkpoint_uri.")
         else:
             raise RuntimeError(f"Enabled embedder '{embedder_name}' uses unsupported provider '{provider}'.")
+
+    named_embedders: dict[str, TextImageEmbedder] = {}
+    embedder_entries = registry.get("embedders")
+    if isinstance(embedder_entries, dict):
+        for name, config in embedder_entries.items():
+            if not isinstance(config, dict) or not config.get("enabled"):
+                continue
+            provider = str(config.get("provider", "")).lower()
+            if provider not in supported_embedder_providers:
+                continue
+            named_embedders[str(name)] = build_text_image_embedder(str(name), config)
+
+    embedder_entry = first_enabled_entry("embedders", supported_embedder_providers)
+    if embedder_entry:
+        embedder_name, _ = embedder_entry
+        embedder = named_embedders[embedder_name]
     else:
         embedder = UnavailableTextImageEmbedder()
 
@@ -218,5 +243,6 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
         query_expander=query_expander,
         visual_qa=visual_qa,
         reranker=reranker,
+        embedders=named_embedders,
         registry=registry,
     )

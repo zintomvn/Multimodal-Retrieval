@@ -12,8 +12,8 @@ import httpx
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify embedding endpoint model/dim/normalization.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
-    parser.add_argument("--model", default="ViT-B-32-laion2b_s34b_b79k")
-    parser.add_argument("--expected-dim", type=int, default=512)
+    parser.add_argument("--model", default="ViT-H-14-quickgelu-dfn5b")
+    parser.add_argument("--expected-dim", type=int, default=1024)
     parser.add_argument("--timeout-s", type=float, default=15.0)
     parser.add_argument("--skip-norm-check", action="store_true")
     return parser.parse_args()

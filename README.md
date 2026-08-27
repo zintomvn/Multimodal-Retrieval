@@ -120,7 +120,74 @@ Dừng stack:
 docker compose down
 ```
 
-## 5.1 Short Local Commands
+## 5.1 Current Retrieval Stack (OpenAI Planner)
+
+The default LLM query planner uses `openai_gpt4o`. Create `.env` from the
+example file once, then set these values without committing the file:
+
+```text
+OPENAI_API_KEY=<your-openai-api-key>
+AGENT_LLM_PROFILE=openai_gpt4o
+```
+
+Start or rebuild the complete local search stack from the repository root:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+After changing `.env` or `configs/agent.yaml`, recreate only the backend so it
+loads the new LLM profile:
+
+```powershell
+docker compose up -d --build backend
+docker compose logs --tail 100 backend
+```
+
+Verify the API, frontend proxy, and a TRAKE query. The response contains
+`langchain_direct_llm` when GPT-4o created the query plan.
+
+```powershell
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:5173/api/datasets
+
+$dataset = (Invoke-RestMethod http://localhost:8000/api/datasets).datasets[0].id
+$body = @{
+  dataset_id = $dataset
+  query_name = "smoke-trake-openai"
+  query_type = "TRAKE"
+  query_text = "E1: batter is added to a bowl of asparagus. E2: asparagus contacts oil in a pan. E3: asparagus is removed from the pan. E4: asparagus rests completely on a plate."
+  top_k = 5
+  profile = "competition_default"
+  options = @{
+    use_query_expansion = $true
+    use_agent_query_planning = $true
+    use_metadata = $true
+    use_reranker = $true
+    delta_t_max_ms = 180000
+  }
+} | ConvertTo-Json -Depth 8
+
+$response = Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8000/api/retrieval/search `
+  -ContentType "application/json" `
+  -Body $body
+
+$response.normalized_query.agent_query_plan
+$response.results[0].sequence_frames
+```
+
+Run focused retrieval checks:
+
+```powershell
+docker compose run --rm --no-deps backend pytest -q `
+  tests/test_retrieval_pipeline.py -k agent `
+  tests/test_qa_trake_hardening.py::test_m5_trake_returns_stable_ordering_metadata `
+  tests/test_aithena_ats.py
+```
+
+## 5.2 Short Local Commands
 
 From the repository root, use these wrappers for local development:
 

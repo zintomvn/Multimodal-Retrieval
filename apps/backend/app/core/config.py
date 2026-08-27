@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -29,12 +30,40 @@ def _resolve_repo_path(raw: str, *, fallback_base: Path = REPO_ROOT) -> Path:
     return (fallback_base / path).resolve()
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_database_url(raw: str) -> str:
+    value = (raw or "").strip()
+    if value.startswith("postgres://"):
+        return "postgresql+psycopg://" + value.removeprefix("postgres://")
+    if value.startswith("postgresql://"):
+        return "postgresql+psycopg://" + value.removeprefix("postgresql://")
+    return value
+
+
+def database_connect_args(database_url: str) -> dict:
+    if database_url.startswith("sqlite"):
+        return {"check_same_thread": False, "timeout": 30}
+    if database_url.startswith("postgresql"):
+        args: dict = {"prepare_threshold": None}
+        parsed = urlparse(database_url)
+        if "supabase.com" in (parsed.hostname or "") and "sslmode=" not in (parsed.query or ""):
+            args["sslmode"] = "require"
+        return args
+    return {}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
     api_host: str = os.getenv("API_HOST", "0.0.0.0")
     api_port: int = int(os.getenv("API_PORT", "8000"))
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/dev.db")
+    database_url: str = normalize_database_url(os.getenv("DATABASE_URL", "sqlite:///./data/dev.db"))
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     milvus_uri: str = os.getenv("MILVUS_URI", "http://localhost:19530")
     milvus_token: str = os.getenv("MILVUS_TOKEN", "")
@@ -52,6 +81,7 @@ class Settings:
     model_registry_path: Path = _resolve_repo_path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
     retrieval_profiles_path: Path = _resolve_repo_path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
     agent_config_path: Path = _resolve_repo_path(os.getenv("AGENT_CONFIG_PATH", "../../configs/agent.yaml"))
+    skip_db_init: bool = _bool_env("SKIP_DB_INIT", False)
 
     @property
     def cors_origins(self) -> list[str]:

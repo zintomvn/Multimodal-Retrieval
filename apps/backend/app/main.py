@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.db.bootstrap import init_db
+from app.db.session import warm_database
 from app.modules.datasets.router import router as datasets_router
 from app.modules.ingest.router import router as ingest_router
 from app.modules.jobs.router import router as jobs_router
@@ -19,7 +20,9 @@ from app.modules.submissions.router import router as submissions_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
+    if not settings.skip_db_init:
+        init_db()
+    warm_database()
     yield
 
 

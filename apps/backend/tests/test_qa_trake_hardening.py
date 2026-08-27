@@ -55,6 +55,34 @@ class TextClientForTrake:
         return len(documents)
 
 
+class RecordingTextClientForFourEventTrake:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.mapping: dict[str, list[TextHit]] = {
+            "The moment the batter is added to the bowl of asparagus": [
+                TextHit(id="L30_V001_F000100", score=5.0, metadata={"keyframe_id": "L30_V001_F000100", "video_id": "L30_V001"}),
+            ],
+            "The moment the first piece of asparagus makes contact with the oil in the pan": [
+                TextHit(id="L30_V001_F000200", score=5.0, metadata={"keyframe_id": "L30_V001_F000200", "video_id": "L30_V001"}),
+            ],
+            "The moment the first piece of asparagus is removed from the pan": [
+                TextHit(id="L30_V001_F000300", score=5.0, metadata={"keyframe_id": "L30_V001_F000300", "video_id": "L30_V001"}),
+            ],
+            "The moment the last piece of asparagus leaves the pan and rests completely on the plate": [
+                TextHit(id="L30_V001_F000400", score=5.0, metadata={"keyframe_id": "L30_V001_F000400", "video_id": "L30_V001"}),
+            ],
+        }
+
+    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+        _ = (index, top_k, boosts)
+        self.queries.append(query)
+        return self.mapping.get(query, [])
+
+    def upsert(self, index: str, documents: list[tuple[str, dict]]) -> int:
+        _ = (index, documents)
+        return len(documents)
+
+
 def _build_db(tmp_path: Path) -> Session:
     db_path = tmp_path / "qa_trake.sqlite3"
     engine = create_engine(f"sqlite:///{db_path}")
@@ -190,8 +218,60 @@ def test_m5_trake_returns_stable_ordering_metadata(tmp_path: Path) -> None:
     assert sequence[0]["order_index"] == 1
     assert sequence[1]["order_index"] == 2
     assert sequence[1]["delta_from_previous"] > 0
+    assert {"visual_score", "text_score", "rrf_score"} <= set(sequence[0])
 
-    ordering = first.results[0].score_breakdown["ordering"]
+    score_breakdown = first.results[0].score_breakdown
+    assert "semantic_score" in score_breakdown
+    assert "text_score" in score_breakdown
+    assert "rrf_score" in score_breakdown
+
+    ordering = score_breakdown["ordering"]
     assert ordering["is_strictly_increasing"] is True
     assert ordering["delta_frames"][0] > 0
+    db.close()
+
+
+def test_trake_labeled_query_searches_every_event_as_separate_query(tmp_path: Path) -> None:
+    db = _build_db(tmp_path)
+    dataset = Dataset(dataset_code="trake-events", name="trake-events", version="v1", root_uri="file:///demo", status="READY")
+    db.add(dataset)
+    db.commit()
+    _seed_video_with_frames(db, dataset, "L30_V001", [100, 200, 300, 400])
+
+    model_registry = ModelRegistryService(
+        embedder=DeterministicEmbedder(dim=64),
+        query_expander=ExpandingQueryExpander(),
+        visual_qa=HintVisualQaModel(),
+    )
+    text_client = RecordingTextClientForFourEventTrake()
+    service = RetrievalService(db=db, model_registry=model_registry, vector_client=None, text_client=text_client)
+
+    events = list(text_client.mapping)
+    query_text = "\n".join(f"E{index}: {event}." for index, event in enumerate(events, start=1))
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="TRAKE",
+            query_name="trake-four-events",
+            query_text=query_text,
+            top_k=3,
+            options=SearchOptions(
+                use_query_expansion=False,
+                use_agent_query_planning=False,
+                delta_t_max_ms=600000,
+            ),
+        )
+    )
+
+    assert text_client.queries == events
+    assert response.normalized_query["temporal_events"] == events
+    assert response.normalized_query["temporal_event_count"] == 4
+    assert response.normalized_query["temporal_event_source"] == "event_labels"
+    assert response.results
+    sequence = response.results[0].sequence_frames
+    assert [frame["event_index"] for frame in sequence] == [1, 2, 3, 4]
+    assert [frame["frame_idx"] for frame in sequence] == [100, 200, 300, 400]
+    assert response.results[0].score_breakdown["matched_events"] == 4
+    assert response.results[0].score_breakdown["expected_events"] == 4
+    assert response.results[0].score_breakdown["min_match"] == 4
     db.close()

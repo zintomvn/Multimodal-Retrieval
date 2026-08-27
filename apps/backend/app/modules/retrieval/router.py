@@ -8,7 +8,7 @@ from app.adapters.vector_db.base import VectorSearchClient
 from app.core.deps import get_model_registry_service, get_text_client, get_vector_client
 from app.db.session import get_db
 from app.modules.models.service import ModelRegistryService
-from app.modules.retrieval.schemas import SearchRequest, SearchResponse, SelectResultsRequest
+from app.modules.retrieval.schemas import QueryPlanResponse, SearchRequest, SearchResponse, SelectResultsRequest
 from app.modules.retrieval.service import RetrievalService
 
 router = APIRouter(prefix="/api/retrieval", tags=["retrieval"])
@@ -56,6 +56,19 @@ def trake_search(
         return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/plan", response_model=QueryPlanResponse)
+def plan_query(
+    request: SearchRequest,
+    db: Session = Depends(get_db),
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+) -> QueryPlanResponse:
+    try:
+        normalized = RetrievalService(db, model_registry).plan_query(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return QueryPlanResponse(normalized_query=normalized)
 
 
 @router.get("/runs/{run_id}", response_model=SearchResponse)

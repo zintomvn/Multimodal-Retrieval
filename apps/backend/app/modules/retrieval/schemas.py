@@ -17,6 +17,9 @@ class SearchOptions(BaseModel):
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)
+    temporal_mode: bool = False
+    temporal_strategy: Literal["vortex_k_context", "aithena_weighted_ats"] = "vortex_k_context"
+    temporal_anchor_index: int | None = Field(default=None, ge=1, le=8)
     video_codes: list[str] = Field(default_factory=list)
     time_range_start_seconds: float | None = None
     time_range_end_seconds: float | None = None
@@ -30,7 +33,7 @@ class SearchRequest(BaseModel):
     query_name: str | None = None
     query_type: QueryType = "KIS"
     query_text: str = Field(min_length=1)
-    top_k: int = Field(default=100, ge=1, le=1000)
+    top_k: int = Field(default=50, ge=1, le=1000)
     profile: str = "competition_default"
     options: SearchOptions = Field(default_factory=SearchOptions)
 
@@ -61,6 +64,10 @@ class SearchResponse(BaseModel):
     query_name: str | None = None
     normalized_query: dict
     results: list[ResultItem]
+
+
+class QueryPlanResponse(BaseModel):
+    normalized_query: dict
 
 
 class SelectResultsRequest(BaseModel):

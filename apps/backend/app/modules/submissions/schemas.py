@@ -26,5 +26,6 @@ class SubmissionItemsRequest(BaseModel):
 class SubmissionExportResponse(BaseModel):
     submission_id: str
     status: str
+    csv_uri: str | None = None
     zip_uri: str | None
     validation_report: dict

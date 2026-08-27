@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import csv
-import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -238,24 +236,23 @@ class SubmissionService:
         self.db.commit()
         return report
 
-    def export_zip(self, submission_id: str) -> tuple[Submission, dict]:
+    def export_csv(self, submission_id: str) -> tuple[Submission, dict]:
         report = self.validate(submission_id)
         submission = self.db.query(Submission).filter(Submission.id == submission_id).one()
         if not report["valid"]:
             return submission, report
 
         base_dir = self.settings.data_root / "submissions" / submission.id
-        submission_dir = base_dir / "submission"
-        submission_dir.mkdir(parents=True, exist_ok=True)
+        base_dir.mkdir(parents=True, exist_ok=True)
 
         grouped: dict[str, list[SubmissionItem]] = defaultdict(list)
         for item in submission.items:
             grouped[item.query_name].append(item)
 
-        for query_name, rows in grouped.items():
-            csv_path = submission_dir / f"{query_name}.csv"
-            with csv_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle)
+        csv_path = base_dir / f"{submission.name}.csv"
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            for query_name, rows in sorted(grouped.items()):
                 for row in sorted(rows, key=lambda item: item.rank)[:100]:
                     normalized_answer = self._normalize_answer(row.answer)
                     if row.query_type == "QA":
@@ -265,12 +262,7 @@ class SubmissionService:
                     else:
                         writer.writerow([row.video_code, *row.frame_indices])
 
-        zip_path = base_dir / f"{submission.name}.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for csv_file in sorted(submission_dir.glob("*.csv")):
-                archive.write(csv_file, arcname=str(Path("submission") / csv_file.name))
-
-        submission.zip_uri = str(zip_path)
+        submission.zip_uri = str(csv_path)
         submission.status = "EXPORTED"
         self.db.commit()
         return submission, report

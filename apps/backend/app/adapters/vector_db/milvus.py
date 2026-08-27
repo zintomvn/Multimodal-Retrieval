@@ -1,6 +1,26 @@
 from __future__ import annotations
 
+import logging
+import os
+import time
+
 from app.adapters.vector_db.base import VectorHit
+
+
+logger = logging.getLogger(__name__)
+
+# These fields are sufficient to resolve a vector hit back to the canonical
+# keyframe stored in the relational database. Returning every dynamic ingest
+# field is expensive on Zilliz Cloud and can exceed the request deadline.
+_SEARCH_OUTPUT_FIELDS = [
+    "frame_id",
+    "video_id",
+    "keyframe_id",
+    "original_keyframe_id",
+    "map_n",
+    "keyframe_number",
+    "embedding_index_0",
+]
 
 
 class MilvusVectorSearchClient:
@@ -10,33 +30,31 @@ class MilvusVectorSearchClient:
         self.uri = uri
         self.token = token
         self.client = None
+        self.connect_timeout_s = float(os.getenv("MILVUS_CONNECT_TIMEOUT", "3.0"))
+        self.search_timeout_s = float(os.getenv("MILVUS_SEARCH_TIMEOUT", "12.0"))
+        self.slow_search_warning_s = float(os.getenv("MILVUS_SLOW_SEARCH_WARNING", "2.0"))
 
     def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
         self._ensure_client()
         filter_expr = self._to_filter_expr(filters or {})
+        started_at = time.monotonic()
         raw_hits = self.client.search(
             collection_name=collection,
             data=[vector],
             limit=top_k,
             filter=filter_expr,
-            output_fields=[
-                "frame_id",
-                "video_id",
-                "frame_idx",
-                "event_id",
-                "model_version",
-                "keyframe_id",
-                "dataset_id",
-                "batch_id",
-                "map_n",
-                "keyframe_number",
-                "embedding_index_0",
-                "image_rel_path",
-                "canonical_keyframe_id",
-                "canonical_frame_idx",
-                "original_keyframe_id",
-            ],
+            output_fields=_SEARCH_OUTPUT_FIELDS,
+            timeout=self.search_timeout_s,
         )
+        elapsed_s = time.monotonic() - started_at
+        if elapsed_s >= self.slow_search_warning_s:
+            logger.warning(
+                "Milvus search took %.2fs for collection '%s' (top_k=%s, output_fields=%s).",
+                elapsed_s,
+                collection,
+                top_k,
+                len(_SEARCH_OUTPUT_FIELDS),
+            )
         hits: list[VectorHit] = []
         for hit in raw_hits[0] if raw_hits else []:
             hits.append(VectorHit(id=str(hit["id"]), score=float(hit["distance"]), metadata=hit.get("entity", {})))
@@ -81,6 +99,7 @@ class MilvusVectorSearchClient:
         kwargs: dict = {"uri": self.uri}
         if self.token:
             kwargs["token"] = self.token
+        kwargs["timeout"] = self.connect_timeout_s
         self.client = MilvusClient(**kwargs)
 
     def _to_filter_expr(self, filters: dict) -> str:

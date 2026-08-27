@@ -15,7 +15,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.db.models import Base, Dataset, Frame, FrameAnnotation, QueryRun, RetrievalResult, Shot, Video
 from app.modules.models.service import ModelRegistryService
-from app.modules.retrieval.query_planning import AgentQueryPlanner
+from app.modules.retrieval.query_planning import AgentQueryPlanner, QueryPlanningResult
 from app.modules.retrieval.router import search as search_endpoint
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import RetrievalService
@@ -39,7 +39,43 @@ class PreferenceReranker:
         return scores
 
 
-def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset, Frame, Frame]:
+class StaticEmbedder:
+    def __init__(self, vector: list[float]) -> None:
+        self.vector = vector
+
+    def embed_text(self, text: str) -> list[float]:
+        return self.vector
+
+    def embed_image_uri(self, image_uri: str) -> list[float]:
+        return self.vector
+
+
+class NoopPlanner:
+    def plan(self, query: str, query_type: str, max_variants: int) -> QueryPlanningResult:
+        return QueryPlanningResult(
+            language="auto",
+            intent=query_type,
+            summary=query,
+            variants=[query],
+            temporal_events=[query],
+            decomposition={"search_factors": {"tokens": query.split()}},
+            agent_metadata={
+                "active_profile": "test",
+                "provider": "noop",
+                "model": "noop-planner",
+                "api_key_env": "NOOP_API_KEY",
+                "api_key_configured": False,
+            },
+            source="fallback",
+            error="test planner disabled",
+        )
+
+
+def _build_retrieval_fixture(
+    tmp_path: Path,
+    *,
+    use_real_planner: bool = False,
+) -> tuple[Session, RetrievalService, Dataset, Frame, Frame]:
     db_path = tmp_path / "retrieval.sqlite3"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(bind=engine)
@@ -118,8 +154,8 @@ def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService,
             FrameAnnotation(
                 frame_id=frame_b.keyframe_id,
                 kind="MULTIMODAL",
-                text_value="xe may chay tren duong",
-                caption="xe may",
+                text_value="nguoi di xe may tren duong",
+                caption="nguoi di xe may",
                 ocr_texts=["ban tin"],
                 detected_objects=["motorbike"],
                 json_value={},
@@ -170,7 +206,7 @@ def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService,
                 {
                     "keyframe_id": frame_b.keyframe_id,
                     "video_id": video.video_id,
-                    "caption": "xe may tren duong",
+                    "caption": "nguoi di xe may tren duong",
                     "ocr_texts": "ban tin",
                     "detected_objects": "motorbike",
                 },
@@ -184,6 +220,8 @@ def _build_retrieval_fixture(tmp_path: Path) -> tuple[Session, RetrievalService,
         vector_client=vector_client,
         text_client=text_client,
     )
+    if not use_real_planner:
+        service.query_planner = NoopPlanner()  # type: ignore[assignment]
     return session, service, dataset, frame_a, frame_b
 
 
@@ -242,7 +280,7 @@ def test_semantic_numeric_keyframe_id_uses_local_map_keyframes(tmp_path: Path) -
     service.settings = replace(service.settings, data_root=tmp_path)
     embedder = service.model_registry.embedder
     service.vector_client.upsert(
-        "keyframe_embeddings_siglip2_base_patch16_256",
+        "keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2",
         [
             (
                 "L30_V001_002",
@@ -310,10 +348,80 @@ def test_m3_cross_encoder_reranker_can_reorder_results(tmp_path: Path) -> None:
     db.close()
 
 
+def test_visual_rrf_fuses_clip_and_siglip_ranked_lists(tmp_path: Path) -> None:
+    db, service, dataset, frame_a, frame_b = _build_retrieval_fixture(tmp_path)
+    clip_key = "clip_vith14_quickgelu_dfn5b_v2"
+    siglip_key = "siglip2_so400m16_384_webli_openclip_1152_v1"
+    clip_collection = "keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2"
+    siglip_collection = "keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1"
+    service.model_registry.embedder = StaticEmbedder([1.0, 0.0])
+    service.model_registry.embedders = {
+        clip_key: StaticEmbedder([1.0, 0.0]),
+        siglip_key: StaticEmbedder([0.0, 1.0]),
+    }
+    service.vector_client.upsert(
+        clip_collection,
+        [
+            (frame_a.keyframe_id, [1.0, 0.0], {"keyframe_id": frame_a.keyframe_id, "video_id": frame_a.video_id}),
+            (frame_b.keyframe_id, [0.8, 0.2], {"keyframe_id": frame_b.keyframe_id, "video_id": frame_b.video_id}),
+        ],
+    )
+    service.vector_client.upsert(
+        siglip_collection,
+        [
+            (frame_a.keyframe_id, [0.2, 0.8], {"keyframe_id": frame_a.keyframe_id, "video_id": frame_a.video_id}),
+            (frame_b.keyframe_id, [0.0, 1.0], {"keyframe_id": frame_b.keyframe_id, "video_id": frame_b.video_id}),
+        ],
+    )
+    service.profiles["visual_rrf_smoke"] = {
+        "semantic_weight": 1.0,
+        "metadata_weight": 0.0,
+        "user_boost_weight": 0.0,
+        "rrf": {"enabled": False, "k": 60},
+        "visual_rrf": {"enabled": True, "k": 1},
+        "query_expansion": {"enabled_default": False, "max_variants": 1},
+        "visual_models": {
+            "clip": {
+                "collection": clip_collection,
+                "model_key": clip_key,
+                "weight": 1.0,
+                "enabled": True,
+            },
+            "siglip2": {
+                "collection": siglip_collection,
+                "model_key": siglip_key,
+                "weight": 2.0,
+                "enabled": True,
+            },
+        },
+    }
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="visual-rrf",
+            query_text="a visual query",
+            top_k=2,
+            profile="visual_rrf_smoke",
+            options=SearchOptions(use_query_expansion=False, use_metadata=False, use_reranker=False),
+        )
+    )
+
+    assert response.results[0].frame_id == frame_b.keyframe_id
+    semantic_hit = response.results[0].score_breakdown["semantic_hit"]
+    assert semantic_hit["fusion"] == "visual_rrf"
+    assert {source["model_key"] for source in semantic_hit["sources"]} == {clip_key, siglip_key}
+    assert response.results[0].score_breakdown["semantic_score"] > 0
+
+    db.close()
+
+
 def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_LLM_PROFILE", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path, use_real_planner=True)
 
     response = service.search(
         SearchRequest(
@@ -327,10 +435,58 @@ def test_m4_agent_query_planning_falls_back_and_simple_query_runs(tmp_path: Path
 
     assert response.results
     assert response.results[0].frame_id == frame_a.keyframe_id
-    assert response.normalized_query["variants"][0] == "nguoi ao do"
+    assert response.normalized_query["semantic_variants"] == ["person wearing a red shirt"]
+    assert response.normalized_query["text_variants"] == ["nguoi ao do"]
     agent_plan = response.normalized_query["agent_query_plan"]
     assert agent_plan["source"] == "fallback"
-    assert "missing GROQ_API_KEY" in agent_plan["error"]
+    assert "missing OPENAI_API_KEY" in agent_plan["error"]
+
+    db.close()
+
+
+def test_m4_agent_query_planning_runs_even_when_expansion_is_disabled(tmp_path: Path) -> None:
+    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path)
+
+    class FakePlanner:
+        def plan(self, query: str, query_type: str, max_variants: int) -> QueryPlanningResult:
+            return QueryPlanningResult(
+                language="vi",
+                intent=query_type,
+                summary="person in red shirt walking",
+                variants=[query, "red shirt person walking"],
+                temporal_events=["person in red shirt walking"],
+                decomposition={"search_factors": {"objects": ["person"], "actions": ["walking"]}},
+                agent_metadata={
+                    "active_profile": "test",
+                    "provider": "fake",
+                    "model": "fake-planner",
+                    "api_key_env": "FAKE_API_KEY",
+                    "api_key_configured": True,
+                },
+                source="langchain_deep_agent",
+            )
+
+    service.query_planner = FakePlanner()  # type: ignore[assignment]
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="m4-agent-no-expansion",
+            query_text="nguoi ao do",
+            top_k=1,
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=True),
+        )
+    )
+
+    assert response.results
+    assert response.results[0].frame_id == frame_a.keyframe_id
+    assert response.normalized_query["semantic_variants"] == ["red shirt person walking"]
+    assert response.normalized_query["text_variants"] == ["nguoi ao do"]
+    assert response.normalized_query["temporal_events"] == ["person in red shirt walking"]
+    agent_plan = response.normalized_query["agent_query_plan"]
+    assert agent_plan["source"] == "langchain_deep_agent"
+    assert agent_plan["variants"] == ["nguoi ao do", "red shirt person walking"]
+    assert agent_plan["agent_metadata"]["api_key_configured"] is True
 
     db.close()
 
@@ -341,7 +497,7 @@ def test_m4_agent_query_planning_openai_profile_falls_back_when_key_missing(
 ) -> None:
     monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path)
+    db, service, dataset, frame_a, _ = _build_retrieval_fixture(tmp_path, use_real_planner=True)
 
     response = service.search(
         SearchRequest(
@@ -374,10 +530,137 @@ def test_m4_agent_profile_env_override_resolves_provider_metadata(monkeypatch: p
     result = planner.plan("nguoi ao do", "KIS", 5)
 
     assert result.source == "fallback"
+    assert result.variants[:2] == ["person wearing a red shirt", "nguoi ao do"]
     assert result.error == "missing OPENAI_API_KEY"
     assert result.agent_metadata["active_profile"] == "openai_gpt4o"
     assert result.agent_metadata["provider"] == "openai"
     assert result.agent_metadata["model"] == "gpt-4o"
+
+
+def test_agent_planner_promotes_english_rewrite_when_agent_returns_raw_vietnamese() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+    query = "dan ho o mien Nam co them vai con ho con moi sinh"
+
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - validates runtime hardening.
+        raw_plan={
+            "language": "vi",
+            "intent": "KIS",
+            "summary": query,
+            "temporal_events": [{"query": query}],
+            "variants": [{"text": query}],
+        },
+        query=query,
+        query_type="KIS",
+        max_variants=3,
+    )
+
+    assert result.summary == "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species"
+    assert result.variants[:2] == [
+        "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species",
+        query,
+    ]
+    assert result.temporal_events[:2] == [
+        "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species",
+        query,
+    ]
+
+
+def test_agent_planner_repairs_vietnamese_temporal_events_for_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+    vietnamese_events = [
+        "Kho\u1ea3nh kh\u1eafc b\u1ed9t \u0111\u01b0\u1ee3c b\u1ecf v\u00e0o t\u00f4 m\u0103ng t\u00e2y",
+        "Kho\u1ea3nh kh\u1eafc mi\u1ebfng m\u0103ng t\u00e2y r\u1eddi kh\u1ecfi ch\u1ea3o",
+    ]
+    english_events = [
+        "batter is added to a bowl of asparagus",
+        "a piece of asparagus is removed from the pan",
+    ]
+
+    def translate(values: list[str]) -> list[str]:
+        return english_events if len(values) == len(vietnamese_events) else ["asparagus cooking"]
+
+    monkeypatch.setattr(planner, "_translate_vietnamese_values", translate)
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - verifies routing after an LLM repair.
+        raw_plan={
+            "language": "vi",
+            "intent": "TRAKE",
+            "temporal_events": [{"query": event} for event in vietnamese_events],
+            "variants": [{"text": vietnamese_events[0]}],
+        },
+        query="\n".join(f"E{index}: {event}" for index, event in enumerate(vietnamese_events, start=1)),
+        query_type="TRAKE",
+        max_variants=3,
+    )
+
+    assert result.temporal_events == english_events
+    assert result.variants
+    assert all(not planner._looks_vietnamese(variant) for variant in result.variants)  # noqa: SLF001
+
+
+def test_agent_planner_extracts_evidence_driven_visual_and_text_weights() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - validates plan normalization.
+        raw_plan={
+            "summary": "find a person speaking the phrase red bicycle",
+            "variants": [{"text": "person speaking the phrase red bicycle"}],
+            "retrieval_strategy": {
+                "clauses": [
+                    {"text": "a person is visible", "evidence": "visual", "importance": 0.3},
+                    {"text": "the spoken phrase red bicycle", "evidence": "text", "importance": 0.9},
+                ],
+                "weights": {"visual": 2, "text": 8},
+                "rationale": "The exact spoken phrase needs ASR evidence.",
+            },
+        },
+        query="find the person saying red bicycle",
+        query_type="KIS",
+        max_variants=3,
+    )
+
+    assert result.retrieval_weights == {"visual": 0.2, "text": 0.8}
+    strategy = result.decomposition["retrieval_strategy"]
+    assert strategy["clauses"][1]["evidence"] == "text"
+    assert strategy["rationale"] == "The exact spoken phrase needs ASR evidence."
+
+
+def test_planner_fallback_routes_benchmark_style_fact_queries_to_text_and_trake_actions_to_visual() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    fact_plan = planner.plan(
+        "Hỏi tên xã của chương trình từ thiện tại Khánh Hòa vào năm 2024 là gì?",
+        "QA",
+        5,
+    )
+    trake_plan = planner.plan(
+        "E1: The first moment a mushroom is cut. E2: The first moment a pan is placed on the stove.",
+        "TRAKE",
+        5,
+    )
+
+    assert fact_plan.retrieval_weight_source == "heuristic"
+    assert fact_plan.retrieval_weights["text"] > fact_plan.retrieval_weights["visual"]
+    assert trake_plan.retrieval_weights["visual"] > trake_plan.retrieval_weights["text"]
+    assert all(
+        event["retrieval_weights"]["visual"] > event["retrieval_weights"]["text"]
+        for event in trake_plan.temporal_event_plans
+    )
+
+
+def test_agent_fallback_splits_labeled_trake_events() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False, "max_temporal_events": 8}})
+    events = [
+        "The moment the batter is added to the bowl of asparagus",
+        "The moment the first piece of asparagus makes contact with the oil in the pan",
+        "The moment the first piece of asparagus is removed from the pan",
+        "The moment the last piece of asparagus leaves the pan and rests completely on the plate",
+    ]
+    query = "\n".join(f"E{index}: {event}." for index, event in enumerate(events, start=1))
+
+    result = planner.plan(query, "TRAKE", 5)
+
+    assert result.temporal_events == events
+    assert query not in result.temporal_events
 
 
 def test_m3_qa_smoke_returns_answer(tmp_path: Path) -> None:

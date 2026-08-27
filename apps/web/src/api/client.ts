@@ -10,13 +10,17 @@ import type {
   PipelineJobPollResponse,
   PipelineJobStartRequest,
   PipelineJobStartResponse,
+  QueryPlanResponse,
   QueryType,
   SearchResponse,
   SubmissionRow,
+  VideoFrameSeekResponse,
+  VideoEvidence,
+  VideoPreviewUrl,
 } from "../types";
 
-// API base URL and GCS
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// Leave the base empty when the frontend is publicly proxied through Vite/ngrok.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const GCS_BUCKET = import.meta.env.VITE_GCS_BUCKET ?? "";
 const GCS_PUBLIC_BASE_URL = (
   import.meta.env.VITE_GCS_PUBLIC_BASE_URL ?? ""
@@ -45,13 +49,13 @@ function gcsMediaUrl(path: string): string | null {
 
 // JSON request
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  // call fetch with the API base URL and the provided path
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  // Prevent ngrok's browser warning page from being returned to API fetches.
+  headers.set("ngrok-skip-browser-warning", "true");
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -65,15 +69,48 @@ export async function listDatasets(): Promise<Dataset[]> {
   return payload.datasets;
 }
 
-export async function runSearch(input: {
+export interface RetrievalSearchInput {
   datasetId: string;
   queryType: QueryType;
   queryName: string;
   queryText: string;
   topK: number;
   useExpansion: boolean;
+  useAgentPlanning: boolean;
   useMetadata: boolean;
-}): Promise<SearchResponse> {
+  temporalMode: boolean;
+  temporalStrategy: "vortex_k_context" | "aithena_weighted_ats";
+}
+
+function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> {
+  return {
+    dataset_id: input.datasetId,
+    query_name: input.queryName,
+    query_type: input.queryType,
+    query_text: input.queryText,
+    top_k: input.topK,
+    profile: "competition_default",
+    options: {
+      use_query_expansion: input.useExpansion,
+      use_agent_query_planning: input.useAgentPlanning,
+      use_metadata: input.useMetadata,
+      use_reranker: true,
+      strict_hybrid: false,
+      delta_t_max_ms: 180000,
+      temporal_mode: input.temporalMode,
+      temporal_strategy: input.temporalStrategy,
+    },
+  };
+}
+
+export async function planSearch(input: RetrievalSearchInput): Promise<QueryPlanResponse> {
+  return requestJson<QueryPlanResponse>("/api/retrieval/plan", {
+    method: "POST",
+    body: JSON.stringify(retrievalPayload(input)),
+  });
+}
+
+export async function runSearch(input: RetrievalSearchInput): Promise<SearchResponse> {
   const path =
     input.queryType === "QA"
       ? "/api/retrieval/qa"
@@ -82,21 +119,7 @@ export async function runSearch(input: {
         : "/api/retrieval/search";
   return requestJson<SearchResponse>(path, {
     method: "POST",
-    body: JSON.stringify({
-      dataset_id: input.datasetId,
-      query_name: input.queryName,
-      query_type: input.queryType,
-      query_text: input.queryText,
-      top_k: input.topK,
-      profile: "competition_default",
-      options: {
-        use_query_expansion: input.useExpansion,
-        use_metadata: input.useMetadata,
-        use_reranker: false,
-        strict_hybrid: !input.useMetadata,
-        delta_t_max_ms: 180000,
-      },
-    }),
+    body: JSON.stringify(retrievalPayload(input)),
   });
 }
 
@@ -104,9 +127,50 @@ export async function getFrameContext(frameId: string): Promise<FrameContext> {
   return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`);
 }
 
+export async function getVideoPreviewUrl(
+  videoId: string,
+): Promise<VideoPreviewUrl> {
+  return requestJson<VideoPreviewUrl>(
+    `/api/media/videos/${encodeURIComponent(videoId)}/preview-url`,
+  );
+}
+
+export async function getVideoEvidence(
+  videoId: string,
+  focus?: {
+    seconds?: number;
+    frameId?: string | null;
+  },
+): Promise<VideoEvidence> {
+  const params = new URLSearchParams();
+  if (focus?.seconds !== undefined && Number.isFinite(focus.seconds)) params.set("seconds", String(focus.seconds));
+  if (focus?.frameId) params.set("frame_id", focus.frameId);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return requestJson<VideoEvidence>(
+    `/api/media/videos/${encodeURIComponent(videoId)}/evidence${suffix}`,
+  );
+}
+
+export async function seekVideoFrame(input: {
+  videoId: string;
+  seconds?: number;
+  frameIdx?: number;
+  direction?: "nearest" | "next" | "previous";
+}): Promise<VideoFrameSeekResponse> {
+  const params = new URLSearchParams();
+  if (input.seconds !== undefined) params.set("seconds", String(input.seconds));
+  if (input.frameIdx !== undefined) params.set("frame_idx", String(input.frameIdx));
+  params.set("direction", input.direction ?? "nearest");
+  return requestJson<VideoFrameSeekResponse>(
+    `/api/media/videos/${encodeURIComponent(input.videoId)}/frames/seek?${params.toString()}`,
+  );
+}
+
 export async function listFrames(input: {
   datasetId?: string;
   videoId?: string;
+  videoCode?: string;
+  frameIdx?: number;
   limit?: number;
   offset?: number;
   presentOnly?: boolean;
@@ -114,6 +178,8 @@ export async function listFrames(input: {
   const params = new URLSearchParams();
   if (input.datasetId) params.set("dataset_id", input.datasetId);
   if (input.videoId) params.set("video_id", input.videoId);
+  if (input.videoCode) params.set("video_code", input.videoCode);
+  if (input.frameIdx !== undefined) params.set("frame_idx", String(input.frameIdx));
   params.set("limit", String(input.limit ?? 60));
   params.set("offset", String(input.offset ?? 0));
   params.set("present_only", String(input.presentOnly ?? true));
@@ -141,6 +207,7 @@ export async function createAndExportSubmission(
   const exported = await requestJson<{
     submission_id: string;
     status: string;
+    csv_uri: string | null;
     zip_uri: string | null;
     validation_report: { valid: boolean; errors: string[]; warnings: string[] };
   }>(`/api/submissions/${submission.id}/export`, {
@@ -243,6 +310,7 @@ export async function uploadFileToGCS(
   const res = await fetch(`${API_BASE}/api/ingest/upload/file/gcs`, {
     method: "POST",
     body: form,
+    headers: { "ngrok-skip-browser-warning": "true" },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;
@@ -260,6 +328,7 @@ export async function uploadFileToMilvus(
   const res = await fetch(`${API_BASE}/api/ingest/upload/file/milvus`, {
     method: "POST",
     body: form,
+    headers: { "ngrok-skip-browser-warning": "true" },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;

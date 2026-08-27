@@ -1,7 +1,8 @@
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 httpx==0.28.1
-numpy==2.2.6
+numpy==2.2.6; python_version < "3.14"
+numpy>=2.3.3; python_version >= "3.14"
 open_clip_torch==2.26.1
 torch>=2.3.0
 python-dotenv==1.0.1

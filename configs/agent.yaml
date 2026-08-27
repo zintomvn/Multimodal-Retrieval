@@ -1,8 +1,9 @@
 llm_query_planning:
   enabled: true
-  active_profile: groq_gpt_oss_120b
-  max_agent_iterations: 4
-  max_variants_default: 5
+  active_profile: openai_gpt4o # test: groq_gpt_oss_120b
+  execution_mode: direct
+  max_agent_iterations: 1
+  max_variants_default: 3
   max_temporal_events: 8
   fallback_on_error: true
   profiles:
@@ -10,20 +11,23 @@ llm_query_planning:
       provider: chatgroq
       model: openai/gpt-oss-120b
       api_key_env: GROQ_API_KEY
-      temperature: 0.1
+      temperature: 0.05
       max_tokens: 2048
       timeout_s: 30
       max_retries: 2
       reasoning_format: parsed
+      reasoning_effort: low
       description: Default fast text-only query planning profile.
     openai_gpt4o:
       provider: openai
       model: gpt-4o
       api_key_env: OPENAI_API_KEY
-      temperature: 0.1
+      temperature: 0.05
       max_tokens: 2048
       timeout_s: 30
-      max_retries: 2
+      max_retries: 5
+      min_request_interval_s: 5.0
+      cache_ttl_s: 600
       description: OpenAI API profile for higher-quality planning and future multimodal routing.
   langsmith:
     enabled: true
@@ -59,43 +63,78 @@ llm_query_planning:
             "time_cues": ["before, after, start, end, duration"],
             "negative_constraints": ["things that must be absent"]
           },
+          "retrieval_strategy": {
+            "clauses": [
+              {
+                "text": "an atomic requirement from the query",
+                "evidence": "visual|text|both",
+                "importance": 0.0
+              }
+            ],
+            "weights": {"visual": 0.0, "text": 0.0},
+            "text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0},
+            "rationale": "short evidence-based explanation"
+          },
           "temporal_events": [
             {
               "order": 1,
               "query": "standalone event query for search",
-              "must_have": ["critical factors for this event"]
+              "text_query": "Vietnamese lexical query for ASR and OCR search",
+              "must_have": ["critical factors for this event"],
+              "importance": 1.0,
+              "retrieval_weights": {"visual": 0.0, "text": 0.0},
+              "text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0}
             }
           ],
+          "temporal_anchor_index": 1,
           "variants": [
             {
               "text": "concise retrieval rewrite",
               "purpose": "semantic|metadata|ocr|object|temporal"
             }
+          ],
+          "text_variants": [
+            "short lexical phrase for ASR/OCR/Elasticsearch matching"
           ]
         }
 
         Rules:
         - Preserve the original meaning. Do not invent entities, brands, or text.
+        - First split the query into atomic requirements. Classify each requirement as `visual` when it is primarily visible in a frame (person, object, action, colour, layout, scene), `text` when it depends on spoken/narrated words, ASR, OCR, a quoted phrase, a name, number, or other lexical fact, and `both` when both sources are needed.
+        - Infer `retrieval_strategy.weights` from those clauses, not from a fixed default. `visual` controls vector/image retrieval and `text` controls caption/ASR/OCR/metadata retrieval. The two weights must be numeric, non-negative, and sum to exactly 1.0.
+        - When text has nonzero weight, always set `retrieval_strategy.text_source_weights` for `asr`, `caption`, and `ocr`; these are numeric, non-negative, and sum to exactly 1.0. Use ASR for spoken dialogue, narration, or quoted speech; use caption for visible people, objects, actions, scenes, and attributes described in English frame captions. Set OCR to 0.0 unless the query explicitly requests visible words, a displayed proper name, a table/chart, symbol, logo, sign, number, code, price, date, or text on screen. Do not infer OCR need from an ordinary visual object or scene.
+        - Give text substantial or dominant weight for speech, narration, dialogue, quoted/on-screen text, names, numbers, or facts unlikely to be inferred from pixels alone. Give visual substantial or dominant weight for appearance, actions, objects, colours, spatial relations, and scenes. For mixed queries, balance the weights according to the importance of the clauses.
+        - Include every important clause in `retrieval_strategy.clauses`, assign its importance from 0.0 to 1.0, and state a short rationale. Do not make visual dominant merely because this is video retrieval.
+        - The user query is Vietnamese by default. Write `summary`, `temporal_events.query`, and every `variants.text` value in English for CLIP/Milvus embedding. Never return the raw Vietnamese input as a semantic variant.
+        - `text_variants` is for Elasticsearch lexical search over Vietnamese ASR/OCR. Return the original Vietnamese query plus up to two short Vietnamese phrases covering the most diagnostic spoken words, names, numbers, quoted text, or facts. Captioning uses the English semantic `variants` separately, so make those concrete enough to match English captions.
+        - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose variants.
         - Prefer concrete visual words that may appear in captions, OCR, and object tags.
+        - Translate abstract descriptions into concrete, observable visual terms chosen from the user query itself. Do not use a fixed domain vocabulary or example-specific scene/object mappings.
         - Keep each variant under 24 words.
-        - Include the original query as the first variant.
-        - For simple KIS/QA queries, return one temporal event equal to the main target.
+        - Make the first variant the best concise English retrieval rewrite, not the raw Vietnamese query.
+        - When `temporal_kis` is true for a KIS request, this rule overrides the simple-KIS rule: return 2 to 8 chronological standalone events whenever the query contains a before/after relation, a process, or a contextual target. Include the requested target moment as one event and set `temporal_anchor_index` (1-based) to that target event. Do not use only previous/current/next; represent every useful event in the inferred k-event chain. When a visual element is said to appear repeatedly, emit separate events for the visible reveals; do not collapse the count into one abstract event. Every event MUST contain English `query` for embedding/captioning and Vietnamese `text_query` for ASR/OCR. The backend independently retrieves every event and reranks the full n-event candidate chain, so never merge event descriptions. Do not invent context: return one event only when no supported before/after context can be inferred.
+        - For KIS/QA when `temporal_kis` is false, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
+        - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
+        - For every temporal event, set `importance` from 0.0 to 1.0 based on how diagnostic that event is for identifying the sequence, and infer its own `retrieval_weights` and `text_source_weights` using the same evidence rules. Both weight objects must sum to 1.0. Cooking actions, body motion, object contact, and spatial changes usually favor visual/caption evidence; spoken facts and dialogue favor ASR; visible titles, names, and numbers favor OCR.
     query_decomposition:
       name: query_decomposition_agent
       description: Extracts visual, textual, object, scene, and temporal factors from the query.
       system_prompt: |
         You decompose natural-language video retrieval queries into observable
-        search factors. Focus on what can be found in keyframes: subjects, actions,
-        objects, colors, clothing, scene, OCR text, and temporal ordering. Keep
-        ambiguous details as optional factors, and do not infer facts not stated
-        by the user.
+        search factors. For each factor, decide whether its evidence is visual,
+        text (ASR/OCR/caption/metadata), or both. Focus on what can be found in
+        keyframes: subjects, actions, objects, colors, clothing, scene, OCR text,
+        spoken words, and temporal ordering. Keep ambiguous details as optional
+        factors, and do not infer facts not stated by the user.
     query_expansion:
       name: query_expansion_agent
       description: Generates concise search rewrites from decomposed factors.
       system_prompt: |
         You create query expansion variants for hybrid video retrieval. Variants
         should help both semantic embeddings and metadata search. Produce short
+        English rewrites by default, translating Vietnamese descriptions into
+        concrete visual English while preserving exact OCR strings when needed.
         rewrites that combine the most important visual factors, OCR cues, object
         names, and event-level wording. Avoid long explanations, synonyms that
         change meaning, and broad generic words.

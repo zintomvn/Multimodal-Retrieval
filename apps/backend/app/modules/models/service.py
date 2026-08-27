@@ -16,11 +16,13 @@ class ModelRegistryService:
         query_expander: QueryExpander,
         visual_qa: VisualQaModel,
         reranker: TextReranker | None = None,
+        embedders: dict[str, TextImageEmbedder] | None = None,
         registry: dict[str, Any] | None = None,
     ) -> None:
         self.settings = get_settings()
         self.registry = registry if registry is not None else self.load_registry(self.settings.model_registry_path)
         self.embedder = embedder
+        self.embedders = embedders or {}
         self.query_expander = query_expander
         self.visual_qa = visual_qa
         self.reranker = reranker
@@ -53,3 +55,10 @@ class ModelRegistryService:
             if isinstance(config, dict) and config.get("enabled"):
                 return str(name), config
         return None
+
+    def embedder_for(self, model_key: str | None = None) -> TextImageEmbedder:
+        if model_key:
+            embedder = self.embedders.get(model_key)
+            if embedder is not None:
+                return embedder
+        return self.embedder
