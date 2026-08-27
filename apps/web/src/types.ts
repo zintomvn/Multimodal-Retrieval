@@ -58,8 +58,13 @@ export interface SearchResponse {
     text_temporal_events?: string[];
     temporal_event_count?: number;
     temporal_event_source?: string;
+    temporal_mode?: boolean;
+    temporal_strategy?: "vortex_k_context" | "aithena_weighted_ats" | null;
+    temporal_anchor_index?: number;
     retrieval_weights?: { visual?: number; text?: number };
     retrieval_weight_source?: string;
+    text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+    text_source_weight_source?: string;
     temporal_event_plans?: Array<{
       event_index?: number;
       query?: string;
@@ -67,6 +72,8 @@ export interface SearchResponse {
       importance?: number;
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;
+      text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+      text_source_weight_source?: string;
     }>;
     raw_temporal_events?: string[];
     profile?: string;
@@ -83,9 +90,12 @@ export interface SearchResponse {
         raw_temporal_events?: unknown[];
       };
       temporal_events?: string[];
+      temporal_anchor_index?: number | null;
       variants?: string[];
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;
+      text_source_weights?: { asr?: number; caption?: number; ocr?: number };
+      text_source_weight_source?: string;
       temporal_event_plans?: Array<Record<string, unknown>>;
       agent_metadata?: {
         enabled?: boolean;
@@ -105,6 +115,10 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+export interface QueryPlanResponse {
+  normalized_query: SearchResponse["normalized_query"];
+}
+
 export interface ContextFrame {
   id: string;
   frame_idx: number;
@@ -120,6 +134,26 @@ export interface FrameContext {
   target_frame_id: string;
   video_code: string;
   frames: ContextFrame[];
+}
+
+export interface VideoEvidenceItem {
+  text: string;
+  start_seconds: number | null;
+  end_seconds: number | null;
+  frame_id: string | null;
+  segment_id: string | null;
+  model_version: string | null;
+  matches_selected_frame: boolean;
+}
+
+export interface VideoEvidence {
+  video_id: string;
+  video_code: string;
+  evidence: {
+    asr: VideoEvidenceItem[];
+    ocr: VideoEvidenceItem[];
+    captions: VideoEvidenceItem[];
+  };
 }
 
 export interface VideoFrameSeekResponse {

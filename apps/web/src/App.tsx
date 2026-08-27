@@ -19,10 +19,12 @@ import {
   createAndExportSubmission,
   firstMediaUrl,
   getFrameContext,
+  getVideoEvidence,
   getVideoPreviewUrl,
   listDatasets,
   listFrames,
   mediaUrl,
+  planSearch,
   runSearch,
   seekVideoFrame,
 } from "./api/client";
@@ -35,6 +37,8 @@ import type {
   SearchResult,
   SearchResponse,
   SubmissionRow,
+  VideoEvidence,
+  VideoEvidenceItem,
 } from "./types";
 
 type AppMode = "Search" | "Auto" | "Chat";
@@ -82,6 +86,8 @@ interface VideoPreview {
   selectedFrameIdx: number | null;
   selectedTimestampMs: number;
   trakeEventIndex: number | null;
+  evidence: VideoEvidence | null;
+  evidenceLoading: boolean;
 }
 
 type TrakeSequenceFrame = SearchResult["sequence_frames"][number];
@@ -90,16 +96,6 @@ interface TrakeFrameChoice {
   eventIndex: number;
   result: SearchResult;
   frame: TrakeSequenceFrame;
-}
-
-interface MapKeyframeInfo {
-  n?: number;
-  pts_time?: number | null;
-  fps?: number | null;
-  frame_idx?: number;
-  source_keyframe_id?: string | null;
-  resolved_keyframe_id?: string;
-  map_path?: string;
 }
 
 // Mock data
@@ -291,29 +287,6 @@ function scoreComponents(result: SearchResult): Array<{
   return items;
 }
 
-function textHitInfo(result: SearchResult): {
-  source: string;
-  score: number | null;
-  time: string | null;
-  snippet: string;
-} | null {
-  const raw = result.score_breakdown.text_hit;
-  if (!isRecord(raw)) return null;
-  const snippet = String(raw.snippet ?? "").trim();
-  const source = String(raw.source_type ?? raw.field ?? "text").trim();
-  const score = scoreNumber(raw.score);
-  const start = scoreNumber(raw.start_seconds);
-  const end = scoreNumber(raw.end_seconds);
-  const time =
-    start !== null
-      ? end !== null && end > start
-        ? `${timestampLabel(start * 1000)}-${timestampLabel(end * 1000)}`
-        : timestampLabel(start * 1000)
-      : null;
-  if (!snippet && score === null && !source) return null;
-  return { source: source || "text", score, time, snippet };
-}
-
 function csvDownloadName(raw: string, fallback = "submission.csv"): string {
   const cleaned = (raw || fallback)
     .trim()
@@ -347,26 +320,6 @@ function contextFrameFromResult(result: SearchResult): ContextFrame | null {
     image_uri: result.image_uri,
     image_storage_key: result.image_storage_key,
     text: "",
-  };
-}
-
-function mapKeyframeInfo(result: SearchResult): MapKeyframeInfo | null {
-  const semanticHit = result.score_breakdown.semantic_hit;
-  if (!semanticHit || typeof semanticHit !== "object") return null;
-  const mapInfo = (semanticHit as { map_keyframe?: unknown }).map_keyframe;
-  if (!mapInfo || typeof mapInfo !== "object") return null;
-  return mapInfo as MapKeyframeInfo;
-}
-
-function semanticHitInfo(result: SearchResult): {
-  map_matches_resolved?: boolean;
-  resolved_keyframe_id?: string | null;
-} | null {
-  const semanticHit = result.score_breakdown.semantic_hit;
-  if (!semanticHit || typeof semanticHit !== "object") return null;
-  return semanticHit as {
-    map_matches_resolved?: boolean;
-    resolved_keyframe_id?: string | null;
   };
 }
 
@@ -689,7 +642,8 @@ function makeTraceFromResponse(
         ? `${keyEnv} configured`
         : "key status unavailable";
   const traceStatus: AgentStep["status"] = plan?.error ? "warning" : "done";
-  const temporalEvents = plan?.temporal_events ?? normalized.temporal_events ?? [];
+  // The backend may repair a collapsed agent plan before independent event retrieval.
+  const temporalEvents = normalized.temporal_events ?? plan?.temporal_events ?? [];
   const textTemporalEvents = normalized.text_temporal_events ?? [];
   const semanticVariants = normalized.semantic_variants ?? normalized.variants ?? [];
   const textVariants = normalized.text_variants ?? [];
@@ -700,7 +654,7 @@ function makeTraceFromResponse(
       : "LangSmith off";
   const retrievalWeights = plan?.retrieval_weights ?? normalized.retrieval_weights;
   const weightSource = plan?.retrieval_weight_source ?? normalized.retrieval_weight_source ?? "profile";
-
+  const textSourceWeights = plan?.text_source_weights ?? normalized.text_source_weights;
   return [
     {
       title: "Agent profile",
@@ -712,7 +666,12 @@ function makeTraceFromResponse(
       title: "Decompose query",
       detail: `${plan?.intent ?? queryType} / ${plan?.language ?? normalized.language ?? "auto"}: ${summary}`,
       status: traceStatus,
-      raw: plan ?? normalized,
+      raw: {
+        summary: plan?.summary ?? summary,
+        decomposition: plan?.decomposition ?? null,
+        semantic_variants: semanticVariants,
+        text_variants: textVariants,
+      },
     },
     {
       title: "Search factors",
@@ -738,6 +697,16 @@ function makeTraceFromResponse(
       raw: { language: "en", variants: semanticVariants },
     },
     {
+      title: "Captioning query",
+      detail: `English: ${summarizeList(semanticVariants, "No English caption query returned.")}`,
+      status: traceStatus,
+      raw: {
+        source: "caption",
+        language: "en",
+        variants: semanticVariants,
+      },
+    },
+    {
       title: "ASR query",
       detail: `Vietnamese: ${summarizeList(textVariants, "No Vietnamese text query returned.")}`,
       status: traceStatus,
@@ -747,19 +716,32 @@ function makeTraceFromResponse(
       },
     },
     {
-      title: "Split events",
+      title: "OCR query",
+      detail: `Exact text / Vietnamese: ${summarizeList(textVariants, "No OCR query returned.")}`,
+      status: traceStatus,
+      raw: {
+        source: "ocr",
+        language: "vi",
+        variants: textVariants,
+      },
+    },
+    {
+      title: "Temporal reasoning",
       detail: temporalEvents.length > 1
-        ? `Embedding (English): ${summarizeList(temporalEvents, "-")} | ASR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
-        : "No temporal split needed.",
+        ? `The plan separates this request into ordered moments. Embedding/captioning (English): ${summarizeList(temporalEvents, "-")} | ASR/OCR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
+        : normalized.temporal_mode
+          ? "The plan uses the available temporal evidence for this request."
+          : "No temporal split needed.",
       status: traceStatus,
       raw: {
         semantic_events: temporalEvents,
         text_events: textTemporalEvents,
+        event_plans: normalized.temporal_event_plans ?? plan?.temporal_event_plans ?? [],
       },
     },
     {
       title: "Retrieve candidates",
-      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using ${semanticVariants.length || 1} English embedding variant(s) and ${textVariants.length || 1} Vietnamese ASR query. Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
+      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using English embedding/captioning, Vietnamese ASR, and OCR. Text weights: ASR ${formatScore(textSourceWeights?.asr ?? 0)} | Caption ${formatScore(textSourceWeights?.caption ?? 0)} | OCR ${formatScore(textSourceWeights?.ocr ?? 0)}. Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
       status: resultCount > 0 ? "done" : "warning",
       raw: {
         query_run_id: response.query_run_id,
@@ -826,7 +808,6 @@ function ScoreBreakdown({
   result: SearchResult;
   compact?: boolean;
 }) {
-  const hit = textHitInfo(result);
   return (
     <div className={`score-breakdown ${compact ? "compact" : ""}`}>
       {scoreComponents(result).map((item) => (
@@ -835,17 +816,85 @@ function ScoreBreakdown({
           <strong>{formatScore(item.value)}</strong>
         </span>
       ))}
-      {hit && (
-        <span className="text-hit-pill" title={hit.snippet}>
-          <small>
-            {hit.source.toUpperCase()}
-            {hit.time ? ` ${hit.time}` : ""}
-          </small>
-          <strong>{hit.score !== null ? formatScore(hit.score) : "hit"}</strong>
-          {hit.snippet && <em>{hit.snippet}</em>}
-        </span>
-      )}
     </div>
+  );
+}
+
+function evidenceTimeLabel(item: VideoEvidenceItem): string {
+  if (item.start_seconds === null) return "Unmapped time";
+  const start = timestampLabel(item.start_seconds * 1000);
+  if (item.end_seconds === null || item.end_seconds <= item.start_seconds) return start;
+  return `${start} - ${timestampLabel(item.end_seconds * 1000)}`;
+}
+
+function VideoEvidenceSection({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: VideoEvidenceItem[];
+  emptyLabel: string;
+}) {
+  return (
+    <section className="video-evidence-section">
+      <div className="video-evidence-heading">
+        <strong>{title}</strong>
+        <small>{items.length}</small>
+      </div>
+      {items.length === 0 ? (
+        <p className="video-evidence-empty">{emptyLabel}</p>
+      ) : (
+        <div className="video-evidence-list">
+          {items.map((item, index) => (
+            <article className="video-evidence-item active" key={`${item.segment_id ?? title}-${item.frame_id ?? ""}-${index}`}>
+              <time>{evidenceTimeLabel(item)}</time>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VideoEvidenceSidebar({
+  evidence,
+  loading,
+  frameIdx,
+}: {
+  evidence: VideoEvidence | null;
+  loading: boolean;
+  frameIdx: number | null;
+}) {
+  const values = evidence?.evidence;
+  return (
+    <aside className="video-evidence-sidebar" aria-label="Video text evidence">
+      <div className="video-evidence-sidebar-header">
+        <span>
+          <strong>Text evidence</strong>
+          <small>{frameIdx === null ? "Selected frame" : `Frame ${frameIdx}`}</small>
+        </span>
+        {loading && <Loader2 className="spin-icon" size={15} aria-label="Loading evidence" />}
+      </div>
+      <div className="video-evidence-scroll">
+        <VideoEvidenceSection
+          title="ASR"
+          items={values?.asr ?? []}
+          emptyLabel={loading ? "Loading ASR transcript" : "No ASR aligned to this frame"}
+        />
+        <VideoEvidenceSection
+          title="OCR"
+          items={values?.ocr ?? []}
+          emptyLabel={loading ? "Loading OCR" : "No OCR aligned to this frame"}
+        />
+        <VideoEvidenceSection
+          title="Captioning (English)"
+          items={values?.captions ?? []}
+          emptyLabel={loading ? "Loading captions" : "No English caption aligned to this frame"}
+        />
+      </div>
+    </aside>
   );
 }
 
@@ -892,14 +941,7 @@ function FrameCard({
   onPreview: () => void;
 }) {
   const candidates = resultImageCandidates(result);
-  const frameText =
-    result.sequence_frames.length > 0
-      ? result.sequence_frames.map((frame) => frame.frame_idx).join(", ")
-      : (result.frame_idx ?? "N/A");
-  const mapInfo = mapKeyframeInfo(result);
-  const semanticInfo = semanticHitInfo(result);
-  const mapMismatch = Boolean(mapInfo && semanticInfo?.map_matches_resolved === false);
-
+  const frameText = result.frame_idx ?? "N/A";
   return (
     <article
       className={`frame-card ${selected ? "selected" : ""}`}
@@ -920,20 +962,6 @@ function FrameCard({
         </div>
         <p>Frame {frameText}</p>
         <ScoreBreakdown result={result} compact />
-        {mapInfo && (
-          <div
-            className={`map-keyframe-meta${mapMismatch ? " is-mismatch" : ""}`}
-            title={mapInfo.map_path}
-          >
-            <span>Map n {mapInfo.n ?? "?"}</span>
-            <span>F{String(mapInfo.frame_idx ?? result.frame_idx ?? "").padStart(6, "0")}</span>
-            {typeof mapInfo.pts_time === "number" && <span>{mapInfo.pts_time.toFixed(2)}s</span>}
-            <small>
-              {mapInfo.source_keyframe_id ?? "vector"} -&gt; {mapInfo.resolved_keyframe_id ?? result.frame_id}
-              {mapMismatch && result.frame_id ? ` | UI ${result.frame_id}` : ""}
-            </small>
-          </div>
-        )}
         <div className="frame-actions">
           <button
             type="button"
@@ -1115,7 +1143,7 @@ function TrakeRows({
       })}
       <div className="trake-selection-toolbar" aria-live="polite">
         <div>
-          <strong>{selectedEventCount}/{inferredEventCount} events picked</strong>
+          <strong>{selectedEventCount} frame{selectedEventCount === 1 ? "" : "s"} selected</strong>
           <small>
             {selectedVideoCode
               ? `Video ${selectedVideoCode}`
@@ -1276,6 +1304,10 @@ export function App() {
   const [useExpansion, setUseExpansion] = useState(true);
   const [useAgentPlanning, setUseAgentPlanning] = useState(true);
   const [useMetadata, setUseMetadata] = useState(true);
+  const [kisTemporalMode, setKisTemporalMode] = useState(false);
+  const [temporalStrategy, setTemporalStrategy] = useState<
+    "vortex_k_context" | "aithena_weighted_ats"
+  >("vortex_k_context");
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1318,6 +1350,8 @@ export function App() {
     },
   ]);
   const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
+  const [videoEvidenceOpen, setVideoEvidenceOpen] = useState(false);
+  const [videoPlaybackSeconds, setVideoPlaybackSeconds] = useState<number | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return (
@@ -1356,6 +1390,7 @@ export function App() {
 
   useEffect(() => {
     videoPreviewRef.current?.pause();
+    setVideoPlaybackSeconds(null);
   }, [videoPreview?.url]);
 
   useEffect(() => {
@@ -1369,6 +1404,7 @@ export function App() {
         ? Math.max(0, player.duration)
         : targetSeconds;
       player.currentTime = Math.min(Math.max(0, targetSeconds), upperBound);
+      setVideoPlaybackSeconds(targetSeconds);
     };
     if (player.readyState >= HTMLMediaElement.HAVE_METADATA) {
       seek();
@@ -1377,6 +1413,46 @@ export function App() {
     player.addEventListener("loadedmetadata", seek, { once: true });
     return () => player.removeEventListener("loadedmetadata", seek);
   }, [videoPreview?.targetSeconds, videoPreview?.url]);
+
+  useEffect(() => {
+    const preview = videoPreview;
+    const frame = preview?.frames[preview.frameIndex];
+    if (!preview || !frame) return;
+    let cancelled = false;
+    setVideoPreview((current) =>
+      current && current.result.id === preview.result.id
+        ? { ...current, evidence: null, evidenceLoading: true }
+        : current,
+    );
+    void getVideoEvidence(preview.result.video_id, {
+      frameId: frame.id,
+      seconds: frame.timestamp_ms / 1000,
+    })
+      .then((evidence) => {
+        if (cancelled) return;
+        setVideoPreview((current) =>
+          current && current.result.id === preview.result.id && current.selectedFrameIdx === frame.frame_idx
+            ? { ...current, evidence, evidenceLoading: false }
+            : current,
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVideoPreview((current) =>
+          current && current.result.id === preview.result.id && current.selectedFrameIdx === frame.frame_idx
+            ? { ...current, evidenceLoading: false }
+            : current,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    videoPreview?.result.id,
+    videoPreview?.frameIndex,
+    videoPreview?.selectedFrameIdx,
+    videoPreview?.selectedTimestampMs,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1686,8 +1762,7 @@ export function App() {
     );
     setAutoTrace(runningTrace);
 
-    try {
-      const response = await runSearch({
+    const searchInput = {
         datasetId,
         queryType,
         queryName,
@@ -1696,7 +1771,48 @@ export function App() {
         useExpansion,
         useAgentPlanning,
         useMetadata,
-      });
+        temporalMode: queryType === "KIS" && kisTemporalMode,
+        temporalStrategy,
+      };
+
+    try {
+      const shouldShowPlanEarly =
+        useAgentPlanning || queryType === "TRAKE" || (queryType === "KIS" && kisTemporalMode);
+      if (shouldShowPlanEarly) {
+        try {
+          const planned = await planSearch(searchInput);
+          const planningTrace = makeTraceFromResponse(mode, queryType, {
+            query_run_id: "planning",
+            query_type: queryType,
+            query_name: queryName,
+            normalized_query: planned.normalized_query,
+            results: [],
+          }, 0).map((step) =>
+            step.title === "Retrieve candidates"
+              ? {
+                  ...step,
+                  detail: "LLM reasoning is ready. Retrieving matching frames.",
+                  status: "running" as const,
+                }
+              : step,
+          );
+          setAutoTrace(planningTrace);
+        } catch {
+          setAutoTrace((current) =>
+            current.map((step) =>
+              step.title === "Parse query"
+                ? {
+                    ...step,
+                    detail: "Planning is unavailable. Continuing with retrieval.",
+                    status: "warning" as const,
+                  }
+                : step,
+            ),
+          );
+        }
+      }
+
+      const response = await runSearch(searchInput);
       const nextResults = response.results;
       if (queryType === "TRAKE") {
         setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
@@ -1872,6 +1988,7 @@ export function App() {
     const initialTimestamp = fallbackFrame?.timestamp_ms ?? result.timestamp_ms;
     const frameLabel = fallbackFrame ? `frame ${fallbackFrame.frame_idx}` : "sequence";
     const initialSeconds = Math.max(0, (initialTimestamp ?? 0) / 1000);
+    setVideoEvidenceOpen(false);
     setVideoPreview({
       title: result.video_code,
       subtitle: `${frameLabel} | ${timestampLabel(initialTimestamp)}`,
@@ -1885,6 +2002,8 @@ export function App() {
       selectedFrameIdx: fallbackFrame?.frame_idx ?? result.frame_idx,
       selectedTimestampMs: initialTimestamp ?? 0,
       trakeEventIndex,
+      evidence: null,
+      evidenceLoading: true,
     });
     setStatus("Video ready");
     if (!result.frame_id) return;
@@ -1929,6 +2048,7 @@ export function App() {
     selection: { frame_idx: number; timestamp_ms: number },
     targetSeconds = selection.timestamp_ms / 1000,
   ) {
+    setVideoPlaybackSeconds(targetSeconds);
     setVideoPreview((current) => {
       if (!current || current.result.id !== resultId) return current;
       return {
@@ -2616,6 +2736,39 @@ export function App() {
                           }
                         />
                       </label>
+                      {queryType === "KIS" && (
+                        <>
+                          <label className="temporal-toggle">
+                            <span>Temporal</span>
+                            <input
+                              type="checkbox"
+                              checked={kisTemporalMode}
+                              onChange={(event) => setKisTemporalMode(event.target.checked)}
+                            />
+                          </label>
+                          {kisTemporalMode && (
+                            <div className="temporal-strategy" role="group" aria-label="Temporal strategy">
+                              <span>Strategy</span>
+                              <div className="segmented-control">
+                                <button
+                                  type="button"
+                                  className={temporalStrategy === "vortex_k_context" ? "active" : ""}
+                                  onClick={() => setTemporalStrategy("vortex_k_context")}
+                                >
+                                  Strategy 1
+                                </button>
+                                <button
+                                  type="button"
+                                  className={temporalStrategy === "aithena_weighted_ats" ? "active" : ""}
+                                  onClick={() => setTemporalStrategy("aithena_weighted_ats")}
+                                >
+                                  Strategy 2
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
                       <button
                         type="button"
                         className="reserved-slot"
@@ -2824,7 +2977,7 @@ export function App() {
           }}
         >
           <div
-            className="video-modal"
+            className={`video-modal ${videoEvidenceOpen ? "evidence-open" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label="Video preview"
@@ -2834,16 +2987,37 @@ export function App() {
                 <strong>{videoPreview.title}</strong>
                 <small>{videoPreview.subtitle}</small>
               </span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setVideoPreview(null)}
-                aria-label="Close video"
-              >
-                <X size={16} />
-              </button>
+              <div className="video-modal-header-actions">
+                <button
+                  type="button"
+                  className={`icon-button ${videoEvidenceOpen ? "active" : ""}`}
+                  onClick={() => setVideoEvidenceOpen((open) => !open)}
+                  aria-label={videoEvidenceOpen ? "Hide text evidence" : "Show text evidence"}
+                  aria-pressed={videoEvidenceOpen}
+                  title={videoEvidenceOpen ? "Hide text evidence" : "Show text evidence"}
+                >
+                  <PanelLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setVideoPreview(null)}
+                  aria-label="Close video"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
-            <video
+            <div className="video-modal-layout">
+              {videoEvidenceOpen && (
+                <VideoEvidenceSidebar
+                  evidence={videoPreview.evidence}
+                  loading={videoPreview.evidenceLoading}
+                  frameIdx={videoPreview.selectedFrameIdx}
+                />
+              )}
+              <div className="video-modal-main">
+                <video
               ref={videoPreviewRef}
               className="video-preview-player"
               src={videoPreview.url}
@@ -2852,8 +3026,9 @@ export function App() {
               preload="metadata"
               playsInline
               onLoadedMetadata={(event) => event.currentTarget.pause()}
-            />
-            <div className="video-current-frame-actions">
+                  onTimeUpdate={(event) => setVideoPlaybackSeconds(event.currentTarget.currentTime)}
+                />
+                <div className="video-current-frame-actions">
               {videoPreview.trakeEventIndex !== null && (
                 <label className="trake-video-slot">
                   <span>Sequence slot</span>
@@ -2889,8 +3064,8 @@ export function App() {
                 <LocateFixed size={16} />
                 Select current frame
               </button>
-            </div>
-            <div className="video-frame-toolbar">
+                </div>
+                <div className="video-frame-toolbar">
               <button
                 type="button"
                 className="ghost-button"
@@ -2936,9 +3111,11 @@ export function App() {
                   ? `Add to E${videoPreview.trakeEventIndex} sequence`
                   : "Pick frame"}
               </button>
-            </div>
-            <div className="video-score-panel">
-              <ScoreBreakdown result={videoPreview.result} />
+                </div>
+                <div className="video-score-panel">
+                  <ScoreBreakdown result={videoPreview.result} />
+                </div>
+              </div>
             </div>
           </div>
         </div>

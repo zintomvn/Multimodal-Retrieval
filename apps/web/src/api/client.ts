@@ -10,10 +10,12 @@ import type {
   PipelineJobPollResponse,
   PipelineJobStartRequest,
   PipelineJobStartResponse,
+  QueryPlanResponse,
   QueryType,
   SearchResponse,
   SubmissionRow,
   VideoFrameSeekResponse,
+  VideoEvidence,
   VideoPreviewUrl,
 } from "../types";
 
@@ -67,7 +69,7 @@ export async function listDatasets(): Promise<Dataset[]> {
   return payload.datasets;
 }
 
-export async function runSearch(input: {
+export interface RetrievalSearchInput {
   datasetId: string;
   queryType: QueryType;
   queryName: string;
@@ -76,7 +78,39 @@ export async function runSearch(input: {
   useExpansion: boolean;
   useAgentPlanning: boolean;
   useMetadata: boolean;
-}): Promise<SearchResponse> {
+  temporalMode: boolean;
+  temporalStrategy: "vortex_k_context" | "aithena_weighted_ats";
+}
+
+function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> {
+  return {
+    dataset_id: input.datasetId,
+    query_name: input.queryName,
+    query_type: input.queryType,
+    query_text: input.queryText,
+    top_k: input.topK,
+    profile: "competition_default",
+    options: {
+      use_query_expansion: input.useExpansion,
+      use_agent_query_planning: input.useAgentPlanning,
+      use_metadata: input.useMetadata,
+      use_reranker: true,
+      strict_hybrid: false,
+      delta_t_max_ms: 180000,
+      temporal_mode: input.temporalMode,
+      temporal_strategy: input.temporalStrategy,
+    },
+  };
+}
+
+export async function planSearch(input: RetrievalSearchInput): Promise<QueryPlanResponse> {
+  return requestJson<QueryPlanResponse>("/api/retrieval/plan", {
+    method: "POST",
+    body: JSON.stringify(retrievalPayload(input)),
+  });
+}
+
+export async function runSearch(input: RetrievalSearchInput): Promise<SearchResponse> {
   const path =
     input.queryType === "QA"
       ? "/api/retrieval/qa"
@@ -85,22 +119,7 @@ export async function runSearch(input: {
         : "/api/retrieval/search";
   return requestJson<SearchResponse>(path, {
     method: "POST",
-    body: JSON.stringify({
-      dataset_id: input.datasetId,
-      query_name: input.queryName,
-      query_type: input.queryType,
-      query_text: input.queryText,
-      top_k: input.topK,
-      profile: "competition_default",
-      options: {
-        use_query_expansion: input.useExpansion,
-        use_agent_query_planning: input.useAgentPlanning,
-        use_metadata: input.useMetadata,
-        use_reranker: true,
-        strict_hybrid: false,
-        delta_t_max_ms: 180000,
-      },
-    }),
+    body: JSON.stringify(retrievalPayload(input)),
   });
 }
 
@@ -113,6 +132,22 @@ export async function getVideoPreviewUrl(
 ): Promise<VideoPreviewUrl> {
   return requestJson<VideoPreviewUrl>(
     `/api/media/videos/${encodeURIComponent(videoId)}/preview-url`,
+  );
+}
+
+export async function getVideoEvidence(
+  videoId: string,
+  focus?: {
+    seconds?: number;
+    frameId?: string | null;
+  },
+): Promise<VideoEvidence> {
+  const params = new URLSearchParams();
+  if (focus?.seconds !== undefined && Number.isFinite(focus.seconds)) params.set("seconds", String(focus.seconds));
+  if (focus?.frameId) params.set("frame_id", focus.frameId);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return requestJson<VideoEvidence>(
+    `/api/media/videos/${encodeURIComponent(videoId)}/evidence${suffix}`,
   );
 }
 
