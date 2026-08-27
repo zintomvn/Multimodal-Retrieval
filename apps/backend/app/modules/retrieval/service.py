@@ -23,6 +23,7 @@ from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
+from app.modules.temporal.vortex import vortex_k_context_rerank
 
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,8 @@ class RetrievalService:
         try:
             if request.query_type == "TRAKE":
                 results = self._search_trake(run, dataset, request, normalized)
+            elif request.query_type == "KIS" and request.options.temporal_mode:
+                results = self._search_temporal_kis(run, dataset, request, normalized)
             else:
                 results = self._search_frame_level(run, dataset, request, normalized)
             run.status = "DONE"
@@ -239,15 +242,43 @@ class RetrievalService:
         query_text = request.query_text.strip()
         semantic_variants = [query_text]
         text_variants = [query_text]
+        temporal_kis = request.query_type == "KIS" and request.options.temporal_mode
         agent_plan = None
-        if request.options.use_agent_query_planning:
-            agent_plan = self.query_planner.plan(
-                query=query_text,
-                query_type=request.query_type,
-                max_variants=max_variants,
-            )
+        if request.options.use_agent_query_planning or temporal_kis:
+            if temporal_kis:
+                try:
+                    agent_plan = self.query_planner.plan(
+                        query=query_text,
+                        query_type=request.query_type,
+                        max_variants=max_variants,
+                        temporal_kis=True,
+                    )
+                except TypeError as exc:
+                    if "temporal_kis" not in str(exc):
+                        raise
+                    # Keeps third-party planners implementing the prior contract usable.
+                    agent_plan = self.query_planner.plan(
+                        query=query_text,
+                        query_type=request.query_type,
+                        max_variants=max_variants,
+                    )
+            else:
+                agent_plan = self.query_planner.plan(
+                    query=query_text,
+                    query_type=request.query_type,
+                    max_variants=max_variants,
+                )
         if agent_plan is not None and agent_plan.variants:
             semantic_variants = list(agent_plan.variants)
+        if agent_plan is not None and agent_plan.text_variants:
+            text_variants = self._dedupe_query_variants(
+                [query_text, *agent_plan.text_variants],
+                max_variants=max_variants,
+            )
+        text_variants = self._dedupe_query_variants(
+            [*text_variants, *self._metadata_query_cues(query_text)],
+            max_variants=max_variants,
+        )
         if request.options.use_query_expansion and expansion_default_enabled:
             semantic_variants = self._dedupe_query_variants(
                 [*semantic_variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
@@ -260,8 +291,14 @@ class RetrievalService:
         )
         temporal_parse = self._parse_temporal_events(query_text)
         temporal_events, temporal_source = self._resolve_temporal_events(request, agent_plan, temporal_parse)
-        text_temporal_events = self._text_temporal_events(request, temporal_parse, temporal_events)
+        text_temporal_events = self._text_temporal_events(request, temporal_parse, temporal_events, agent_plan)
         retrieval_weights, retrieval_weight_source = self._resolve_retrieval_weights(
+            profile,
+            agent_plan,
+            query_text,
+            request.query_type,
+        )
+        text_source_weights, text_source_weight_source = self._resolve_text_source_weights(
             profile,
             agent_plan,
             query_text,
@@ -273,9 +310,15 @@ class RetrievalService:
                 text_temporal_events,
                 agent_plan,
                 request.query_type,
+                text_source_weights,
             )
-            if request.query_type == "TRAKE"
+            if request.query_type == "TRAKE" or temporal_kis
             else []
+        )
+        temporal_anchor_index = self._resolve_temporal_anchor_index(
+            request.options,
+            agent_plan if temporal_source == "agent" else None,
+            len(temporal_events),
         )
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
@@ -288,8 +331,18 @@ class RetrievalService:
             "temporal_event_count": len(temporal_events),
             "temporal_event_source": temporal_source,
             "temporal_event_plans": temporal_event_plans,
+            "temporal_mode": temporal_kis,
+            "temporal_strategy": request.options.temporal_strategy if temporal_kis else None,
+            "temporal_anchor_index": temporal_anchor_index,
+            "temporal_retrieval": {
+                "enabled": temporal_kis,
+                "independent_event_searches": len(temporal_events) if temporal_kis else 0,
+                "reranker": request.options.temporal_strategy if temporal_kis else None,
+            },
             "retrieval_weights": retrieval_weights,
             "retrieval_weight_source": retrieval_weight_source,
+            "text_source_weights": text_source_weights,
+            "text_source_weight_source": text_source_weight_source,
             "raw_temporal_events": temporal_parse.events,
             "profile": request.profile,
             "filters": self._normalized_filter_options(request.options),
@@ -297,6 +350,19 @@ class RetrievalService:
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
         return normalized
+
+    @staticmethod
+    def _resolve_temporal_anchor_index(options: SearchOptions, agent_plan: Any, event_count: int) -> int:
+        if event_count <= 0:
+            return 1
+        raw_index = options.temporal_anchor_index
+        if raw_index is None and agent_plan is not None:
+            raw_index = getattr(agent_plan, "temporal_anchor_index", None)
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            index = (event_count + 1) // 2
+        return min(max(1, index), event_count)
 
     def _resolve_retrieval_weights(
         self,
@@ -322,12 +388,38 @@ class RetrievalService:
         }
         return self._normalize_retrieval_weights(profile_weights) or {"visual": 0.5, "text": 0.5}, "profile"
 
+    def _resolve_text_source_weights(
+        self,
+        profile: dict[str, Any],
+        agent_plan: Any,
+        query_text: str,
+        query_type: str,
+    ) -> tuple[dict[str, float], str]:
+        agent_weights = getattr(agent_plan, "text_source_weights", {}) if agent_plan else {}
+        normalized_agent_weights = self._normalize_text_source_weights(agent_weights)
+        if normalized_agent_weights:
+            source = str(getattr(agent_plan, "text_source_weight_source", "agent") or "agent")
+            return normalized_agent_weights, source
+
+        heuristic = self._infer_retrieval_strategy(query_text, query_type)
+        heuristic_weights = self._normalize_text_source_weights(heuristic.get("text_source_weights"))
+        if heuristic_weights:
+            return heuristic_weights, "heuristic"
+
+        metadata = profile.get("metadata", {}) if isinstance(profile.get("metadata"), dict) else {}
+        profile_weights = metadata.get("text_source_weights")
+        normalized_profile_weights = self._normalize_text_source_weights(profile_weights)
+        if normalized_profile_weights:
+            return normalized_profile_weights, "profile"
+        return {"asr": 0.35, "caption": 0.5, "ocr": 0.15}, "default"
+
     def _resolve_temporal_event_plans(
         self,
         events: list[str],
         text_events: list[str],
         agent_plan: Any,
         query_type: str,
+        default_text_source_weights: dict[str, float],
     ) -> list[dict[str, Any]]:
         raw_plans = getattr(agent_plan, "temporal_event_plans", []) if agent_plan else []
         raw_plans = raw_plans if isinstance(raw_plans, list) else []
@@ -339,6 +431,12 @@ class RetrievalService:
             if not weights:
                 heuristic = self._infer_retrieval_strategy(event_query, query_type)
                 weights = self._normalize_retrieval_weights(heuristic.get("weights")) or {"visual": 0.5, "text": 0.5}
+            text_source_weights = self._normalize_text_source_weights(raw_plan.get("text_source_weights"))
+            if not text_source_weights:
+                heuristic = self._infer_retrieval_strategy(event_query, query_type)
+                text_source_weights = self._normalize_text_source_weights(heuristic.get("text_source_weights"))
+            if not text_source_weights:
+                text_source_weights = default_text_source_weights
             try:
                 importance = float(raw_plan.get("importance", 1.0))
             except (TypeError, ValueError):
@@ -347,10 +445,15 @@ class RetrievalService:
                 {
                     "event_index": index,
                     "query": event_query,
-                    "text_query": text_events[index - 1] if index - 1 < len(text_events) else event_query,
+                    "text_query": str(
+                        raw_plan.get("text_query")
+                        or (text_events[index - 1] if index - 1 < len(text_events) else event_query)
+                    ),
                     "importance": max(0.0, importance),
                     "retrieval_weights": weights,
                     "retrieval_weight_source": str(raw_plan.get("retrieval_weight_source") or "heuristic"),
+                    "text_source_weights": text_source_weights,
+                    "text_source_weight_source": str(raw_plan.get("text_source_weight_source") or "heuristic"),
                 }
             )
         return plans
@@ -360,10 +463,19 @@ class RetrievalService:
         request: SearchRequest,
         temporal_parse: TemporalEventParse,
         semantic_events: list[str],
+        agent_plan: Any,
     ) -> list[str]:
         option_events = self._dedupe_query_variants(request.options.temporal_events, max_variants=8)
         if option_events:
             return option_events
+        agent_event_plans = getattr(agent_plan, "temporal_event_plans", []) if agent_plan else []
+        if isinstance(agent_event_plans, list):
+            agent_text_events = self._dedupe_query_variants(
+                [str(plan.get("text_query") or "") for plan in agent_event_plans if isinstance(plan, dict)],
+                max_variants=8,
+            )
+            if len(agent_text_events) == len(semantic_events):
+                return agent_text_events
         raw_events = self._dedupe_query_variants(temporal_parse.events, max_variants=8)
         if len(raw_events) == len(semantic_events):
             return raw_events
@@ -387,6 +499,22 @@ class RetrievalService:
             return {}
         return {"visual": visual / total, "text": text / total}
 
+    @staticmethod
+    def _normalize_text_source_weights(raw_weights: Any) -> dict[str, float]:
+        if not isinstance(raw_weights, dict):
+            return {}
+        try:
+            weights = {
+                source: max(0.0, float(raw_weights.get(source, 0.0)))
+                for source in ("asr", "caption", "ocr")
+            }
+        except (TypeError, ValueError):
+            return {}
+        total = sum(weights.values())
+        if total <= 0:
+            return {}
+        return {source: value / total for source, value in weights.items()}
+
     def _infer_retrieval_strategy(self, query_text: str, query_type: str) -> dict[str, Any]:
         infer = getattr(self.query_planner, "infer_retrieval_strategy", None)
         if callable(infer):
@@ -405,6 +533,14 @@ class RetrievalService:
                 deduped.append(value)
                 seen.add(key)
         return deduped[: max(1, max_variants)]
+
+    @staticmethod
+    def _metadata_query_cues(query_text: str) -> list[str]:
+        """Keep exact lexical cues searchable when the LLM planner is unavailable."""
+        cues: list[str] = []
+        cues.extend(match.strip() for match in re.findall(r"[\"'\u201c\u201d]([^\"'\u201c\u201d]{1,80})[\"'\u201c\u201d]", query_text))
+        cues.extend(re.findall(r"\b[A-Z0-9][A-Z0-9._:/-]{1,}\b", query_text))
+        return list(dict.fromkeys(cue for cue in cues if cue))
 
     def _english_semantic_variants(
         self,
@@ -466,6 +602,8 @@ class RetrievalService:
                 return agent_events, "agent"
             return parsed_events or [request.query_text.strip()], temporal_parse.source
 
+        if request.options.temporal_mode and len(parsed_events) > 1 and len(agent_events) < len(parsed_events):
+            return parsed_events, temporal_parse.source
         if agent_events:
             return agent_events, "agent"
         return parsed_events or [request.query_text.strip()], temporal_parse.source
@@ -494,6 +632,7 @@ class RetrievalService:
             top_k=request.top_k,
             retrieval_weights=normalized.get("retrieval_weights"),
             use_agent_retrieval_weights=normalized.get("retrieval_weight_source") == "agent",
+            text_source_weights=normalized.get("text_source_weights"),
         )
         qa_frames_by_id: dict[str, Frame] = {}
         if request.query_type == "QA" and candidates:
@@ -537,6 +676,8 @@ class RetrievalService:
                     "text_hit": candidate.text_hit,
                     "retrieval_weights": normalized.get("retrieval_weights", {}),
                     "retrieval_weight_source": normalized.get("retrieval_weight_source", "profile"),
+                    "text_source_weights": normalized.get("text_source_weights", {}),
+                    "text_source_weight_source": normalized.get("text_source_weight_source", "profile"),
                     "final_score": round(candidate.final_score, 6),
                     "filter_debug": candidate.filter_debug,
                 },
@@ -544,6 +685,202 @@ class RetrievalService:
             )
             result.frame = frame
             result.video = frame.video
+            self.db.add(result)
+            items.append(self._result_to_item(result))
+        return items
+
+    def _search_temporal_kis(
+        self,
+        run: QueryRun,
+        dataset: Dataset,
+        request: SearchRequest,
+        normalized: dict[str, Any],
+    ) -> list[ResultItem]:
+        events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
+        event_plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
+        candidate_sets: list[list[Candidate]] = []
+        event_summaries: list[dict[str, Any]] = []
+        per_event_top_k = max(80, min(500, request.top_k * 20))
+        for event_index, event_query in enumerate(events, start=1):
+            event_plan = event_plans[event_index - 1] if event_index - 1 < len(event_plans) else {}
+            event_plan = event_plan if isinstance(event_plan, dict) else {}
+            event_weights = self._normalize_retrieval_weights(event_plan.get("retrieval_weights"))
+            if not event_weights:
+                event_weights = normalized.get("retrieval_weights")
+            event_weight_source = str(event_plan.get("retrieval_weight_source") or normalized.get("retrieval_weight_source") or "profile")
+            event_text_source_weights = self._normalize_text_source_weights(event_plan.get("text_source_weights"))
+            if not event_text_source_weights:
+                event_text_source_weights = self._normalize_text_source_weights(normalized.get("text_source_weights"))
+            ranked = self._rank_frames(
+                dataset=dataset,
+                semantic_variants=[event_query],
+                text_variants=[str(event_plan.get("text_query") or event_query)],
+                query_text=str(event_plan.get("text_query") or event_query),
+                profile_name=request.profile,
+                options=request.options,
+                top_k=per_event_top_k,
+                retrieval_weights=event_weights,
+                use_agent_retrieval_weights=event_weight_source == "agent",
+                text_source_weights=event_text_source_weights,
+            )
+            candidates = [
+                Candidate(
+                    frame_id=item.frame.id,
+                    video_id=item.frame.video_id,
+                    video_code=item.frame.video.video_code,
+                    frame_idx=item.frame.frame_idx,
+                    score=item.final_score,
+                    text="",
+                    event_index=event_index,
+                    event_query=event_query,
+                    visual_score=item.semantic_score,
+                    text_score=item.text_score,
+                    rrf_score=item.rrf_score,
+                )
+                for item in ranked
+            ]
+            candidate_sets.append(candidates)
+            event_summaries.append(
+                {
+                    "event_index": event_index,
+                    "query": event_query,
+                    "candidate_count": len(candidates),
+                    "importance": round(float(event_plan.get("importance", 1.0)), 4),
+                    "retrieval_weights": event_weights,
+                    "retrieval_weight_source": event_weight_source,
+                    "text_source_weights": event_text_source_weights,
+                }
+            )
+
+        anchor_index = int(normalized.get("temporal_anchor_index") or 1)
+        delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
+        event_weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in event_plans[: len(events)]]
+        if len(event_weights) != len(events) or sum(event_weights) <= 0:
+            event_weights = [1.0 for _ in events]
+        else:
+            scale = len(events) / sum(event_weights)
+            event_weights = [value * scale for value in event_weights]
+        profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
+        temporal_cfg = profile.get("temporal", {}) if isinstance(profile.get("temporal"), dict) else {}
+        compactness_weight = max(0.0, min(1.0, float(temporal_cfg.get("compactness_weight", 0.0))))
+        gap_penalty = max(0.0, min(1.0, float(temporal_cfg.get("gap_penalty", 0.0))))
+        strategy = request.options.temporal_strategy
+        if strategy == "aithena_weighted_ats":
+            # AIThena ATS can rank a valid partial chain when one event has no
+            # strong candidate, while still preferring complete sequences when available.
+            min_match = request.options.min_match or min(
+                len(events),
+                max(2, math.ceil(len(events) * 0.6)),
+            )
+            sequences = adaptive_temporal_search(
+                candidate_sets=candidate_sets,
+                weights=event_weights,
+                delta_frame_max=delta_frames,
+                min_match=min_match,
+                limit=max(request.top_k * 4, request.top_k),
+                per_query_video_limit=max(1, int(temporal_cfg.get("per_query_video_limit", 24))),
+                prefer_full_sequences=bool(temporal_cfg.get("prefer_full_sequences", True)),
+                compactness_weight=compactness_weight,
+                per_video_sequence_limit=max(0, int(temporal_cfg.get("per_video_sequence_limit", 4))),
+            )
+            reranker = "aithena_weighted_ats"
+        else:
+            sequences = vortex_k_context_rerank(
+                candidate_sets=candidate_sets,
+                weights=event_weights,
+                anchor_index=anchor_index,
+                delta_frame_max=delta_frames,
+                limit=max(request.top_k * 4, request.top_k),
+                per_query_video_limit=max(1, int(temporal_cfg.get("per_query_video_limit", 24))),
+                compactness_weight=compactness_weight,
+                gap_penalty=gap_penalty,
+            )
+            min_match = 1
+            reranker = "vortex_k_context"
+
+        anchored_sequences = [
+            sequence
+            for sequence in sequences
+            if any(candidate.event_index == anchor_index for candidate in sequence.candidates)
+        ][: request.top_k]
+        frame_ids = {
+            candidate.frame_id
+            for sequence in anchored_sequences
+            for candidate in sequence.candidates
+            if candidate.frame_id
+        }
+        frames_by_id = {
+            frame.id: frame
+            for frame in self.db.query(Frame)
+            .options(joinedload(Frame.video))
+            .filter(Frame.id.in_(frame_ids))
+            .all()
+        } if frame_ids else {}
+        items: list[ResultItem] = []
+        for rank, sequence in enumerate(anchored_sequences, start=1):
+            anchor = next((item for item in sequence.candidates if item.event_index == anchor_index), None)
+            if anchor is None:
+                continue
+            anchor_frame = frames_by_id.get(anchor.frame_id)
+            if anchor_frame is None:
+                continue
+            frame_indices = [item.frame_idx for item in sequence.candidates]
+            delta_frames_seq = [frame_indices[index] - frame_indices[index - 1] for index in range(1, len(frame_indices))]
+            sequence_frames = [
+                {
+                    "frame_id": item.frame_id,
+                    "frame_idx": item.frame_idx,
+                    "video_code": item.video_code,
+                    "timestamp_ms": frames_by_id.get(item.frame_id).timestamp_ms if frames_by_id.get(item.frame_id) else None,
+                    "score": round(item.score, 4),
+                    "visual_score": round(item.visual_score, 4),
+                    "text_score": round(item.text_score, 4),
+                    "rrf_score": round(item.rrf_score, 4),
+                    "order_index": index + 1,
+                    "event_index": item.event_index,
+                    "event_query": item.event_query,
+                    "delta_from_previous": None if index == 0 else item.frame_idx - sequence.candidates[index - 1].frame_idx,
+                    "thumbnail_url": f"/api/media/frames/{item.frame_id}/thumbnail" if item.frame_id else None,
+                    "image_url": self._browser_image_url(frames_by_id.get(item.frame_id)),
+                    "image_uri": frames_by_id.get(item.frame_id).image_uri if frames_by_id.get(item.frame_id) else None,
+                    "image_storage_key": frames_by_id.get(item.frame_id).image_storage_key if frames_by_id.get(item.frame_id) else None,
+                }
+                for index, item in enumerate(sequence.candidates)
+            ]
+            result = RetrievalResult(
+                id=new_id(),
+                query_run_id=run.id,
+                rank=rank,
+                video_id=anchor.video_id,
+                frame_id=anchor.frame_id,
+                score=sequence.score,
+                score_breakdown={
+                    "temporal_score": round(sequence.score, 6),
+                    "semantic_score": round(anchor.visual_score, 6),
+                    "text_score": round(anchor.text_score, 6),
+                    "rrf_score": round(anchor.rrf_score, 6),
+                    "final_score": round(sequence.score, 6),
+                    "temporal_reranker": reranker,
+                    "temporal_strategy": strategy,
+                    "temporal_anchor_index": anchor_index,
+                    "temporal_anchor_frame_idx": anchor.frame_idx,
+                    "matched_events": len(sequence.candidates),
+                    "expected_events": len(events),
+                    "min_match": min_match,
+                    "event_queries": event_summaries,
+                    "event_weights": [round(weight, 6) for weight in event_weights],
+                    "compactness_weight": compactness_weight,
+                    "gap_penalty": gap_penalty,
+                    "ordering": {
+                        "is_strictly_increasing": all(delta > 0 for delta in delta_frames_seq) if delta_frames_seq else True,
+                        "frame_indices": frame_indices,
+                        "delta_frames": delta_frames_seq,
+                    },
+                },
+                sequence_frames=sequence_frames,
+            )
+            result.frame = anchor_frame
+            result.video = anchor_frame.video
             self.db.add(result)
             items.append(self._result_to_item(result))
         return items
@@ -567,6 +904,9 @@ class RetrievalService:
             if not event_weights:
                 event_weights = normalized.get("retrieval_weights")
             event_weight_source = str(event_plan.get("retrieval_weight_source") or normalized.get("retrieval_weight_source") or "profile")
+            event_text_source_weights = self._normalize_text_source_weights(event_plan.get("text_source_weights"))
+            if not event_text_source_weights:
+                event_text_source_weights = self._normalize_text_source_weights(normalized.get("text_source_weights"))
             ranked = self._rank_frames(
                 dataset=dataset,
                 semantic_variants=[event_query],
@@ -577,6 +917,7 @@ class RetrievalService:
                 top_k=per_event_top_k,
                 retrieval_weights=event_weights,
                 use_agent_retrieval_weights=event_weight_source == "agent",
+                text_source_weights=event_text_source_weights,
             )
             event_candidates = [
                 Candidate(
@@ -603,6 +944,7 @@ class RetrievalService:
                     "importance": round(float(event_plan.get("importance", 1.0)), 4),
                     "retrieval_weights": event_weights,
                     "retrieval_weight_source": event_weight_source,
+                    "text_source_weights": event_text_source_weights,
                 }
             )
         delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
@@ -737,6 +1079,7 @@ class RetrievalService:
         top_k: int,
         retrieval_weights: dict[str, float] | None = None,
         use_agent_retrieval_weights: bool = False,
+        text_source_weights: dict[str, float] | None = None,
     ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
@@ -772,9 +1115,11 @@ class RetrievalService:
         if options.use_metadata:
             text_scores, text_backend_error = self._text_scores(
                 text_variants,
+                semantic_variants,
                 ann_top_k,
                 dataset_video_ids,
                 profile,
+                text_source_weights,
             )
         else:
             text_scores, text_backend_error = {}, False
@@ -1053,52 +1398,61 @@ class RetrievalService:
 
     def _text_scores(
         self,
-        variants: list[str],
+        lexical_variants: list[str],
+        caption_variants: list[str],
         top_k: int,
         dataset_video_ids: set[str],
         profile: dict[str, Any],
+        text_source_weights: dict[str, float] | None,
     ) -> tuple[dict[str, float], bool]:
         self._text_hit_sources = {}
         if self.text_client is None:
             return {}, True
         metadata_profile = profile.get("metadata", {})
-        boosts = {
-            "asr_text": float(metadata_profile.get("asr_boost", 2.5)),
-            "normalized_asr_text": float(metadata_profile.get("asr_boost", 2.5)),
-            "text_value": float(metadata_profile.get("text_boost", metadata_profile.get("asr_boost", 2.5))),
-            "ocr_texts": float(metadata_profile.get("ocr_boost", 3.0)),
-            "caption": float(metadata_profile.get("caption_boost", 1.5)),
-            "detected_objects": float(metadata_profile.get("object_boost", 1.0)),
-        }
+        source_weights = self._normalize_text_source_weights(text_source_weights) or {"asr": 0.35, "caption": 0.5, "ocr": 0.15}
+        asr_boost = float(metadata_profile.get("asr_boost", 2.5)) * source_weights["asr"]
+        caption_boost = float(metadata_profile.get("caption_boost", 1.5)) * source_weights["caption"]
+        ocr_boost = float(metadata_profile.get("ocr_boost", 3.0)) * source_weights["ocr"]
+        source_searches = (
+            ("asr", lexical_variants, {"asr_text": asr_boost, "normalized_asr_text": asr_boost}),
+            ("ocr", lexical_variants, {"ocr_texts": ocr_boost}),
+            ("caption", caption_variants, {"caption": caption_boost}),
+        )
         scores: dict[str, float] = {}
         backend_error = False
-        for variant in variants:
-            try:
-                hits = self.text_client.search(
-                    "keyframe_annotations",
-                    query=variant,
-                    top_k=top_k,
-                    boosts=boosts,
-                )
-            except Exception:
-                backend_error = True
+        for expected_source, variants, boosts in source_searches:
+            if not variants or not any(boost > 0 for boost in boosts.values()):
                 continue
-            for hit in hits:
-                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
-                if not frame_id:
-                    continue
-                if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
-                    continue
-                score = max(0.0, float(hit.score))
-                existing = scores.get(frame_id, 0.0)
-                if score > existing:
-                    scores[frame_id] = score
-                    self._text_hit_sources[frame_id] = self._text_source_hit(
-                        metadata=hit.metadata,
-                        score=score,
-                        resolved_frame_id=frame_id,
-                        variant=variant,
+            for variant in variants:
+                try:
+                    hits = self.text_client.search(
+                        "keyframe_annotations",
+                        query=variant,
+                        top_k=top_k,
+                        boosts=boosts,
+                        source_types=[expected_source],
                     )
+                except Exception:
+                    backend_error = True
+                    continue
+                for hit in hits:
+                    frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                    if not frame_id:
+                        continue
+                    if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                        continue
+                    score = max(0.0, float(hit.score))
+                    existing = scores.get(frame_id, 0.0)
+                    if score > existing:
+                        scores[frame_id] = score
+                        self._text_hit_sources[frame_id] = self._text_source_hit(
+                            metadata=hit.metadata,
+                            score=score,
+                            resolved_frame_id=frame_id,
+                            variant=variant,
+                            expected_source=expected_source,
+                            source_weights=source_weights,
+                        )
         return scores, backend_error
 
     def _text_source_hit(
@@ -1107,9 +1461,11 @@ class RetrievalService:
         score: float,
         resolved_frame_id: str,
         variant: str,
+        expected_source: str,
+        source_weights: dict[str, float],
     ) -> dict[str, Any]:
         return {
-            "source_type": metadata.get("source_type") or metadata.get("kind") or "metadata",
+            "source_type": metadata.get("source_type") or metadata.get("kind") or expected_source,
             "score": round(float(score), 6),
             "variant": variant,
             "keyframe_id": metadata.get("keyframe_id") or metadata.get("frame_id") or resolved_frame_id,
@@ -1117,15 +1473,24 @@ class RetrievalService:
             "segment_id": metadata.get("segment_id"),
             "start_seconds": metadata.get("start_seconds"),
             "end_seconds": metadata.get("end_seconds"),
-            "field": "asr_text" if metadata.get("source_type") == "asr" else "metadata",
+            "field": {"asr": "asr_text", "caption": "caption", "ocr": "ocr_texts"}.get(expected_source, "metadata"),
+            "text_source_weights": source_weights,
             "snippet": self._text_hit_snippet(metadata),
         }
 
     def _text_hit_snippet(self, metadata: dict[str, Any]) -> str:
-        for key in ("asr_text", "text_value", "caption", "normalized_asr_text", "raw_asr_text"):
+        for key in ("asr_text", "caption", "normalized_asr_text", "raw_asr_text", "text_value"):
             value = str(metadata.get(key) or "").strip()
             if value:
                 return value[:240]
+        ocr_texts = metadata.get("ocr_texts")
+        if isinstance(ocr_texts, list):
+            value = " ".join(str(item).strip() for item in ocr_texts if str(item).strip())
+            if value:
+                return value[:240]
+        value = str(ocr_texts or "").strip()
+        if value:
+            return value[:240]
         return ""
 
     def _fallback_rank_frames(

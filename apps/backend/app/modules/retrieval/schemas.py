@@ -17,6 +17,9 @@ class SearchOptions(BaseModel):
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)
+    temporal_mode: bool = False
+    temporal_strategy: Literal["vortex_k_context", "aithena_weighted_ats"] = "vortex_k_context"
+    temporal_anchor_index: int | None = Field(default=None, ge=1, le=8)
     video_codes: list[str] = Field(default_factory=list)
     time_range_start_seconds: float | None = None
     time_range_end_seconds: float | None = None

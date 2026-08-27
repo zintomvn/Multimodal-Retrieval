@@ -12,7 +12,14 @@ class TextHit:
 
 
 class TextSearchClient(Protocol):
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+    def search(
+        self,
+        index: str,
+        query: str,
+        top_k: int,
+        boosts: dict[str, float] | None = None,
+        source_types: list[str] | None = None,
+    ) -> list[TextHit]:
         ...
 
     def upsert(self, index: str, documents: list[tuple[str, dict]]) -> int:

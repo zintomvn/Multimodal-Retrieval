@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.config import get_settings
+from app.core.deps import get_text_client
 from app.db.models import Frame, Video
 from app.db.session import get_db
 from app.modules.media.urls import gcs_public_url, split_gcs_uri
@@ -398,6 +399,118 @@ def _context_frame_payload(frame: Frame) -> dict:
     }
 
 
+def _video_evidence_payload(
+    video_id: str,
+    *,
+    anchor_seconds: float | None = None,
+    anchor_frame_id: str | None = None,
+    per_source_limit: int = 5,
+) -> dict:
+    """Return only annotations aligned to the selected indexed frame."""
+    empty = {"asr": [], "ocr": [], "captions": []}
+    client = get_text_client()
+    es_client = getattr(client, "client", None)
+    if es_client is None:
+        return {"video_id": video_id, "evidence": empty}
+
+    should: list[dict] = []
+    if anchor_frame_id:
+        should.append({"term": {"keyframe_id": anchor_frame_id}})
+    if anchor_seconds is not None:
+        # ASR is aligned by timestamp interval, while OCR/caption use keyframe_id.
+        should.append(
+            {
+                "bool": {
+                    "filter": [
+                        {"range": {"start_seconds": {"lte": anchor_seconds}}},
+                        {"range": {"end_seconds": {"gte": anchor_seconds}}},
+                    ]
+                }
+            }
+        )
+    query: dict = {"bool": {"filter": [{"term": {"video_id": video_id}}]}}
+    if should:
+        query["bool"]["should"] = should
+        query["bool"]["minimum_should_match"] = 1
+
+    try:
+        response = es_client.search(
+            index="keyframe_annotations",
+            size=120 if should else 0,
+            request_timeout=5,
+            query=query,
+            sort=[
+                {"start_seconds": {"order": "asc", "missing": "_last"}},
+                {"end_seconds": {"order": "asc", "missing": "_last"}},
+                {"keyframe_id": {"order": "asc"}},
+            ],
+        )
+    except Exception:  # noqa: BLE001 - evidence must not block video playback.
+        return {"video_id": video_id, "evidence": empty}
+
+    buckets: dict[str, list[dict]] = {"asr": [], "ocr": [], "captions": []}
+    seen: set[tuple[str, float | None, float | None, str]] = set()
+    for hit in response.get("hits", {}).get("hits", []):
+        source = hit.get("_source", {}) or {}
+        source_type = str(source.get("source_type") or source.get("kind") or "").lower()
+        asr_text = str(source.get("asr_text") or "").strip()
+        caption = str(source.get("caption") or "").strip()
+        ocr_values = source.get("ocr_texts")
+        ocr_text = " ".join(str(value).strip() for value in ocr_values if str(value).strip()) if isinstance(ocr_values, list) else ""
+        text_value = str(source.get("text_value") or "").strip()
+        if source_type == "asr" or asr_text:
+            kind, text = "asr", asr_text or text_value
+        elif source_type in {"ocr", "text"} or ocr_text:
+            kind, text = "ocr", ocr_text or text_value
+        elif source_type in {"caption", "captioning"} or caption:
+            kind, text = "captions", caption or text_value
+        else:
+            continue
+        if not text:
+            continue
+        start = source.get("start_seconds")
+        end = source.get("end_seconds")
+        try:
+            start = float(start) if start is not None else None
+        except (TypeError, ValueError):
+            start = None
+        try:
+            end = float(end) if end is not None else None
+        except (TypeError, ValueError):
+            end = None
+        dedupe_key = (kind, start, end, text)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        frame_matches = bool(
+            anchor_frame_id
+            and (source.get("keyframe_id") or source.get("frame_id")) == anchor_frame_id
+        )
+        interval_matches = bool(
+            anchor_seconds is not None
+            and start is not None
+            and end is not None
+            and start <= anchor_seconds <= end
+        )
+        buckets[kind].append(
+            {
+                "text": text,
+                "start_seconds": start,
+                "end_seconds": end,
+                "frame_id": source.get("keyframe_id") or source.get("frame_id"),
+                "segment_id": source.get("segment_id"),
+                "model_version": source.get("model_version"),
+                "matches_selected_frame": frame_matches or interval_matches,
+            }
+        )
+    for kind, items in buckets.items():
+        buckets[kind] = sorted(
+            items,
+            key=lambda item: item.get("start_seconds") if item.get("start_seconds") is not None else float("inf"),
+        )[: max(1, min(per_source_limit, 8))]
+    return {"video_id": video_id, "evidence": buckets}
+
+
 def _video_fps(video: Video, db: Session) -> float | None:
     if video.fps is not None and 1 <= video.fps <= 240:
         return float(video.fps)
@@ -501,6 +614,25 @@ def frame_context(frame_id: str, window: int = 4, db: Session = Depends(get_db))
         "video_code": frame.video.video_code,
         "frames": [_context_frame_payload(item) for item in frames],
     }
+
+
+@router.get("/videos/{video_id}/evidence")
+def video_evidence(
+    video_id: str,
+    seconds: float | None = None,
+    frame_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    video = db.query(Video).filter(Video.video_id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    payload = _video_evidence_payload(
+        video.video_id,
+        anchor_seconds=max(0.0, seconds) if seconds is not None else None,
+        anchor_frame_id=frame_id,
+    )
+    payload["video_code"] = video.video_code
+    return payload
 
 
 @router.get("/frames/{frame_id}/thumbnail")
