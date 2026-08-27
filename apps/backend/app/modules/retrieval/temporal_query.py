@@ -14,7 +14,13 @@ EVENT_LABEL_RE = re.compile(
 )
 NUMBERED_LINE_RE = re.compile(r"(?m)^\s*(?P<order>\d{1,2})\s*[:.)-]\s+")
 SOFT_SEPARATOR_RE = re.compile(
-    r"\s*(?:\bthen\b|\bafter that\b|\bnext\b|\bfinally\b|;)\s*",
+    r"\s*(?:\bthen\b|\bafter that\b|\bnext\b|\bfinally\b|"
+    r"sau\s+\u0111\u00f3|ti\u1ebfp\s+\u0111\u1ebfn|ti\u1ebfp\s+theo|cu\u1ed1i\s+c\u00f9ng|r\u1ed3i|;)\s*",
+    flags=re.IGNORECASE,
+)
+CONTEXT_CHAIN_RE = re.compile(
+    r"^(?P<target>.+?)\s+(?:after|sau\s+khi)\s+(?P<before>.+?)\s+"
+    r"(?:and|v(?:a|à))\s+(?:before|tr(?:uoc|ước)\s+khi)\s+(?P<after>.+)$",
     flags=re.IGNORECASE,
 )
 
@@ -31,6 +37,10 @@ def parse_temporal_events(query: str, max_events: int = 8) -> TemporalEventParse
     query = str(query or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not query:
         return TemporalEventParse(events=[], source="empty")
+
+    context_chain = _parse_context_chain(query)
+    if context_chain:
+        return TemporalEventParse(events=context_chain[:max_events], source="context_relation")
 
     labeled = _parse_labeled_events(query, EVENT_LABEL_RE)
     if len(labeled) > 1:
@@ -68,4 +78,19 @@ def _clean_event_text(value: str) -> str:
     value = str(value or "").strip()
     value = re.sub(r"^\s*[-*]\s*", "", value)
     value = re.sub(r"\s+", " ", value)
-    return value.strip(" .:-")
+    value = value.strip(" .:-")
+    return re.sub(r"^(?:l\u00e0|is|are)\s+", "", value, flags=re.IGNORECASE)
+
+
+def _parse_context_chain(query: str) -> list[str]:
+    """Parse KIS phrasing such as target after A and before B into A, target, B."""
+    normalized = " ".join(query.splitlines())
+    match = CONTEXT_CHAIN_RE.match(normalized)
+    if match is None:
+        return []
+    values = [
+        _clean_event_text(match.group("before")),
+        _clean_event_text(match.group("target")),
+        _clean_event_text(match.group("after")),
+    ]
+    return [value for value in values if value]
