@@ -112,7 +112,6 @@ Lưu ý quan trọng: ground truth bạn đưa là L21_V015, 25800; video đã v
 Một blocker còn lại: DATABASE_URL trong .env hiện bị Supabase báo tenant/user not found, nên mình không restart backend 8000 cũ. Backend 8010 đang dùng SQLite local data/dev_search_local.db. Không cần chạy server ViT-B-32/OpenAI embedding ở port 8002 nữa.
 
 
-
 KIS
 QA
 TRAKE
@@ -156,6 +155,17 @@ SigLIP2-400m - 1152-dims
 
 
 
+
+1. LLM planners: 
+- variants
+- tách frame cho temporal search 
+2. Search theo frame
+3. 
+
+
+
+
+
 # Strategy 1: CLIP-Based
 
 USER QUERY
@@ -192,7 +202,9 @@ Reranking:
 
 reranker: 
 
+
 # Strategy 2: Text-based
+
 reranker:   
 nvidia/llama-nemotron-rerank-vl-1b-v2
 
@@ -206,6 +218,26 @@ P1: đọc paper [2606.19682v1-1.pdf](d:/University/Projects/Individual projects
 P2: Dựa vào paper, viết lại cho tôi giải thuật để tìm cho dạng TRAKE hay Temporal Search và rerank lại 
 
 Dựa vào data của asr viết cho tôi script chạy insert vào elasticsearch, 
+
+
+
+
+# Strategy 3: Search with algorithm (Temporal Sequential Queries)
+
+Strategy 3.1 - Vortex: Search frame -> Tìm video -> re-scoring -> re-ranking
+1. LLM sinh ra các text để search theo 
+Independent Retrieval: lọc ra các frame cần thiết 
+2. tìm frame 
+3. 
+
+
+Idea: 
+- Lọc theo frame đang có  
+- Tìm từ frame giữa -> chỉa ra tìm prev và post
+- Tìm từ frame rồi lọc theo video
+- Tìm theo chuỗi frame -> ranking 
+
+
 
 
 Thịnh:
@@ -234,7 +266,7 @@ Note fix:
     + TRAKE thì chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo 
     + QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
 
-- Improving: 
+- Improving version 1 (Round 1): 
     + host model online (siglip2, openclip, qwen3-vl-embedding)
     + UI: Làm thêm phần hiện từng chỉ số ra để cho thấy độ tương đồng từng thành phần khi nhấn vào video
     + Chỉnh lại logic x
@@ -248,35 +280,60 @@ Note fix:
     + export file submission csv cho câu thì hiện nút kế bên nút export csv x
     thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
     + Phần TRAKE lọc frame trùng ra x
-
+    + ở trong ô selected frames có thể thay đổi thứ tự trong frame x
     + Chỉnh lại có thể sửa cho phần nào nhiều hơn - dựa vào prompt con người x
     + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn x
     + Chỉnh lại algorithm của TRAKE theo visual nhiều hơn - Dùng prompt thêm để tối ưu x 
+    + phần cell reasoning cách ra một chút cho với kết quả của search x
+
+Problem: 
+- web mình relational data nó đang trên local máy tui bữa agent chạy test trên supabase mà k biết sao lỗi 
+- Chưa có VQA pipeline (model VLM or LLM ?) -> support giving information
+- Data metadata thiếu phần captioning, ocr, object -> QA hơi khó tự động hóa
+- Thuật toán tìm TRAKE còn quá cùi, chưa xử lý được dạng thời gian
+- Chưa có VLM reranker
+- LLM suy luận chưa phải là model ngon nhất
+
+
+
+
+- Improving version 2 (Round 2) - Milestone 5: 
+    + UI chỉnh lại phần hiện trong video sao cho có minh chứng của đoạn text từ ASR, Captioning x
+    + Phần OCR, ASR và Captioning hiện ngắn, chỉ hiện phần ASR, OCR, Captioning phần mà lấy dùng để search và các đoạn xung quanh không phải hiện hết x
+    + Câu nào ASR chỉnh lại reasoning, dùng search bằng elasticsearch x
+    + Chunking phần captioning, asr chuyển vào database x
+    + chỉnh khi chọn frame trong phần video thì, phải hiện ra bên phải các evidence tương ứng, không chỉ cố định một chỗ x
+    + Chỉnh lại code không gán cứng mà dùng dùng system prompt agent để suy luận ra không phải gán cứng sẽ bị overfit trong planning x
+    
+    + Chỉnh lại câu prompt sao cho nó có thể suy luận đúng ngữ cảnh hơn (Nghĩ logic khúc này)
+    + chỉnh lại không cần hiện trải dài câu reasoning chỉ là lúc suy luận thì có ký tự xoay trong phần reasoning để biết agent đang suy luận 
+    + Đưa data db relational và text lên cloud 
+    + Tạo text embedding, tách chunk? -> tải lên zilliz -> tốn thêm phần model embedding cho text
+    + Chỉnh lại phần QA sao cho nó nhận diện được video và tìm trong video đó
+    + Phần TRAKE lọc frame trùng ra 
+    + Thêm phần video có thể đưa và TRAKE để search đúng hơn
+    + Sau khi tìm ra evidence thì bỏ vào cho model suy luận để đưa ra câu trả lời QA
+    + lấy phần video bỏ vào VLM cho nó phân tích được không? 
+    + host slm làm reranker cho text và visual
     
 
-    + Đưa data db từ  lên cloud 
-    + phần cell reasoning cách ra một chút cho với kết quả của search 
-    + Chỉnh lại phần backend 
-    + Tạo text embedding, tách chunk? -> tải lên zilliz
-    + Câu nào ASR chỉnh lại reasoning
-    + Phần TRAKE lọc frame trùng ra 
-    + Thêm phần video có thể đưa  và TRAKE để search đúng hơn
-    + 
+Future work: 
+- Refactor lại cấu trúc code 
 
-ở trong ô selected frames có thể thay đổi thứ tự trong frame 
-
-
-
-
-
-
-
-Testing:
-- Chạy search những câu của ban tổ chức
-- 
 
 Note run: 
-- elasticsearch: chạy script chạy data lên 
+- elasticsearch: chạy script chạy data captioning + ocr + asr 
+- Chạy host server cho model:
+    + CLIP and SigLIP2
+    + Model Text embedding
+    + Model reranker
+- docker: 
+    + backend
+    + elasticsearch
+    + milvus -> cloud zilliz
+    + redis
+    + postgre
+
 
 # Tech stack
 Elasticsearch: bỏ qua chạy host bằng docker -> import lên elasticsearch
@@ -286,8 +343,7 @@ NkM0V0lLQUJLOEVPekxqSHBtVlg6NlpER0JRRWNwaDR1VHVmMnVsUjhidw==
 
 # Ngrok
 key: 3ID14PUUiFf3PUMxiEAJz5yUZM9_uck67De6dhN9joHAk5nZ
-
-
+url: https://pope-strode-produce.ngrok-free.dev/
 
 
 Còn một blocker thật: SigLIP2 runtime local ở 8003 chưa load được do lỗi tài nguyên Windows/pagefile/disk (os error 1455 / model ~4.5GB). 
