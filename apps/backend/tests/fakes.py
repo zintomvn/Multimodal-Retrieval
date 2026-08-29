@@ -108,11 +108,20 @@ class InMemoryTextSearchClient:
     def __init__(self) -> None:
         self._indices: dict[str, dict[str, dict]] = {}
 
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
+    def search(
+        self,
+        index: str,
+        query: str,
+        top_k: int,
+        boosts: dict[str, float] | None = None,
+        source_types: list[str] | None = None,
+    ) -> list[TextHit]:
         boosts = boosts or {}
         tokens = {token.lower() for token in query.split() if token}
         hits: list[TextHit] = []
         for item_id, document in self._indices.get(index, {}).items():
+            if source_types and document.get("source_type") not in {*source_types, None}:
+                continue
             score = 0.0
             for field, value in document.items():
                 if not isinstance(value, str):
