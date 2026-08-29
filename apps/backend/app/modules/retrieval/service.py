@@ -118,6 +118,8 @@ class RetrievalService:
         dataset = self._resolve_dataset(request.dataset_id)
         normalized = self._normalize_query(request)
         run_id = new_id()
+
+        # Init run data
         run = QueryRun(
             id=run_id,
             dataset_id=dataset.id,
@@ -130,6 +132,7 @@ class RetrievalService:
         )
         self.db.add(run)
 
+        # search 
         try:
             if request.query_type == "TRAKE":
                 results = self._search_trake(run, dataset, request, normalized)
@@ -615,6 +618,11 @@ class RetrievalService:
         parts = [part.strip(" .:-") for part in re.split(pattern, query, flags=re.IGNORECASE) if part.strip(" .:-")]
         return parts[:8] if len(parts) > 1 else [query]
 
+
+
+    # Search functions
+
+    # 1. Frame-level search (default)
     def _search_frame_level(
         self,
         run: QueryRun,
@@ -622,6 +630,7 @@ class RetrievalService:
         request: SearchRequest,
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
+        
         candidates = self._rank_frames(
             dataset=dataset,
             semantic_variants=normalized["semantic_variants"],
@@ -689,6 +698,8 @@ class RetrievalService:
             items.append(self._result_to_item(result))
         return items
 
+    # 2. Search temporal
+
     def _search_temporal_kis(
         self,
         run: QueryRun,
@@ -698,9 +709,11 @@ class RetrievalService:
     ) -> list[ResultItem]:
         events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
         event_plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
+
         candidate_sets: list[list[Candidate]] = []
         event_summaries: list[dict[str, Any]] = []
         per_event_top_k = max(80, min(500, request.top_k * 20))
+
         for event_index, event_query in enumerate(events, start=1):
             event_plan = event_plans[event_index - 1] if event_index - 1 < len(event_plans) else {}
             event_plan = event_plan if isinstance(event_plan, dict) else {}
