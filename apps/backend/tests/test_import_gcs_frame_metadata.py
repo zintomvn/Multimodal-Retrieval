@@ -265,6 +265,44 @@ def test_media_router_can_presign_from_image_uri_when_storage_key_missing(monkey
     assert media_router._gcs_object_key_for_frame(frame).endswith("shot_0000_middle_f000037.jpg")
 
 
+def test_video_evidence_returns_only_text_aligned_to_the_selected_frame(monkeypatch) -> None:
+    class FakeElasticsearch:
+        def __init__(self) -> None:
+            self.query: dict | None = None
+
+        def search(self, **kwargs):
+            self.query = kwargs["query"]
+            return {
+                "hits": {
+                    "hits": [
+                        {"_source": {"source_type": "caption", "keyframe_id": "F12", "caption": "A cook holds asparagus.", "start_seconds": 4.0, "end_seconds": 4.0}},
+                        {"_source": {"source_type": "ocr", "keyframe_id": "F12", "ocr_texts": ["OIL 15"], "start_seconds": 4.0, "end_seconds": 4.0}},
+                        {"_source": {"source_type": "asr", "asr_text": "Cho mang tay vao chao.", "start_seconds": 3.5, "end_seconds": 4.5}},
+                    ]
+                }
+            }
+
+    fake = FakeElasticsearch()
+    monkeypatch.setattr(media_router, "get_text_client", lambda: SimpleNamespace(client=fake))
+
+    payload = media_router._video_evidence_payload(  # noqa: SLF001 - verifies video evidence alignment.
+        "L21_V001",
+        anchor_frame_id="F12",
+        anchor_seconds=4.0,
+    )
+
+    assert payload["evidence"]["captions"][0]["text"] == "A cook holds asparagus."
+    assert payload["evidence"]["ocr"][0]["text"] == "OIL 15"
+    assert payload["evidence"]["asr"][0]["text"] == "Cho mang tay vao chao."
+    assert all(
+        item["matches_selected_frame"]
+        for items in payload["evidence"].values()
+        for item in items
+    )
+    assert fake.query is not None
+    assert {"term": {"keyframe_id": "F12"}} in fake.query["bool"]["should"]
+
+
 def test_media_router_lists_imported_frames_for_gallery() -> None:
     config = _config()
     rows = normalize_loaded_batches([LoadedBatch(source=_source(), rows=_rows())], config)

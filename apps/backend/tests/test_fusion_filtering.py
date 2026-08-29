@@ -40,8 +40,8 @@ class StubTextClient:
     def __init__(self) -> None:
         self.search_calls = 0
 
-    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
-        _ = (index, query, boosts)
+    def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None, source_types: list[str] | None = None) -> list[TextHit]:
+        _ = (index, query, boosts, source_types)
         self.search_calls += 1
         hits = [
             TextHit(id="L30_V001_F000005", score=10.0, metadata={"keyframe_id": "L30_V001_F000005", "video_id": "L30_V001"}),
@@ -378,8 +378,8 @@ def test_m4_strict_hybrid_disables_fallback_when_no_candidates(tmp_path: Path) -
             return []
 
     class EmptyTextClient(StubTextClient):
-        def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None) -> list[TextHit]:
-            _ = (index, query, top_k, boosts)
+        def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None, source_types: list[str] | None = None) -> list[TextHit]:
+            _ = (index, query, top_k, boosts, source_types)
             self.search_calls += 1
             return []
 
