@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 
@@ -267,6 +268,72 @@ def test_m3_search_returns_hybrid_scores_and_persists_run(tmp_path: Path) -> Non
     db.close()
 
 
+@pytest.mark.parametrize("strategy", ["vortex_k_context", "aithena_weighted_ats"])
+def test_kis_temporal_search_returns_the_agent_anchor_frame_with_context(
+    tmp_path: Path,
+    strategy: str,
+) -> None:
+    db, service, dataset, frame_a, frame_b = _build_retrieval_fixture(tmp_path)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="temporal-kis",
+            query_text="nguoi ao do then xe may",
+            top_k=5,
+            options=SearchOptions(
+                use_query_expansion=False,
+                temporal_mode=True,
+                temporal_strategy=strategy,  # type: ignore[arg-type]
+                temporal_events=["nguoi ao do", "xe may"],
+                temporal_anchor_index=1,
+                min_match=2,
+            ),
+        )
+    )
+
+    assert response.normalized_query["temporal_mode"] is True
+    assert response.normalized_query["temporal_strategy"] == strategy
+    assert response.normalized_query["temporal_anchor_index"] == 1
+    assert response.results
+    assert response.results[0].frame_id == frame_a.keyframe_id
+    assert [item["frame_idx"] for item in response.results[0].sequence_frames] == [
+        frame_a.frame_idx,
+        frame_b.frame_idx,
+    ]
+    assert response.results[0].score_breakdown["temporal_reranker"] == strategy
+    db.close()
+
+
+def test_kis_temporal_parser_overrides_an_incomplete_agent_event_plan(tmp_path: Path) -> None:
+    db, service, dataset, _frame_a, _frame_b = _build_retrieval_fixture(tmp_path)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="temporal-kis-parse",
+            query_text="Find the oil-contact moment after batter is added and before asparagus is removed.",
+            top_k=3,
+            options=SearchOptions(
+                use_query_expansion=False,
+                temporal_mode=True,
+                temporal_strategy="vortex_k_context",
+            ),
+        )
+    )
+
+    assert response.normalized_query["temporal_event_source"] == "context_relation"
+    assert response.normalized_query["temporal_events"] == [
+        "batter is added",
+        "Find the oil-contact moment",
+        "asparagus is removed",
+    ]
+    assert response.normalized_query["temporal_anchor_index"] == 2
+    db.close()
+
+
 def test_semantic_numeric_keyframe_id_uses_local_map_keyframes(tmp_path: Path) -> None:
     db, service, dataset, _frame_a, frame_b = _build_retrieval_fixture(tmp_path)
     map_dir = tmp_path / "map-keyframes"
@@ -454,6 +521,7 @@ def test_m4_agent_query_planning_runs_even_when_expansion_is_disabled(tmp_path: 
                 intent=query_type,
                 summary="person in red shirt walking",
                 variants=[query, "red shirt person walking"],
+                text_variants=["nguoi ao do", "ao do"],
                 temporal_events=["person in red shirt walking"],
                 decomposition={"search_factors": {"objects": ["person"], "actions": ["walking"]}},
                 agent_metadata={
@@ -481,7 +549,7 @@ def test_m4_agent_query_planning_runs_even_when_expansion_is_disabled(tmp_path: 
     assert response.results
     assert response.results[0].frame_id == frame_a.keyframe_id
     assert response.normalized_query["semantic_variants"] == ["red shirt person walking"]
-    assert response.normalized_query["text_variants"] == ["nguoi ao do"]
+    assert response.normalized_query["text_variants"] == ["nguoi ao do", "ao do"]
     assert response.normalized_query["temporal_events"] == ["person in red shirt walking"]
     agent_plan = response.normalized_query["agent_query_plan"]
     assert agent_plan["source"] == "langchain_deep_agent"
@@ -604,6 +672,7 @@ def test_agent_planner_extracts_evidence_driven_visual_and_text_weights() -> Non
         raw_plan={
             "summary": "find a person speaking the phrase red bicycle",
             "variants": [{"text": "person speaking the phrase red bicycle"}],
+            "text_variants": ["nguoi noi xe dap do", "xe dap do"],
             "retrieval_strategy": {
                 "clauses": [
                     {"text": "a person is visible", "evidence": "visual", "importance": 0.3},
@@ -619,9 +688,46 @@ def test_agent_planner_extracts_evidence_driven_visual_and_text_weights() -> Non
     )
 
     assert result.retrieval_weights == {"visual": 0.2, "text": 0.8}
+    assert result.text_variants == ["find the person saying red bicycle", "nguoi noi xe dap do", "xe dap do"]
     strategy = result.decomposition["retrieval_strategy"]
     assert strategy["clauses"][1]["evidence"] == "text"
     assert strategy["rationale"] == "The exact spoken phrase needs ASR evidence."
+
+
+def test_agent_planner_extracts_text_source_weights_for_asr_caption_and_ocr() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - validates source-aware plan normalization.
+        raw_plan={
+            "summary": "a cook adds asparagus to a bowl beside the number 15",
+            "variants": [{"text": "cook adds asparagus to a bowl"}],
+            "text_variants": ["dau bep cho mang tay vao to", "so 15"],
+            "retrieval_strategy": {
+                "weights": {"visual": 0.4, "text": 0.6},
+                "text_source_weights": {"asr": 1, "caption": 6, "ocr": 3},
+            },
+            "temporal_events": [
+                {
+                    "query": "cook adds asparagus to a bowl",
+                    "text_query": "dau bep cho mang tay vao to",
+                    "retrieval_weights": {"visual": 0.6, "text": 0.4},
+                    "text_source_weights": {"asr": 0.1, "caption": 0.8, "ocr": 0.1},
+                }
+            ],
+        },
+        query="tim dau bep cho mang tay vao to co so 15",
+        query_type="TRAKE",
+        max_variants=3,
+    )
+
+    assert result.text_source_weights == {"asr": 0.1, "caption": 0.6, "ocr": 0.3}
+    assert result.temporal_event_plans[0]["text_source_weights"] == {"asr": 0.1, "caption": 0.8, "ocr": 0.1}
+    assert result.temporal_event_plans[0]["text_query"] == "dau bep cho mang tay vao to"
+    assert result.decomposition["retrieval_strategy"]["text_source_weight_source"] == "agent"
+
+
+def test_metadata_query_cues_preserve_exact_ocr_terms() -> None:
+    assert RetrievalService._metadata_query_cues('tim chu "HOME" va ma AIC-2025') == ["HOME", "AIC-2025"]
 
 
 def test_planner_fallback_routes_benchmark_style_fact_queries_to_text_and_trake_actions_to_visual() -> None:
@@ -661,6 +767,80 @@ def test_agent_fallback_splits_labeled_trake_events() -> None:
 
     assert result.temporal_events == events
     assert query not in result.temporal_events
+
+
+def test_agent_fallback_splits_vietnamese_temporal_connectors() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False, "max_temporal_events": 8}})
+    query = (
+        "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi xuất hiện bốn lần. "
+        "Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa."
+    )
+
+    result = planner.plan(query, "KIS", 3, temporal_kis=True)
+
+    assert len(result.temporal_events) == 3
+    assert "bản đồ" in result.temporal_events[0]
+    assert "con đập được quay từ trên cao" in result.temporal_events[1]
+    assert "cận con đập dưới trời mưa" in result.temporal_events[2]
+
+
+def test_temporal_kis_repairs_an_agent_plan_that_collapses_ordered_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    planner = AgentQueryPlanner(
+        config={
+            "llm_query_planning": {
+                "enabled": True,
+                "active_profile": "test",
+                "execution_mode": "direct",
+                "max_temporal_events": 8,
+                "profiles": {"test": {"provider": "openai", "model": "test-model"}},
+            }
+        }
+    )
+    query = "The video starts with a map, then shows a dam from above, then a close-up dam in rain."
+    initial = json.dumps(
+        {
+            "summary": query,
+            "variants": [{"text": query}],
+            "temporal_events": [{"query": query, "text_query": ""}],
+        }
+    )
+    repaired = json.dumps(
+        {
+            "summary": "map, aerial dam, close-up dam in rain",
+            "variants": [{"text": "map waterworks"}],
+            "temporal_events": [
+                {"query": "map with waterworks", "text_query": "map waterworks"},
+                {"query": "aerial view of a dam", "text_query": "aerial dam"},
+                {"query": "close-up dam in rain", "text_query": "dam rain"},
+            ],
+            "temporal_anchor_index": 3,
+        }
+    )
+
+    class RepairModel:
+        def invoke(self, *_args: object, **_kwargs: object) -> str:
+            return repaired
+
+    monkeypatch.setattr(planner, "_invoke_agent", lambda **_kwargs: initial)
+    monkeypatch.setattr(planner, "_get_model", lambda: RepairModel())
+    monkeypatch.setattr(planner, "_unavailable_reason", lambda: None)
+
+    result = planner.plan(query, "KIS", 3, temporal_kis=True)
+
+    assert result.temporal_events == ["map with waterworks", "aerial view of a dam", "close-up dam in rain"]
+    assert result.temporal_anchor_index == 3
+    assert result.decomposition["temporal_repair_applied"] is True
+
+
+def test_ocr_routing_requires_an_explicit_displayed_text_cue() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    visual = planner.infer_retrieval_strategy("bản đồ có kênh thủy lợi xuất hiện", "KIS")
+    displayed_text = planner.infer_retrieval_strategy("tìm chữ và ký hiệu hiển thị trên bản đồ", "KIS")
+
+    assert visual["text_source_weights"]["ocr"] == 0.0
+    assert displayed_text["text_source_weights"]["ocr"] > 0.0
 
 
 def test_m3_qa_smoke_returns_answer(tmp_path: Path) -> None:

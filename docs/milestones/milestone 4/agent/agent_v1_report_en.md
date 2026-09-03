@@ -38,16 +38,16 @@ flowchart LR
     R --> W
 ```
 
-| Component | Responsibility |
-|---|---|
+| Component              | Responsibility                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `apps/web/src/App.tsx` | Sends requests, renders inspectable reasoning trace, results, component scores, video preview, and CSV selection. |
-| Retrieval router | Exposes `/search`, `/qa`, and `/trake`; forces the QA and TRAKE type at their dedicated endpoints. |
-| `RetrievalService` | Query normalization, candidate retrieval, hybrid fusion, temporal search, persistence, and caching. |
-| `AgentQueryPlanner` | LLM planning, response validation, translation repair, caching, throttling, and fallback. |
-| Milvus | ANN retrieval over keyframe visual embeddings. |
-| Elasticsearch | ASR and other text/metadata retrieval through `keyframe_annotations`. |
-| PostgreSQL/Supabase | Dataset, video, frame, query-run, retrieval-result, and submission data. |
-| Redis | Seven-day search-response cache and a bounded recent-run list. |
+| Retrieval router       | Exposes `/search`, `/qa`, and `/trake`; forces the QA and TRAKE type at their dedicated endpoints.                |
+| `RetrievalService`     | Query normalization, candidate retrieval, hybrid fusion, temporal search, persistence, and caching.               |
+| `AgentQueryPlanner`    | LLM planning, response validation, translation repair, caching, throttling, and fallback.                         |
+| Milvus                 | ANN retrieval over keyframe visual embeddings.                                                                    |
+| Elasticsearch          | ASR and other text/metadata retrieval through `keyframe_annotations`.                                             |
+| PostgreSQL/Supabase    | Dataset, video, frame, query-run, retrieval-result, and submission data.                                          |
+| Redis                  | Seven-day search-response cache and a bounded recent-run list.                                                    |
 
 ## 3. Actual LLM execution model
 
@@ -55,17 +55,17 @@ flowchart LR
 
 The planner is built with `AgentQueryPlanner.from_config(...)`. The active `openai_gpt4o` profile is configured as follows:
 
-| Property | Value |
-|---|---:|
-| Provider | OpenAI through `langchain_openai.ChatOpenAI` |
-| Model | `gpt-4o` |
-| Temperature | `0.1` |
-| Maximum completion tokens | `700` |
-| Timeout | `30 s` |
-| Retries | `5` |
-| Minimum interval between OpenAI requests | `5 s` |
-| In-memory plan cache TTL | `600 s` |
-| Cache key | `(profile, query_type, raw_query, max_variants)` |
+| Property                                 |                                            Value |
+| ---------------------------------------- | -----------------------------------------------: |
+| Provider                                 |     OpenAI through `langchain_openai.ChatOpenAI` |
+| Model                                    |                                         `gpt-4o` |
+| Temperature                              |                                            `0.1` |
+| Maximum completion tokens                |                                            `700` |
+| Timeout                                  |                                           `30 s` |
+| Retries                                  |                                              `5` |
+| Minimum interval between OpenAI requests |                                            `5 s` |
+| In-memory plan cache TTL                 |                                          `600 s` |
+| Cache key                                | `(profile, query_type, raw_query, max_variants)` |
 
 The current `direct` execution mode is important: a query causes **one** LLM invocation containing the planner system prompt and a JSON user payload. `query_decomposition_agent` and `query_expansion_agent` are present in configuration, but they are only constructed when `execution_mode` changes to `deep_agent`. Therefore, the deployed V1 behavior is a single-pass planner, not a multi-agent tool-use loop.
 
@@ -97,23 +97,38 @@ The planner must emit exactly one JSON object and no Markdown. Its main fields a
   "intent": "KIS|QA|TRAKE|IMAGE|FREEFORM",
   "summary": "short English target description",
   "search_factors": {
-    "subjects": [], "actions": [], "objects": [], "attributes": [],
-    "scene": [], "text_cues": [], "time_cues": [],
+    "subjects": [],
+    "actions": [],
+    "objects": [],
+    "attributes": [],
+    "scene": [],
+    "text_cues": [],
+    "time_cues": [],
     "negative_constraints": []
   },
   "retrieval_strategy": {
-    "clauses": [{"text": "atomic requirement", "evidence": "visual|text|both", "importance": 0.0}],
-    "weights": {"visual": 0.0, "text": 0.0},
+    "clauses": [
+      {
+        "text": "atomic requirement",
+        "evidence": "visual|text|both",
+        "importance": 0.0
+      }
+    ],
+    "weights": { "visual": 0.0, "text": 0.0 },
     "rationale": "evidence-based explanation"
   },
-  "temporal_events": [{
-    "order": 1,
-    "query": "standalone English event query",
-    "must_have": [],
-    "importance": 1.0,
-    "retrieval_weights": {"visual": 0.0, "text": 0.0}
-  }],
-  "variants": [{"text": "concise English retrieval rewrite", "purpose": "semantic"}]
+  "temporal_events": [
+    {
+      "order": 1,
+      "query": "standalone English event query",
+      "must_have": [],
+      "importance": 1.0,
+      "retrieval_weights": { "visual": 0.0, "text": 0.0 }
+    }
+  ],
+  "variants": [
+    { "text": "concise English retrieval rewrite", "purpose": "semantic" }
+  ]
 }
 ```
 
@@ -123,12 +138,12 @@ The backend deduplicates variants, clamps and normalizes visual/text weights to 
 
 The prompt first decomposes the request into atomic clauses and classifies each clause as `visual`, `text`, or `both`. It then derives weights from clause importance. Video retrieval is explicitly not assumed to be visual-only.
 
-| Query evidence | Preferred route |
-|---|---|
-| People, actions, objects, colours, spatial relations, scenes, physical contact | Visual: CLIP embedding and Milvus |
-| Speech, narration, dialogue, names, numbers, dates, quotes, titles, OCR | Text: Elasticsearch ASR/metadata |
-| Action plus a spoken or written fact | Balanced according to clause importance |
-| TRAKE contact/action event | Usually visual-heavy, independently per event |
+| Query evidence                                                                 | Preferred route                               |
+| ------------------------------------------------------------------------------ | --------------------------------------------- |
+| People, actions, objects, colours, spatial relations, scenes, physical contact | Visual: CLIP embedding and Milvus             |
+| Speech, narration, dialogue, names, numbers, dates, quotes, titles, OCR        | Text: Elasticsearch ASR/metadata              |
+| Action plus a spoken or written fact                                           | Balanced according to clause importance       |
+| TRAKE contact/action event                                                     | Usually visual-heavy, independently per event |
 
 When LLM weights are unavailable or invalid, the current heuristic uses:
 
@@ -180,21 +195,22 @@ The active CLIP embedding dimension is **1024**. SigLIP2 is a 1152-dimensional s
 
 For a frame `f`, the weighted candidate score is:
 
-\[
+$$
 S_w(f)=w_sS_s(f)+w_tS_t(f)+w_qS_q(f)
-\]
+$$
 
 where semantic and text weights are redistributed by agent modality weights and `S_q` is the frame quality signal. When RRF is enabled with `k=60`:
 
-\[
-R(f)=w'_s\frac{1}{k+r_s(f)}+w'_t\frac{1}{k+r_t(f)}
-\]
+$$
+
+R(f)=w'\_s\frac{1}{k+r_s(f)}+w'\_t\frac{1}{k+r_t(f)}
+$$
 
 The normalized RRF value is blended with the weighted score:
 
-\[
+$$
 S_{final}(f)=(1-b)S_w(f)+b\widehat{R}(f)
-\]
+$$
 
 The score breakdown returned to the UI includes visual, text, quality, RRF, source-hit, text-hit, filter, and reranker data.
 
@@ -202,7 +218,7 @@ For QA, the same ranked frames are used as evidence. The backend calls `model_re
 
 ## 7. TRAKE: event planning and Adaptive Temporal Search
 
-TRAKE detects ordered events from `E1...En`, numbered lines, or temporal separators such as *then*, *after that*, and *finally*. Explicit E-labels require the planner to preserve the event count and order.
+TRAKE detects ordered events from `E1...En`, numbered lines, or temporal separators such as _then_, _after that_, and _finally_. Explicit E-labels require the planner to preserve the event count and order.
 
 ```mermaid
 flowchart TD
@@ -228,9 +244,10 @@ Each event runs `_rank_frames` independently. The per-event pool is `max(80, min
 
 Event importance values are normalized to sum to the number of events. The implemented sequence score is:
 
-\[
-S_{seq}=\frac{1}{|C|}\sum_{i\in C}w_iS_i
-\]
+$$
+
+S*{seq}=\frac{1}{|C|}\sum*{i\in C}w_iS_i
+$$
 
 `sequence_frames` returns every selected event frame, its frame index and timestamp, event index/query, and visual/text/RRF score. This is the data source for the web TRAKE lanes and per-slot frame replacement.
 
@@ -238,13 +255,14 @@ S_{seq}=\frac{1}{|C|}\sum_{i\in C}w_iS_i
 
 `competition_default` uses RRF but disables the final cross-encoder reranker. `competition_mvp_v1` enables the `cross-encoder/ms-marco-MiniLM-L-6-v2` reranker for up to 80 candidates:
 
-\[
+$$
 S_{rerank}=0.85S_{cross}+0.15S_{mllm}
-\]
+$$
 
-\[
-S'_{final}=0.70S_{final}+0.30S_{rerank}
-\]
+$$
+
+S'_{final}=0.70S_{final}+0.30S\_{rerank}
+$$
 
 MLLM reranking is disabled. If the CrossEncoder cannot load, the adapter falls back to token-overlap scoring when allowed. In TRAKE, the temporal ATS stage is the sequence-level reranker after event-level ranking.
 
@@ -264,16 +282,16 @@ The web trace displays the active profile, decomposition, factors, visual/text r
 
 ## 9. Failure handling and known limits
 
-| Condition | Current behavior |
-|---|---|
-| API key, dependency, or profile unavailable | Produce a heuristic fallback plan and keep retrieval available. |
-| Invalid LLM JSON or timeout | Use fallback when `fallback_on_error=true`. |
-| Vietnamese semantic output | Make a translation repair request; do not empty the visual query set in degraded mode. |
-| Milvus or Elasticsearch failure | Use the surviving branch when `strict_hybrid=false` (default). |
-| `strict_hybrid=true` | Fail the request if a required backend fails or no hybrid candidate exists. |
-| Large Elasticsearch query | `best_fields`, `operator: or`, and length-sensitive MSM reduce nested-clause pressure. |
-| CrossEncoder unavailable | Use overlap fallback when configured. |
-| SigLIP2 not validated | It remains disabled in the active profile and model registry. |
+| Condition                                   | Current behavior                                                                       |
+| ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| API key, dependency, or profile unavailable | Produce a heuristic fallback plan and keep retrieval available.                        |
+| Invalid LLM JSON or timeout                 | Use fallback when `fallback_on_error=true`.                                            |
+| Vietnamese semantic output                  | Make a translation repair request; do not empty the visual query set in degraded mode. |
+| Milvus or Elasticsearch failure             | Use the surviving branch when `strict_hybrid=false` (default).                         |
+| `strict_hybrid=true`                        | Fail the request if a required backend fails or no hybrid candidate exists.            |
+| Large Elasticsearch query                   | `best_fields`, `operator: or`, and length-sensitive MSM reduce nested-clause pressure. |
+| CrossEncoder unavailable                    | Use overlap fallback when configured.                                                  |
+| SigLIP2 not validated                       | It remains disabled in the active profile and model registry.                          |
 
 Current technical constraints are: a text-only planner cannot inspect video pixels; CLIP-only retrieval struggles with fine-grained temporal state changes; QA depends heavily on ASR/OCR/metadata; TRAKE currently uses a 30 FPS conversion for time constraints; and planning trades some latency for stable rate-limited operation.
 
