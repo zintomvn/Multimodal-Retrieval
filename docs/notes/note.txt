@@ -86,7 +86,6 @@ Zilliz row_count: 63,448
 # Note
 
 Problems:
-
 - Data hiện lên chỉ có V001, V002 -> kiểm tra lỗi
 - Embedding lại vector bằng tự host
 - Kiểm tra database trên cloud
@@ -121,12 +120,13 @@ gắn thêm các metadata vào
 - Chạy ASR cho video song song với chạy với frame
 
 
-# MODEL
-asr: whisper-large3-turbo
-
-CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
-SigLIP2-400m - 1152-dims
-
+# Summary paper
+- asr: whisper-large3-turbo
+- Visual embedding:
+    + CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
+    + SigLIP2-400m - 1152-dims
+- Captioning: Qwen3-vl-4b
+- 
 
 | Pipeline                      | Mục đích                                  | Model được paper ghi               | Tên nên load khi implement                                            | Output                               | Có đưa vào vector DB? |
 | ----------------------------- | ----------------------------------------- | ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------ | --------------------- |
@@ -155,7 +155,6 @@ SigLIP2-400m - 1152-dims
 
 
 
-
 1. LLM planners: 
 - variants
 - tách frame cho temporal search 
@@ -163,15 +162,11 @@ SigLIP2-400m - 1152-dims
 3. 
 
 
-
-
-
 # Strategy 1: CLIP-Based
 
 USER QUERY
     │
     ↓
-Qwen3-4B-Instruct-2507
 Query interpretation / decomposition
     │
     ├─────────────────────────────────┐
@@ -203,14 +198,23 @@ Reranking:
 reranker: 
 
 
-# Strategy 2: Text-based
+# Strategy 2: Text-based (Hybrid thay vì elasticsearch)
+## 2.1. Elasticsearch
+
+
+## 2.2. Text embedding
+Embedding models:
+Qwen3-Embedding-0.6B
+https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+
+
+
+
 
 reranker:   
 nvidia/llama-nemotron-rerank-vl-1b-v2
 
-embedding:
-Qwen3-Embedding-0.6B
-https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+
 
 Prompt:
 P1: đọc paper [2606.19682v1-1.pdf](d:/University/Projects/Individual projects/Multimodal-Retrieval/docs/papers/2606.19682v1-1.pdf) làm ra một phiên bản markdown của nó, hiện tại tôi đã chạy extract feature từ model CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1152-dims trong paper và để nó trong các extractor_version=clip-vit-h14-quickgelu-dfn5b-v2/ như hình tôi gửi, giờ chạy nó ingest vào milvus, lưu ý tôi sẽ chạy feature extract thêm bằng model siglip2 để làm giống kỹ thuật trong paper nên là thiết kế trên milvus và metadata sao tôi sẽ dùng được như yêu cầu, sau đó kết nối với backend để tôi chạy, không dùng model siglip2 baseline cũ nữa, xóa model baseline SigLIP2 c? ?? g? khỏi dự án giúp tôi, vì cái đó tôi feature extraction sai logic, xóa cho đỡ nặng máy và chạy trên backend model mới giúp tôi
@@ -225,10 +229,6 @@ Dựa vào data của asr viết cho tôi script chạy insert vào elasticsearc
 # Strategy 3: Search with algorithm (Temporal Sequential Queries)
 
 Strategy 3.1 - Vortex: Search frame -> Tìm video -> re-scoring -> re-ranking
-1. LLM sinh ra các text để search theo 
-Independent Retrieval: lọc ra các frame cần thiết 
-2. tìm frame 
-3. 
 
 
 Idea: 
@@ -238,6 +238,10 @@ Idea:
 - Tìm theo chuỗi frame -> ranking 
 
 
+
+# Strategy 4: Model VLM 
+- LLM multi-perspectives -> giống variants (variant chưa đủ suy luận hay)
+- 
 
 
 Thịnh:
@@ -293,8 +297,7 @@ Problem:
 - Thuật toán tìm TRAKE còn quá cùi, chưa xử lý được dạng thời gian
 - Chưa có VLM reranker
 - LLM suy luận chưa phải là model ngon nhất
-
-
+- 
 
 
 - Improving version 2 (Round 2) - Milestone 5: 
@@ -305,17 +308,38 @@ Problem:
     + chỉnh khi chọn frame trong phần video thì, phải hiện ra bên phải các evidence tương ứng, không chỉ cố định một chỗ x
     + Chỉnh lại code không gán cứng mà dùng dùng system prompt agent để suy luận ra không phải gán cứng sẽ bị overfit trong planning x
     
+    + Host SigLIP2 lên kaggle hoặc google colab để chạy embedding: 
+        - Mở Uvicorn trên colab
+        - Cloudflare Tunnel / ngrok
+        - public URL 
+
     + Chỉnh lại câu prompt sao cho nó có thể suy luận đúng ngữ cảnh hơn (Nghĩ logic khúc này)
+    + Nghiên cứu có nên tách supervisor ra để không phụ thuộc
     + chỉnh lại không cần hiện trải dài câu reasoning chỉ là lúc suy luận thì có ký tự xoay trong phần reasoning để biết agent đang suy luận 
-    + Đưa data db relational và text lên cloud 
+    
+    + Cải tiến TRAKE -> search đúng frame trong video
     + Tạo text embedding, tách chunk? -> tải lên zilliz -> tốn thêm phần model embedding cho text
     + Chỉnh lại phần QA sao cho nó nhận diện được video và tìm trong video đó
     + Phần TRAKE lọc frame trùng ra 
-    + Thêm phần video có thể đưa và TRAKE để search đúng hơn
     + Sau khi tìm ra evidence thì bỏ vào cho model suy luận để đưa ra câu trả lời QA
     + lấy phần video bỏ vào VLM cho nó phân tích được không? 
     + host slm làm reranker cho text và visual
     
+Filter version 1:
+  + Đưa data db relational và text lên cloud -> elasticsearch cho free trial có 14 ngày ._.
+  + 
+
+- Improving version 3:
+    + Chỉnh lại quy trình search theo temporal:
+        1. Tách câu query ra nhiều event
+        2. Mỗi câu event thì dùng Multiperspective LLM-based
+        3. Phân chia search theo từng concepts
+        4. 
+    + Thêm LLM multi-perspectives -> giống variants (variant chưa đủ suy luận hay)
+    + Chỉnh lại UI cho phần tracing LLM planners những phần cần thiết
+    + Thêm phần kết quả cho từng OCR, ASR, Visual - những phần search của từng module sẽ hiện UI lên trước
+    + 
+
 
 Future work: 
 - Refactor lại cấu trúc code 

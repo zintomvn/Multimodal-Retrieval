@@ -1,0 +1,32 @@
+Nghiên cứu bản chất hoạt động của từng model
+# Preliminaries
+## 1. Model embedding
+- Visual-text based
+- Text embedding
+- Text search: BM25, 
+
+Advanced techniques:
+- Quantization
+- KV cache
+- 
+
+Note: viết technical report cho những thứ này
+
+## 2. Search algorithm của những paper trước
+- AST
+- Vortex algorithm
+
+
+
+
+
+Những thứ cần study further:
+- elasticsearch: full-text search works (text analysis, Inverted index creation, BM25 algorithm, Relevance scoring)
+    + BM25: https://www.elastic.co/blog/practical-bm25-part-2-the-bm25-algorithm-and-its-variables
+- Milvus: Cơ chế indexing lưu vào data
+- Algorithm of Google Cloud Storage: scalable, 
+- Backend: video streaming, Searching
+- Cloud: 
+    + Ingest data flow and Data sharding
+    + Cách lưu trữ trên cloud -> file storage (URL signed, ...)
+-  

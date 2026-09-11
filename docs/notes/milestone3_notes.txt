@@ -1,0 +1,155 @@
+Kết quả Elasticsearch keyframe_annotations: 286,605 docs
+L21: 1,890
+L22: 31,212
+L23: 2,514
+L24: 7,176
+L25: 36,249
+L26: 154,242
+L27: 8,964
+L28: 16,002
+L29: 15,078
+L30: 13,278
+Local staging DB data/dev_search_local.db: 286,610 keyframes L21-L30, đủ metadata khung hình để frontend materialize kết quả search. Feature thiếu được để rỗng/list rỗng:
+Caption: chỉ có L21, 1,890 rows.
+OCR: có L21-L24, tổng 42,503 rows.
+Object detection: có L21-L30, 256,044 rows có object label.
+
+# Data
+
+Kết luận ngắn: Elasticsearch/local DB có L21-L30, nhưng caption chỉ có L21_V001/V002, còn Supabase/Zilliz cloud hiện chưa đọc được. Vì bạn đang tăng caption_boost=5.0, các query dạng mô tả tự nhiên sẽ bị L21_V001/V002 lấn lên.
+
+data/dev_search_local.db
+Local Metadata DB Backend Đang Dùng
+datasets: 1
+videos: 846
+keyframes: 286,610
+frame_annotations: 286,610
+
+Summary:
+
+L21 videos=2   frames=1,890   caption=1,890  ocr=1,825   objects=1,542
+L22 videos=31  frames=31,212  caption=0      ocr=31,209  objects=27,414
+L23 videos=25  frames=2,514   caption=0      ocr=2,514   objects=2,425
+L24 videos=43  frames=7,176   caption=0      ocr=6,955   objects=6,264
+L25 videos=88  frames=36,254  caption=0      ocr=0       objects=31,283
+L26 videos=498 frames=154,242 caption=0      ocr=0       objects=145,552
+L27 videos=16  frames=8,964   caption=0      ocr=0       objects=7,020
+L28 videos=24  frames=16,002  caption=0      ocr=0       objects=11,971
+L29 videos=23  frames=15,078  caption=0      ocr=0       objects=12,144
+L30 videos=96  frames=13,278  caption=0      ocr=0       objects=11,429
+
+Elasticsearch
+Index keyframe_annotations cũng có L21-L30:
+total L21-L30 docs: 286,605
+
+L21 videos=2   docs=1,890   caption=1,890  ocr=1,825   objects=1,542
+L22 videos=31  docs=31,212  caption=0      ocr=31,209  objects=27,414
+L23 videos=25  docs=2,514   caption=0      ocr=2,514   objects=2,425
+L24 videos=43  docs=7,176   caption=0      ocr=6,955   objects=6,264
+L25 videos=88  docs=36,249  caption=0      ocr=0       objects=31,283
+L26 videos=498 docs=154,242 caption=0      ocr=0       objects=145,552
+L27 videos=16  docs=8,964   caption=0      ocr=0       objects=7,020
+L28 videos=24  docs=16,002  caption=0      ocr=0       objects=11,971
+L29 videos=23  docs=15,078  caption=0      ocr=0       objects=12,144
+L30 videos=96  docs=13,278  caption=0      ocr=0       objects=11,429
+
+GCS Cloud
+
+L21 videos=29 images=25,581
+L22 videos=31 images=31,212
+L23 videos=25 images=2,514
+L24 videos=43 images=7,176
+L25 videos=88 images=36,254
+L26 videos=498 images=154,242
+L27 videos=16 images=8,964
+L28 videos=24 images=16,002
+L29 videos=23 images=15,078
+L30 videos=96 images=13,278
+
+
+Supabase / Zilliz
+Supabase: chưa kiểm/insert được vì connection hiện tại lỗi tenant/user ... not found.
+Zilliz: chưa kiểm được vì cluster đang STOPPED.
+Vì Zilliz chưa chạy nên search hiện tại có semantic_score=0.0, tức vector không góp điểm.
+
+L21: 7,800 vectors
+L22: 9,096 vectors
+L23: 2,326 vectors
+L24: 6,781 vectors
+L25: 37,445 vectors
+
+Total: 63,448 vectors / 216 videos
+Dim: 768
+Mismatch: 0
+Zilliz row_count: 63,448
+
+# Note
+
+Problems:
+- Data hiện lên chỉ có V001, V002 -> kiểm tra lỗi
+- Embedding lại vector bằng tự host
+- Kiểm tra database trên cloud
+- Kiểm tra cách chạy của elasticsearch
+
+
+Đã chỉnh backend sang SigLIP2 và test được từ frontend xuống backend.
+Thông số model/search đang ở đây
+- configs/model_registry.yaml: khai bao model embedder. Hien clip_vith14_quickgelu_dfn5b_v2 enabled, dim 1024, collection keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2; SigLIP2 So400M de disabled cho lan extract sau.
+- configs/retrieval_profiles.yaml: profile search trỏ Milvus sang collection SigLIP2.
+- apps/backend/app/core/deps.py: backend chọn runtime embedder.
+- apps/backend/app/adapters/model_runtime/siglip2.py: adapter SigLIP2 mới.
+- apps/web/src/api/client.ts: frontend mặc định gọi API base URL, có thể override bằng VITE_API_BASE_URL.
+Đã chạy
+- Upsert bridge metadata vào Zilliz cho L21-L25: 63,448 vectors, 216 videos, không thiếu DB frame.
+- Lý do cần bridge: vector ID trên Zilliz dạng L21_V015_212, còn DB/frontend dùng frame thật dạng L21_V015_F027730.
+Kết quả test
+- Backend test đang chạy: http://127.0.0.1:8010
+- Frontend test đang chạy: http://127.0.0.1:5174
+- Playwright đã bấm search từ frontend: response /api/retrieval/search status 200, trả 100 results và render card thành công.
+- Với query của bạn, backend semantic SigLIP2 tìm thấy L21_V015 ở rank 10: L21_V015_F027730, frame 27730.
+Lưu ý quan trọng: ground truth bạn đưa là L21_V015, 25800; video đã vào top 10, nhưng frame lệch vì CSV vector trên GCS không có frame index gốc, chỉ có số thứ tự 212.jpg. Muốn match frame exact 25800, cần file map gốc L21_V015_212 -> frame_idx 25800 hoặc re-extract vector trực tiếp từ bộ AutoShot keyframes hiện tại.
+Một blocker còn lại: DATABASE_URL trong .env hiện bị Supabase báo tenant/user not found, nên mình không restart backend 8000 cũ. Backend 8010 đang dùng SQLite local data/dev_search_local.db. Không cần chạy server ViT-B-32/OpenAI embedding ở port 8002 nữa.
+
+
+KIS
+QA
+TRAKE
+
+gắn thêm các metadata vào
+- Chạy object detection
+- Chạy ASR cho video song song với chạy với frame
+
+
+# Summary paper
+- asr: whisper-large3-turbo
+- Visual embedding:
+    + CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1024-dims
+    + SigLIP2-400m - 1152-dims
+- Captioning: Qwen3-vl-4b
+- 
+
+| Pipeline                      | Mục đích                                  | Model được paper ghi               | Tên nên load khi implement                                            | Output                               | Có đưa vào vector DB? |
+| ----------------------------- | ----------------------------------------- | ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------ | --------------------- |
+| **Shot Boundary Detection**   | Chia video thành các shot                 | **AutoShot**                       | `wentaozhu/AutoShot` implementation                                   | Danh sách `[start_frame, end_frame]` | ❌                     |
+| **Keyframe filtering**        | Loại frame gần giống nhau trong từng shot | **CLIP ViT-L-14-quickgelu, DFN2B** | OpenCLIP: `ViT-L-14-quickgelu` + `pretrained="dfn2b"`                 | embedding tạm để tính L2             | ❌                     |
+| **Global semantic embedding** | Search semantic tổng quát                 | **CLIP (DFN5B)**                   | Khả năng cao OpenCLIP `ViT-H-14-quickgelu` + `dfn5b`                  | **1024-dim**                         | ✅ Milvus              |
+| **Fine-grained embedding**    | Search chi tiết/object/visual concept     | **SigLIP2**                        | nên dùng **So400m family**, ví dụ `google/siglip2-so400m-patch14-384` | **1152-dim**                         | ✅ Milvus              |
+| **Captioning**                | Sinh description cho keyframe             | **Qwen2.5-VL-3B-Instruct**         | `Qwen/Qwen2.5-VL-3B-Instruct`                                         | Text caption                         | ❌ Elasticsearch       |
+| **OCR**                       | Đọc chữ trong keyframe                    | **Qwen2.5-VL-3B-Instruct**         | cùng model trên                                                       | OCR text                             | ❌ Elasticsearch       |
+| **ASR**                       | Speech → text                             | **Whisper**                        | Paper **không nói rõ variant**                                        | transcript + timestamp               | ❌ Elasticsearch       |
+| Object annotation             | Object filter                             | Faster R-CNN / OpenImagesV4        | Dataset AIC đã cung cấp                                               | object labels                        | ❌ Elasticsearch       |
+
+
+| Batch | Videos trên GCS | Frames `.jpg` | Caption | OCR | Objects |
+|---|---:|---:|---:|---:|---:|
+| L21   | 29 | 25,581 | 1,890 | 1,825 | 1,542 |
+| L22   | 31 | 31,212 | 0 | 31,209 | 27,414 |
+| L23   | 25 | 2,514 | 0 | 2,514 | 2,425 |
+| L24   | 43 | 7,176 | 0 | 6,955 | 6,264 |
+| L25   | 88 | 36,254 | 0 | 0 | 31,283 |
+| L26   | 498 | 154,242 | 0 | 0 | 145,552 |
+| L27   | 16 | 8,964 | 0 | 0 | 7,020 |
+| L28   | 24 | 16,002 | 0 | 0 | 11,971 |
+| L29   | 23 | 15,078 | 0 | 0 | 12,144 |
+| L30   | 96 | 13,278 | 0 | 0 | 11,429 |
+

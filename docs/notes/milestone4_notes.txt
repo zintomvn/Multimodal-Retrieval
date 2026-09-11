@@ -1,0 +1,142 @@
+# Search procedure
+# 1. LLM planners: 
+- variants
+- tách frame cho temporal search 
+
+# 2. Search theo frame
+Visual search
+- OpenCLIP
+- SigLIP2
+
+USER QUERY
+    │
+    ↓
+Query interpretation / decomposition
+    │
+    ├─────────────────────────────────┐
+    ↓                                 ↓
+ SigLIP2                           CLIP / other
+    ↓                                 ↓
+top 300                            top 300
+    └──────────────┬──────────────────┘
+                   ↓
+                  RRF
+                   ↓
+                top 50
+                   ↓
+       Model Reranker (Qwen3-VL-Reranker-2B)
+                   ↓
+                top 10
+                   ↓
+          Temporal Re-ranking
+                   ↓
+              final result
+
+
+Text search
+
+## 2.1. Elasticsearch
+
+
+## 2.2. Text embedding
+Embedding models:
+Qwen3-Embedding-0.6B
+https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+
+
+
+# 3. Reranker những frame đã search 
+(Xem những giải thuật lọc frame)
+
+# 4. Temporal search algorithm
+
+
+
+# Strategy 2: Text-based (Hybrid thay vì elasticsearch)
+
+
+
+reranker:   
+nvidia/llama-nemotron-rerank-vl-1b-v2
+
+
+Prompt:
+P1: đọc paper [2606.19682v1-1.pdf](d:/University/Projects/Individual projects/Multimodal-Retrieval/docs/papers/2606.19682v1-1.pdf) làm ra một phiên bản markdown của nó, hiện tại tôi đã chạy extract feature từ model CLIP model (ViT-L-14-quickgelu pre-trained with DFN2B) - 1152-dims trong paper và để nó trong các extractor_version=clip-vit-h14-quickgelu-dfn5b-v2/ như hình tôi gửi, giờ chạy nó ingest vào milvus, lưu ý tôi sẽ chạy feature extract thêm bằng model siglip2 để làm giống kỹ thuật trong paper nên là thiết kế trên milvus và metadata sao tôi sẽ dùng được như yêu cầu, sau đó kết nối với backend để tôi chạy, không dùng model siglip2 baseline cũ nữa, xóa model baseline SigLIP2 c? ?? g? khỏi dự án giúp tôi, vì cái đó tôi feature extraction sai logic, xóa cho đỡ nặng máy và chạy trên backend model mới giúp tôi
+
+P2: Dựa vào paper, viết lại cho tôi giải thuật để tìm cho dạng TRAKE hay Temporal Search và rerank lại 
+
+Dựa vào data của asr viết cho tôi script chạy insert vào elasticsearch, 
+
+
+# Strategy 3: Search with algorithm (Temporal Sequential Queries)
+
+Strategy 3.1 - Vortex: Search frame -> Tìm video -> re-scoring -> re-ranking
+1. LLM sinh ra các text để search theo 
+Independent Retrieval: lọc ra các frame cần thiết 
+2. Tìm frame 
+3. 
+
+Idea: 
+- Lọc theo frame đang có  
+- Tìm từ frame giữa -> chỉa ra tìm prev và post
+- Tìm từ frame rồi lọc theo video
+- Tìm theo chuỗi frame -> ranking 
+
+
+
+# Strategy 4: Model VLM 
+- LLM multi-perspectives -> giống variants (variant chưa đủ suy luận hay)
+- 
+
+
+Note code:
+- gom data text lại thành một bộ
+    + Metadata: Captioning + OCR + Object detection
+    + Captioning -> chạy đưa lên elasticsearch luôn
+    + ASR -> chạy đưa lên elasticsearch luôn
+- upload lên elasticsearch local + viết script
+- metadata thì upload lên lại supabase cloud
+- chạy embedding text của elasticsearch -> upload lên milvus (3 loại embeddings: 2 visual-text + 1 text)
+- liên kết với backend chạy được hiện lên web
+- Chạy ingest embedding -> test liên kết rồi viết script test benchmark
+
+Note fix:
+- Chạy thêm database quan hệ vào supabase
+- giao diện của trake chỉnh lại có thêm nút lựa chọn frame nào
+- Bấm ảnh hiện ra thì có play video và có cho xem frame lên xuống của video đó -> cho vào submission
+- QA thêm suy luận bằng LLM 
+- thêm tài khoản và lịch sử vào redis 
+    Giao diện: 
+    + KIS: như cũ
+    + TRAKE thì chia thành 4 hàng, mỗi hàng sẽ hiện k frame, có thanh kéo 
+    + QA: cho trọn video như KIS -> lọc bằng người (Sau này tối ưu bằng VLM sau)
+
+- Improving version 1 (Round 1): 
+    + host model online (siglip2, openclip, qwen3-vl-embedding)
+    + UI: Làm thêm phần hiện từng chỉ số ra để cho thấy độ tương đồng từng thành phần khi nhấn vào video
+    + Chỉnh lại logic x
+    + Câu TRAKE bug chưa hiện hết 4 event x
+    + Chỉnh lại output câu TRAKE x
+    + xem tối ưu tốc độ search và hiện lên màn hình x
+    + UI: x
+    Video có thể nhấn play xem video, tối ưu backend cho phần hiện UI nhanh hơn 
+    Bấm button Video hiện ra thì có play video và có cho xem frame bằng button tiến hoặc lùi của video đó để xem frame tiếp theo hoặc frame trước đó và cho thêm vào submission
+    Hiện điểm từng thành phần của frame đó (visual, text, asr) trong khi search 
+    + export file submission csv cho câu thì hiện nút kế bên nút export csv x
+    thì hiện phần đặt tên file csv đó và sau đó là hiện nút "Download" kế bên nút export csv
+    + Phần TRAKE lọc frame trùng ra x
+    + ở trong ô selected frames có thể thay đổi thứ tự trong frame x
+    + Chỉnh lại có thể sửa cho phần nào nhiều hơn - dựa vào prompt con người x
+    + chỉnh prompt: Tối ưu ngữ nghĩa cho text, cho LLM suy luận ra bao nhiêu phần trăm cho text nhiều hơn x
+    + Chỉnh lại algorithm của TRAKE theo visual nhiều hơn - Dùng prompt thêm để tối ưu x 
+    + phần cell reasoning cách ra một chút cho với kết quả của search x
+
+Problem: 
+- web mình relational data nó đang trên local máy tui bữa agent chạy test trên supabase mà k biết sao lỗi 
+- Chưa có VQA pipeline (model VLM or LLM ?) -> support giving information
+- Data metadata thiếu phần captioning, ocr, object -> QA hơi khó tự động hóa
+- Thuật toán tìm TRAKE còn quá cùi, chưa xử lý được dạng thời gian
+- Chưa có VLM reranker
+- LLM suy luận chưa phải là model ngon nhất
+- 
+
