@@ -19,7 +19,7 @@ from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.query_planning import AgentQueryPlanner, QueryPlanningResult
 from app.modules.retrieval.router import search as search_endpoint
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
-from app.modules.retrieval.service import RetrievalService
+from app.modules.retrieval.service import FrameScore, RetrievalService
 from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel, InMemoryTextSearchClient, InMemoryVectorSearchClient
 
 
@@ -331,6 +331,148 @@ def test_kis_temporal_parser_overrides_an_incomplete_agent_event_plan(tmp_path: 
         "asparagus is removed",
     ]
     assert response.normalized_query["temporal_anchor_index"] == 2
+    db.close()
+
+
+def test_kis_temporal_search_uses_event_multi_views_after_decomposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, service, dataset, frame_a, frame_b = _build_retrieval_fixture(tmp_path)
+
+    class MultiViewPlanner:
+        def plan(
+            self,
+            query: str,
+            query_type: str,
+            max_variants: int,
+            temporal_kis: bool = False,
+        ) -> QueryPlanningResult:
+            assert temporal_kis is True
+            assert query_type == "KIS"
+            return QueryPlanningResult(
+                language="vi",
+                intent="KIS",
+                summary="asparagus cooking sequence",
+                multi_views=["asparagus cooking target moment"],
+                variants=["asparagus cooking target moment"],
+                text_variants=[query],
+                temporal_events=["batter is added", "asparagus touches oil"],
+                temporal_anchor_index=2,
+                retrieval_weights={"visual": 0.7, "text": 0.3},
+                retrieval_weight_source="agent",
+                text_source_weights={"asr": 0.2, "caption": 0.8, "ocr": 0.0},
+                text_source_weight_source="agent",
+                temporal_event_plans=[
+                    {
+                        "query": "batter is added",
+                        "text_query": "bot duoc cho vao",
+                        "multi_views": [
+                            "batter is added",
+                            "batter poured into a bowl",
+                            "asparagus batter being added",
+                        ],
+                        "text_views": ["bot duoc cho vao", "cho bot vao to"],
+                        "importance": 0.7,
+                        "retrieval_weights": {"visual": 0.8, "text": 0.2},
+                        "text_source_weights": {"asr": 0.2, "caption": 0.8, "ocr": 0.0},
+                    },
+                    {
+                        "query": "asparagus touches oil",
+                        "text_query": "mang tay cham dau",
+                        "multi_views": [
+                            "asparagus touches oil",
+                            "asparagus piece contacts hot oil",
+                            "food entering oil in a pan",
+                        ],
+                        "text_views": ["mang tay cham dau", "mang tay trong chao dau"],
+                        "importance": 1.0,
+                        "retrieval_weights": {"visual": 0.85, "text": 0.15},
+                        "text_source_weights": {"asr": 0.2, "caption": 0.8, "ocr": 0.0},
+                    },
+                ],
+                source="langchain_deep_agent",
+            )
+
+    rank_calls: list[dict[str, list[str] | str]] = []
+
+    def fake_rank_frames(**kwargs: object) -> list[FrameScore]:
+        rank_calls.append(
+            {
+                "semantic_variants": list(kwargs["semantic_variants"]),  # type: ignore[arg-type]
+                "text_variants": list(kwargs["text_variants"]),  # type: ignore[arg-type]
+                "query_text": str(kwargs["query_text"]),
+            }
+        )
+        frame = frame_a if len(rank_calls) <= 3 else frame_b
+        return [
+            FrameScore(
+                frame=frame,
+                semantic_score=0.9,
+                text_score=0.3,
+                quality_score=float(frame.quality_score or 0.0),
+                weighted_score=0.8,
+                rrf_score=0.0,
+                final_score=0.8,
+            )
+        ]
+
+    service.query_planner = MultiViewPlanner()  # type: ignore[assignment]
+    monkeypatch.setattr(service, "_rank_frames", fake_rank_frames)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="temporal-kis-multi-view",
+            query_text="bot duoc cho vao roi mang tay cham dau",
+            top_k=3,
+            options=SearchOptions(
+                use_query_expansion=False,
+                temporal_mode=True,
+                temporal_strategy="aithena_weighted_ats",
+                min_match=2,
+            ),
+        )
+    )
+
+    assert [call["semantic_variants"] for call in rank_calls] == [
+        ["batter is added"],
+        ["batter poured into a bowl"],
+        ["asparagus batter being added"],
+        ["asparagus touches oil"],
+        ["asparagus piece contacts hot oil"],
+        ["food entering oil in a pan"],
+    ]
+    assert [call["text_variants"] for call in rank_calls] == [
+        ["bot duoc cho vao"],
+        ["cho bot vao to"],
+        ["bot duoc cho vao"],
+        ["mang tay cham dau"],
+        ["mang tay trong chao dau"],
+        ["mang tay cham dau"],
+    ]
+    assert response.normalized_query["temporal_events"] == ["batter is added", "asparagus touches oil"]
+    assert response.normalized_query["multi_views"] == [
+        "batter is added",
+        "batter poured into a bowl",
+        "asparagus batter being added",
+        "asparagus touches oil",
+        "asparagus piece contacts hot oil",
+        "food entering oil in a pan",
+    ]
+    assert response.normalized_query["temporal_retrieval"]["multi_view_event_searches"] == 6
+    assert response.normalized_query["temporal_retrieval"]["multiperspective_fusion"] == "aithena_independent_view_merge"
+    first_plan = response.normalized_query["temporal_event_plans"][0]
+    assert first_plan["multi_views"] == [
+        "batter is added",
+        "batter poured into a bowl",
+        "asparagus batter being added",
+    ]
+    assert response.results[0].score_breakdown["event_queries"][0]["view_count"] == 3
+    assert response.results[0].score_breakdown["event_queries"][0]["search_mode"] == "aithena_independent_view_merge"
+    assert response.results[0].score_breakdown["multiperspective_fusion"] == "aithena_independent_view_merge"
+
     db.close()
 
 
@@ -724,6 +866,56 @@ def test_agent_planner_extracts_text_source_weights_for_asr_caption_and_ocr() ->
     assert result.temporal_event_plans[0]["text_source_weights"] == {"asr": 0.1, "caption": 0.8, "ocr": 0.1}
     assert result.temporal_event_plans[0]["text_query"] == "dau bep cho mang tay vao to"
     assert result.decomposition["retrieval_strategy"]["text_source_weight_source"] == "agent"
+
+
+def test_agent_planner_keeps_event_level_multi_views() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    result = planner._result_from_raw_plan(  # noqa: SLF001 - validates plan normalization.
+        raw_plan={
+            "summary": "person enters a room, then picks up a red bag",
+            "multi_views": [{"text": "person enters room then picks up red bag"}],
+            "temporal_events": [
+                {
+                    "query": "person enters a room",
+                    "text_query": "nguoi di vao phong",
+                    "multi_views": [
+                        "person enters a room",
+                        "someone walking through a doorway",
+                        "person arriving inside a room",
+                    ],
+                    "text_views": ["nguoi di vao phong", "vao phong"],
+                },
+                {
+                    "query": "person picks up a red bag",
+                    "text_query": "nguoi nhat tui do",
+                    "semantic_views": [
+                        "person picks up a red bag",
+                        "someone lifting a red bag",
+                    ],
+                    "text_views": ["nguoi nhat tui do", "tui do"],
+                },
+            ],
+            "temporal_anchor_index": 2,
+        },
+        query="person enters a room, then picks up a red bag",
+        query_type="KIS",
+        max_variants=3,
+    )
+
+    assert result.multi_views == ["person enters room then picks up red bag"]
+    assert result.temporal_events == ["person enters a room", "person picks up a red bag"]
+    assert result.temporal_anchor_index == 2
+    assert result.temporal_event_plans[0]["multi_views"] == [
+        "person enters a room",
+        "someone walking through a doorway",
+        "person arriving inside a room",
+    ]
+    assert result.temporal_event_plans[1]["multi_views"] == [
+        "person picks up a red bag",
+        "someone lifting a red bag",
+    ]
+    assert result.temporal_event_plans[0]["text_views"] == ["nguoi di vao phong", "vao phong"]
 
 
 def test_metadata_query_cues_preserve_exact_ocr_terms() -> None:

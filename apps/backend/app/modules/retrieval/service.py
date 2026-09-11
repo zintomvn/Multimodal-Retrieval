@@ -271,8 +271,10 @@ class RetrievalService:
                     query_type=request.query_type,
                     max_variants=max_variants,
                 )
-        if agent_plan is not None and agent_plan.variants:
-            semantic_variants = list(agent_plan.variants)
+        if agent_plan is not None:
+            agent_multi_views = getattr(agent_plan, "multi_views", None) or getattr(agent_plan, "variants", None)
+            if agent_multi_views:
+                semantic_variants = list(agent_multi_views)
         if agent_plan is not None and agent_plan.text_variants:
             text_variants = self._dedupe_query_variants(
                 [query_text, *agent_plan.text_variants],
@@ -282,7 +284,7 @@ class RetrievalService:
             [*text_variants, *self._metadata_query_cues(query_text)],
             max_variants=max_variants,
         )
-        if request.options.use_query_expansion and expansion_default_enabled:
+        if request.options.use_query_expansion and expansion_default_enabled and not temporal_kis:
             semantic_variants = self._dedupe_query_variants(
                 [*semantic_variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
                 max_variants=max_variants,
@@ -314,10 +316,23 @@ class RetrievalService:
                 agent_plan,
                 request.query_type,
                 text_source_weights,
+                max_variants,
             )
             if request.query_type == "TRAKE" or temporal_kis
             else []
         )
+        if temporal_kis and temporal_event_plans:
+            event_multi_views = self._dedupe_query_variants(
+                [
+                    str(view)
+                    for plan in temporal_event_plans
+                    if isinstance(plan, dict)
+                    for view in (plan.get("multi_views") or [plan.get("query")])
+                ],
+                max_variants=max(1, max_variants * len(temporal_event_plans)),
+            )
+            if event_multi_views:
+                semantic_variants = event_multi_views
         temporal_anchor_index = self._resolve_temporal_anchor_index(
             request.options,
             agent_plan if temporal_source == "agent" else None,
@@ -325,6 +340,7 @@ class RetrievalService:
         )
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
+            "multi_views": semantic_variants,
             "variants": semantic_variants,
             "semantic_variants": semantic_variants,
             "text_variants": text_variants,
@@ -340,12 +356,19 @@ class RetrievalService:
             "temporal_retrieval": {
                 "enabled": temporal_kis,
                 "independent_event_searches": len(temporal_events) if temporal_kis else 0,
+                "multi_view_event_searches": sum(
+                    len(plan.get("multi_views", []) or [plan.get("query")])
+                    for plan in temporal_event_plans
+                    if isinstance(plan, dict)
+                ) if temporal_kis else 0,
+                "multiperspective_fusion": "aithena_independent_view_merge" if temporal_kis else None,
                 "reranker": request.options.temporal_strategy if temporal_kis else None,
             },
             "retrieval_weights": retrieval_weights,
             "retrieval_weight_source": retrieval_weight_source,
             "text_source_weights": text_source_weights,
             "text_source_weight_source": text_source_weight_source,
+            "visual_search": self._visual_search_summary(profile, request.options.visual_search_mode),
             "raw_temporal_events": temporal_parse.events,
             "profile": request.profile,
             "filters": self._normalized_filter_options(request.options),
@@ -423,6 +446,7 @@ class RetrievalService:
         agent_plan: Any,
         query_type: str,
         default_text_source_weights: dict[str, float],
+        max_views: int,
     ) -> list[dict[str, Any]]:
         raw_plans = getattr(agent_plan, "temporal_event_plans", []) if agent_plan else []
         raw_plans = raw_plans if isinstance(raw_plans, list) else []
@@ -444,14 +468,20 @@ class RetrievalService:
                 importance = float(raw_plan.get("importance", 1.0))
             except (TypeError, ValueError):
                 importance = 1.0
+            text_query = str(
+                raw_plan.get("text_query")
+                or (text_events[index - 1] if index - 1 < len(text_events) else event_query)
+            )
+            semantic_views = self._event_semantic_views(raw_plan, event_query, max_views)
+            text_views = self._event_text_views(raw_plan, text_query, max_views)
             plans.append(
                 {
                     "event_index": index,
                     "query": event_query,
-                    "text_query": str(
-                        raw_plan.get("text_query")
-                        or (text_events[index - 1] if index - 1 < len(text_events) else event_query)
-                    ),
+                    "text_query": text_query,
+                    "multi_views": semantic_views,
+                    "semantic_views": semantic_views,
+                    "text_views": text_views,
                     "importance": max(0.0, importance),
                     "retrieval_weights": weights,
                     "retrieval_weight_source": str(raw_plan.get("retrieval_weight_source") or "heuristic"),
@@ -460,6 +490,165 @@ class RetrievalService:
                 }
             )
         return plans
+
+    def _event_semantic_views(self, event_plan: dict[str, Any], event_query: str, max_views: int) -> list[str]:
+        views = self._extract_plan_text_values(
+            event_plan,
+            ("multi_views", "semantic_views", "perspectives", "views", "variants"),
+        )
+        views = self._dedupe_query_variants([event_query, *views], max_variants=max_views)
+        return self._english_semantic_variants(event_query, views, max_variants=max_views)
+
+    def _event_text_views(self, event_plan: dict[str, Any], text_query: str, max_views: int) -> list[str]:
+        views = self._extract_plan_text_values(
+            event_plan,
+            ("text_views", "text_multi_views", "lexical_views", "text_variants", "asr_variants"),
+        )
+        return self._dedupe_query_variants([text_query, *views], max_variants=max_views)
+
+    def _extract_plan_text_values(self, payload: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+        values: list[str] = []
+        for key in keys:
+            raw_values = payload.get(key)
+            if isinstance(raw_values, str):
+                values.append(raw_values)
+                continue
+            if not isinstance(raw_values, list):
+                continue
+            for item in raw_values:
+                if isinstance(item, dict):
+                    for item_key in ("text", "query", "view", "perspective"):
+                        value = str(item.get(item_key) or "").strip()
+                        if value:
+                            values.append(value)
+                            break
+                else:
+                    values.append(str(item))
+        return self._dedupe_query_variants(values, max_variants=8)
+
+    def _rank_frames_multiperspective(
+        self,
+        dataset: Dataset,
+        semantic_views: list[str],
+        text_views: list[str],
+        query_text: str,
+        profile_name: str,
+        options: SearchOptions,
+        top_k: int,
+        retrieval_weights: dict[str, float] | None = None,
+        use_agent_retrieval_weights: bool = False,
+        text_source_weights: dict[str, float] | None = None,
+    ) -> list[FrameScore]:
+        semantic_views = self._dedupe_query_variants(semantic_views or [query_text], max_variants=8)
+        text_views = self._dedupe_query_variants(text_views or [query_text], max_variants=8)
+        if len(semantic_views) <= 1 and len(text_views) <= 1:
+            return self._rank_frames(
+                dataset=dataset,
+                semantic_variants=semantic_views,
+                text_variants=text_views,
+                query_text=text_views[0] if text_views else query_text,
+                profile_name=profile_name,
+                options=options,
+                top_k=top_k,
+                retrieval_weights=retrieval_weights,
+                use_agent_retrieval_weights=use_agent_retrieval_weights,
+                text_source_weights=text_source_weights,
+            )
+
+        view_queries = [
+            {
+                "view_index": index + 1,
+                "semantic_query": semantic_view,
+                "text_query": text_views[index] if index < len(text_views) else text_views[0],
+            }
+            for index, semantic_view in enumerate(semantic_views)
+        ]
+        merged: dict[str, dict[str, Any]] = {}
+        for view in view_queries:
+            ranked = self._rank_frames(
+                dataset=dataset,
+                semantic_variants=[view["semantic_query"]],
+                text_variants=[view["text_query"]],
+                query_text=view["text_query"] or view["semantic_query"],
+                profile_name=profile_name,
+                options=options,
+                top_k=top_k,
+                retrieval_weights=retrieval_weights,
+                use_agent_retrieval_weights=use_agent_retrieval_weights,
+                text_source_weights=text_source_weights,
+            )
+            for rank, item in enumerate(ranked, start=1):
+                frame_id = item.frame.keyframe_id
+                entry = merged.setdefault(
+                    frame_id,
+                    {
+                        "frame": item.frame,
+                        "best": item,
+                        "score_sum": 0.0,
+                        "semantic_score_sum": 0.0,
+                        "text_score_sum": 0.0,
+                        "weighted_score_sum": 0.0,
+                        "rrf_raw": 0.0,
+                        "views": [],
+                    },
+                )
+                if item.final_score > entry["best"].final_score:
+                    entry["best"] = item
+                entry["score_sum"] += item.final_score
+                entry["semantic_score_sum"] += item.semantic_score
+                entry["text_score_sum"] += item.text_score
+                entry["weighted_score_sum"] += item.weighted_score
+                entry["rrf_raw"] += 1.0 / (60.0 + rank)
+                entry["views"].append(
+                    {
+                        "view_index": view["view_index"],
+                        "semantic_query": view["semantic_query"],
+                        "text_query": view["text_query"],
+                        "rank": rank,
+                        "score": round(item.final_score, 6),
+                    }
+                )
+
+        if not merged:
+            return []
+
+        max_rrf_raw = max(float(entry["rrf_raw"]) for entry in merged.values()) or 1.0
+        scored: list[FrameScore] = []
+        total_views = max(1, len(view_queries))
+        for entry in merged.values():
+            best: FrameScore = entry["best"]
+            matched_views = len(entry["views"])
+            coverage = matched_views / total_views
+            avg_score = entry["score_sum"] / matched_views
+            view_rrf = entry["rrf_raw"] / max_rrf_raw
+            final_score = 0.58 * best.final_score + 0.24 * avg_score + 0.13 * view_rrf + 0.05 * coverage
+            source_hit = dict(best.source_hit)
+            source_hit["multiperspective_fusion"] = {
+                "strategy": "aithena_independent_view_merge",
+                "total_views": total_views,
+                "matched_views": matched_views,
+                "coverage": round(coverage, 6),
+                "view_rrf": round(view_rrf, 6),
+                "matched_view_details": entry["views"][:8],
+            }
+            scored.append(
+                FrameScore(
+                    frame=best.frame,
+                    semantic_score=entry["semantic_score_sum"] / matched_views,
+                    text_score=entry["text_score_sum"] / matched_views,
+                    quality_score=best.quality_score,
+                    weighted_score=entry["weighted_score_sum"] / matched_views,
+                    rrf_score=view_rrf,
+                    final_score=final_score,
+                    rerank_score=best.rerank_score,
+                    rerank_detail=best.rerank_detail,
+                    filter_debug=best.filter_debug,
+                    source_hit=source_hit,
+                    text_hit=best.text_hit,
+                )
+            )
+        scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
+        return scored[:top_k]
 
     def _text_temporal_events(
         self,
@@ -724,11 +913,13 @@ class RetrievalService:
             event_text_source_weights = self._normalize_text_source_weights(event_plan.get("text_source_weights"))
             if not event_text_source_weights:
                 event_text_source_weights = self._normalize_text_source_weights(normalized.get("text_source_weights"))
-            ranked = self._rank_frames(
+            event_semantic_views = self._event_semantic_views(event_plan, event_query, max_views=8)
+            event_text_views = self._event_text_views(event_plan, str(event_plan.get("text_query") or event_query), max_views=8)
+            ranked = self._rank_frames_multiperspective(
                 dataset=dataset,
-                semantic_variants=[event_query],
-                text_variants=[str(event_plan.get("text_query") or event_query)],
-                query_text=str(event_plan.get("text_query") or event_query),
+                semantic_views=event_semantic_views,
+                text_views=event_text_views,
+                query_text=event_text_views[0] if event_text_views else event_query,
                 profile_name=request.profile,
                 options=request.options,
                 top_k=per_event_top_k,
@@ -757,6 +948,10 @@ class RetrievalService:
                 {
                     "event_index": event_index,
                     "query": event_query,
+                    "multi_views": event_semantic_views,
+                    "text_views": event_text_views,
+                    "view_count": len(event_semantic_views),
+                    "search_mode": "aithena_independent_view_merge",
                     "candidate_count": len(candidates),
                     "importance": round(float(event_plan.get("importance", 1.0)), 4),
                     "retrieval_weights": event_weights,
@@ -881,6 +1076,7 @@ class RetrievalService:
                     "expected_events": len(events),
                     "min_match": min_match,
                     "event_queries": event_summaries,
+                    "multiperspective_fusion": "aithena_independent_view_merge",
                     "event_weights": [round(weight, 6) for weight in event_weights],
                     "compactness_weight": compactness_weight,
                     "gap_penalty": gap_penalty,
@@ -920,11 +1116,13 @@ class RetrievalService:
             event_text_source_weights = self._normalize_text_source_weights(event_plan.get("text_source_weights"))
             if not event_text_source_weights:
                 event_text_source_weights = self._normalize_text_source_weights(normalized.get("text_source_weights"))
+            event_semantic_views = self._event_semantic_views(event_plan, event_query, max_views=8)
+            event_text_views = self._event_text_views(event_plan, str(event_plan.get("text_query") or event_query), max_views=8)
             ranked = self._rank_frames(
                 dataset=dataset,
-                semantic_variants=[event_query],
-                text_variants=[str(event_plan.get("text_query") or event_query)],
-                query_text=str(event_plan.get("text_query") or event_query),
+                semantic_variants=event_semantic_views,
+                text_variants=event_text_views,
+                query_text=event_text_views[0] if event_text_views else event_query,
                 profile_name=request.profile,
                 options=request.options,
                 top_k=per_event_top_k,
@@ -953,6 +1151,9 @@ class RetrievalService:
                 {
                     "event_index": event_index,
                     "query": event_query,
+                    "multi_views": event_semantic_views,
+                    "text_views": event_text_views,
+                    "view_count": len(event_semantic_views),
                     "candidate_count": len(event_candidates),
                     "importance": round(float(event_plan.get("importance", 1.0)), 4),
                     "retrieval_weights": event_weights,
@@ -1124,6 +1325,7 @@ class RetrievalService:
             ann_top_k,
             dataset_video_ids,
             profile,
+            request_visual_search_mode=options.visual_search_mode,
         )
         if options.use_metadata:
             text_scores, text_backend_error = self._text_scores(
@@ -1258,12 +1460,15 @@ class RetrievalService:
         top_k: int,
         dataset_video_ids: set[str],
         profile: dict[str, Any],
+        request_visual_search_mode: str = "profile",
     ) -> tuple[dict[str, float], bool]:
         self._semantic_hit_sources = {}
         if self.vector_client is None:
             return {}, True
         backend_error = False
-        collections = self._semantic_collections(profile)
+        collections = self._semantic_collections(profile, request_visual_search_mode)
+        if not collections:
+            return {}, True
         visual_rrf_config = profile.get("visual_rrf", {})
         visual_rrf_enabled = len(collections) > 1 and bool(visual_rrf_config.get("enabled", True))
         visual_rrf_k = max(
@@ -1314,6 +1519,10 @@ class RetrievalService:
                             resolved_frame_id=frame_id,
                         )
                         source_hit["variant"] = variant
+                        source_hit["visual_model_family"] = self._visual_model_family(
+                            target.model_key or target.collection,
+                            {"model_key": target.model_key, "collection": target.collection},
+                        )
                         source_hit["model_weight"] = target.weight
                         source_hit["weighted_similarity"] = round(score * target.weight, 6)
                         per_frame_sources.setdefault(frame_id, {})[model_id] = source_hit
@@ -1340,6 +1549,7 @@ class RetrievalService:
                 self._semantic_hit_sources[frame_id] = {
                     "fusion": "visual_rrf",
                     "rrf_k": visual_rrf_k,
+                    "formula": "sum(weight / (k + rank))",
                     "score": round(scores.get(frame_id, 0.0), 8),
                     "sources": sources,
                 }
@@ -1355,40 +1565,53 @@ class RetrievalService:
                     self._semantic_hit_sources[frame_id] = per_frame_sources.get(frame_id, {}).get(model_id, {})
         return scores, backend_error
 
-    def _semantic_collections(self, profile: dict[str, Any]) -> list[SemanticCollection]:
+    def _semantic_collections(
+        self,
+        profile: dict[str, Any],
+        visual_search_mode: str = "profile",
+    ) -> list[SemanticCollection]:
+        mode = self._normalize_visual_search_mode(visual_search_mode)
+        requested_families = self._requested_visual_families(mode)
+        explicit_model_choice = requested_families is not None
         collections: list[SemanticCollection] = []
 
-        visual_models = profile.get("visual_models")
-        if isinstance(visual_models, dict):
-            for config in visual_models.values():
-                if not isinstance(config, dict):
-                    continue
-                if config.get("enabled") is False:
-                    continue
-                collection = str(config.get("collection") or "").strip()
-                if collection:
-                    model_key = str(config.get("model_key") or config.get("embedder") or "").strip() or None
-                    collections.append(
-                        SemanticCollection(
-                            collection=collection,
-                            weight=float(config.get("weight", 1.0)),
-                            model_key=model_key,
-                        )
-                    )
-
-        milvus_profile = profile.get("milvus") if isinstance(profile.get("milvus"), dict) else {}
-        collection = str(milvus_profile.get("collection") or "").strip()
-        if collection:
-            model_key = str(milvus_profile.get("model_key") or milvus_profile.get("embedder") or "").strip() or None
+        def append_from_config(
+            name: str,
+            config: dict[str, Any],
+            *,
+            honor_enabled: bool,
+        ) -> None:
+            if honor_enabled and config.get("enabled") is False:
+                return
+            if requested_families is not None and self._visual_model_family(name, config) not in requested_families:
+                return
+            collection = str(config.get("collection") or "").strip()
+            if not collection:
+                return
+            model_key = str(config.get("model_key") or config.get("embedder") or "").strip() or None
             collections.append(
                 SemanticCollection(
                     collection=collection,
-                    weight=float(milvus_profile.get("weight", 1.0)),
+                    weight=float(config.get("weight", 1.0)),
                     model_key=model_key,
                 )
             )
 
-        if not collections:
+        visual_models = profile.get("visual_models")
+        if isinstance(visual_models, dict):
+            for name, config in visual_models.items():
+                if not isinstance(config, dict):
+                    continue
+                append_from_config(str(name), config, honor_enabled=not explicit_model_choice)
+
+        milvus_profile = profile.get("milvus") if isinstance(profile.get("milvus"), dict) else {}
+        if milvus_profile:
+            append_from_config("milvus", milvus_profile, honor_enabled=False)
+
+        if not collections and explicit_model_choice:
+            collections.extend(self._registry_semantic_collections(requested_families))
+
+        if not collections and not explicit_model_choice:
             embedder_entry = self.model_registry.first_enabled("embedders")
             if embedder_entry and isinstance(embedder_entry[1], dict):
                 provider = str(embedder_entry[1].get("provider") or "").lower()
@@ -1396,7 +1619,7 @@ class RetrievalService:
                 if provider in {"openai_compatible", "siglip2", "transformers_siglip2", "huggingface_siglip2"} and collection:
                     collections.append(SemanticCollection(collection=collection, model_key=embedder_entry[0]))
 
-        if not collections:
+        if not collections and mode in {"profile", "openclip", "both"}:
             collections.append(SemanticCollection(collection="keyframe_embeddings"))
 
         deduped: list[SemanticCollection] = []
@@ -1408,6 +1631,102 @@ class RetrievalService:
             seen.add(key)
             deduped.append(item)
         return deduped
+
+    def _registry_semantic_collections(self, requested_families: set[str] | None) -> list[SemanticCollection]:
+        collections: list[SemanticCollection] = []
+        entries = self.model_registry.registry.get("embedders")
+        if not isinstance(entries, dict):
+            return collections
+        supported_providers = {"openai_compatible", "siglip2", "transformers_siglip2", "huggingface_siglip2"}
+        for name, config in entries.items():
+            if not isinstance(config, dict):
+                continue
+            provider = str(config.get("provider") or "").lower()
+            collection = str(config.get("collection") or "").strip()
+            if provider not in supported_providers or not collection:
+                continue
+            if requested_families is not None and self._visual_model_family(str(name), config) not in requested_families:
+                continue
+            collections.append(
+                SemanticCollection(
+                    collection=collection,
+                    weight=float(config.get("weight", 1.0)),
+                    model_key=str(name),
+                )
+            )
+        return collections
+
+    def _visual_search_summary(self, profile: dict[str, Any], visual_search_mode: str) -> dict[str, Any]:
+        mode = self._normalize_visual_search_mode(visual_search_mode)
+        collections = self._semantic_collections(profile, mode)
+        visual_rrf_config = profile.get("visual_rrf", {}) if isinstance(profile.get("visual_rrf"), dict) else {}
+        rrf_enabled = len(collections) > 1 and bool(visual_rrf_config.get("enabled", True))
+        rrf_k = max(1.0, float(visual_rrf_config.get("k", profile.get("rrf", {}).get("k", 60))))
+        return {
+            "mode": mode,
+            "fusion": "visual_rrf" if rrf_enabled else "single_vector",
+            "formula": "sum(weight / (k + rank))" if rrf_enabled else "max(weight * similarity)",
+            "rrf_k": rrf_k if rrf_enabled else None,
+            "models": [
+                {
+                    "model_key": item.model_key,
+                    "collection": item.collection,
+                    "weight": item.weight,
+                    "family": self._visual_model_family(
+                        item.model_key or item.collection,
+                        {"model_key": item.model_key, "collection": item.collection},
+                    ),
+                }
+                for item in collections
+            ],
+        }
+
+    @staticmethod
+    def _normalize_visual_search_mode(raw_mode: Any) -> str:
+        mode = str(raw_mode or "profile").strip().lower()
+        if mode in {"rrf", "rff", "ensemble", "all"}:
+            return "both"
+        if mode in {"clip", "open_clip"}:
+            return "openclip"
+        if mode in {"siglip", "siglip_2"}:
+            return "siglip2"
+        if mode in {"profile", "openclip", "siglip2", "both"}:
+            return mode
+        return "profile"
+
+    @staticmethod
+    def _requested_visual_families(mode: str) -> set[str] | None:
+        if mode == "openclip":
+            return {"openclip"}
+        if mode == "siglip2":
+            return {"siglip2"}
+        if mode == "both":
+            return {"openclip", "siglip2"}
+        return None
+
+    def _visual_model_family(self, name: str, config: dict[str, Any]) -> str:
+        parts = [name]
+        keys = (
+            "model_key",
+            "embedder",
+            "collection",
+            "provider",
+            "model",
+            "openclip_model",
+            "description",
+            "extractor_version",
+        )
+        parts.extend(str(config.get(key) or "") for key in keys)
+        model_key = str(config.get("model_key") or config.get("embedder") or name or "").strip()
+        registry_config = {}
+        entries = self.model_registry.registry.get("embedders")
+        if isinstance(entries, dict) and isinstance(entries.get(model_key), dict):
+            registry_config = entries[model_key]
+        parts.extend(str(registry_config.get(key) or "") for key in keys)
+        haystack = " ".join(parts).lower()
+        if "siglip2" in haystack or "siglip-2" in haystack:
+            return "siglip2"
+        return "openclip"
 
     def _text_scores(
         self,

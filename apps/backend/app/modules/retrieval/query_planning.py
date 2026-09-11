@@ -66,7 +66,7 @@ TEXT_EVIDENCE_RE = re.compile(
 )
 OCR_EVIDENCE_RE = re.compile(
     r"\b(?:chu|van ban|noi dung viet|hien thi|tren man hinh|tren bang|"
-    r"bang bieu|bieu do|ky hieu|logo|bien|ma so|so hieu|gia|written|"
+    r"bang bieu|bieu do|ky hieu|logo|bien|so|ma so|so hieu|gia|written|"
     r"on screen|on-screen|displayed|table|chart|diagram|symbol|sign|label)\b",
     re.IGNORECASE,
 )
@@ -81,6 +81,7 @@ class QueryPlanningResult:
     language: str = "auto"
     intent: str = "FREEFORM"
     summary: str = ""
+    multi_views: list[str] = field(default_factory=list)
     variants: list[str] = field(default_factory=list)
     text_variants: list[str] = field(default_factory=list)
     temporal_events: list[str] = field(default_factory=list)
@@ -104,6 +105,7 @@ class QueryPlanningResult:
             "decomposition": self.decomposition,
             "temporal_events": self.temporal_events,
             "temporal_anchor_index": self.temporal_anchor_index,
+            "multi_views": self.multi_views or self.variants,
             "variants": self.variants,
             "text_variants": self.text_variants,
             "retrieval_weights": self.retrieval_weights,
@@ -187,7 +189,7 @@ class AgentQueryPlanner:
                     repaired.decomposition["temporal_repair_applied"] = True
                     repaired.agent_metadata["temporal_repair_applied"] = True
                     result = repaired
-            if result.variants:
+            if result.multi_views or result.variants:
                 self._cache_plan(cache_key, result)
                 return result
             return self._fallback_plan(query, query_type, max_variants, error="agent returned no variants")
@@ -326,7 +328,7 @@ class AgentQueryPlanner:
             return deepcopy(result)
 
     def _cache_plan(self, cache_key: tuple[str, str, str, int, bool], result: QueryPlanningResult) -> None:
-        if result.source == "fallback" or not result.variants:
+        if result.source == "fallback" or not (result.multi_views or result.variants):
             return
         with self._plan_cache_lock:
             self._plan_cache[cache_key] = (time.monotonic(), deepcopy(result))
@@ -486,12 +488,16 @@ class AgentQueryPlanner:
 
         temporal_events = self._extract_temporal_events(raw_plan, query)
         variants = self._extract_variants(raw_plan, query, max_variants)
+        multi_views = self._extract_multi_views(raw_plan, query, max_variants)
         text_variants = self._extract_text_variants(raw_plan, query, max_variants)
         if len(variants) < max_variants:
-            variants = self._dedupe(variants + temporal_events + self._factor_variants(search_factors))[:max_variants]
+            variants = self._dedupe(variants + multi_views)[:max_variants]
+        multi_views = self._prefer_english_values(query, multi_views, max_variants)
         variants = self._prefer_english_values(query, variants, max_variants)
+        if not variants:
+            variants = list(multi_views)
         temporal_events = self._prefer_english_temporal_events(query, temporal_events, self._max_temporal_events())
-        temporal_event_plans = self._extract_temporal_event_plans(raw_plan, temporal_events, query_type)
+        temporal_event_plans = self._extract_temporal_event_plans(raw_plan, temporal_events, query_type, max_variants)
         temporal_anchor_index = self._extract_temporal_anchor_index(raw_plan, len(temporal_events))
         summary = str(raw_plan.get("summary") or "")
         summary_rewrite = self._english_retrieval_rewrite(query)
@@ -507,6 +513,7 @@ class AgentQueryPlanner:
             language=str(raw_plan.get("language") or "auto"),
             intent=str(raw_plan.get("intent") or query_type),
             summary=summary,
+            multi_views=multi_views,
             variants=variants,
             text_variants=text_variants,
             temporal_events=temporal_events,
@@ -529,6 +536,7 @@ class AgentQueryPlanner:
 
     def _fallback_plan(self, query: str, query_type: str, max_variants: int, error: str | None = None) -> QueryPlanningResult:
         english_query = self._english_retrieval_rewrite(query)
+        multi_views = self._dedupe([item for item in [english_query, query] if item])[:max_variants]
         temporal_events = self._prefer_english_temporal_events(
             query=query,
             values=self._heuristic_temporal_events(query),
@@ -545,7 +553,8 @@ class AgentQueryPlanner:
             language="auto",
             intent=query_type,
             summary=english_query or query,
-            variants=self._dedupe([item for item in [english_query, query] if item])[:max_variants],
+            multi_views=multi_views,
+            variants=multi_views,
             text_variants=[query] if query else [],
             temporal_events=temporal_events,
             temporal_anchor_index=temporal_anchor_index,
@@ -576,13 +585,25 @@ class AgentQueryPlanner:
             error=error,
         )
 
+    def _extract_multi_views(self, raw_plan: dict[str, Any], query: str, max_views: int) -> list[str]:
+        values = self._extract_text_values(
+            raw_plan,
+            ("multi_views", "semantic_views", "perspectives", "views"),
+            ("text", "query", "view", "perspective"),
+        )
+        if not values:
+            values = self._extract_text_values(raw_plan, ("variants",), ("text", "query", "view", "perspective"))
+        if not values:
+            values.append(query)
+        return self._dedupe(values)[:max_views]
+
     def _extract_variants(self, raw_plan: dict[str, Any], query: str, max_variants: int) -> list[str]:
-        raw_variants = raw_plan.get("variants", [])
+        raw_variants = raw_plan.get("variants", raw_plan.get("multi_views", []))
         values: list[str] = []
         if isinstance(raw_variants, list):
             for item in raw_variants:
                 if isinstance(item, dict):
-                    values.append(str(item.get("text") or "").strip())
+                    values.append(str(item.get("text") or item.get("query") or item.get("view") or "").strip())
                 else:
                     values.append(str(item).strip())
         if not values:
@@ -591,15 +612,40 @@ class AgentQueryPlanner:
 
     def _extract_text_variants(self, raw_plan: dict[str, Any], query: str, max_variants: int) -> list[str]:
         """Keep lexical rewrites separate from English CLIP embedding rewrites."""
-        raw_values = raw_plan.get("text_variants", raw_plan.get("asr_variants", []))
+        raw_values = raw_plan.get("text_variants", raw_plan.get("text_views", raw_plan.get("asr_variants", [])))
         values: list[str] = [query]
         if isinstance(raw_values, list):
             for item in raw_values:
                 if isinstance(item, dict):
-                    values.append(str(item.get("text") or "").strip())
+                    values.append(str(item.get("text") or item.get("query") or item.get("view") or "").strip())
                 else:
                     values.append(str(item).strip())
         return self._dedupe(values)[:max_variants]
+
+    def _extract_text_values(
+        self,
+        payload: dict[str, Any],
+        list_keys: tuple[str, ...],
+        item_keys: tuple[str, ...],
+    ) -> list[str]:
+        values: list[str] = []
+        for list_key in list_keys:
+            raw_values = payload.get(list_key)
+            if isinstance(raw_values, str):
+                values.append(raw_values.strip())
+                continue
+            if not isinstance(raw_values, list):
+                continue
+            for item in raw_values:
+                if isinstance(item, dict):
+                    for item_key in item_keys:
+                        value = str(item.get(item_key) or "").strip()
+                        if value:
+                            values.append(value)
+                            break
+                else:
+                    values.append(str(item).strip())
+        return self._dedupe(values)
 
     def _extract_retrieval_strategy(self, raw_plan: dict[str, Any], query: str, query_type: str) -> dict[str, Any]:
         raw_strategy = raw_plan.get("retrieval_strategy")
@@ -660,6 +706,7 @@ class AgentQueryPlanner:
         raw_plan: dict[str, Any],
         temporal_events: list[str],
         query_type: str,
+        max_views: int,
     ) -> list[dict[str, Any]]:
         raw_events = raw_plan.get("temporal_events")
         raw_event_items = raw_events if isinstance(raw_events, list) else []
@@ -687,12 +734,18 @@ class AgentQueryPlanner:
             text_query = " ".join(str(raw_event.get("text_query") or "").split())
             evidence_query = text_query or event_query
             resolved_text_weights = text_source_weights or fallback["text_source_weights"]
-            resolved_text_weights = self._gate_ocr_weight(resolved_text_weights, evidence_query)
+            if not text_source_weights:
+                resolved_text_weights = self._gate_ocr_weight(resolved_text_weights, evidence_query)
+            semantic_views = self._extract_event_multi_views(raw_event, event_query, max_views)
+            text_views = self._extract_event_text_views(raw_event, text_query or event_query, max_views)
             plans.append(
                 {
                     "event_index": index,
                     "query": event_query,
                     "text_query": text_query,
+                    "multi_views": semantic_views,
+                    "semantic_views": semantic_views,
+                    "text_views": text_views,
                     "importance": round(min(1.0, max(0.0, importance)), 4),
                     "retrieval_weights": weights or fallback["retrieval_weights"],
                     "retrieval_weight_source": "agent" if weights else fallback["retrieval_weight_source"],
@@ -701,6 +754,23 @@ class AgentQueryPlanner:
                 }
             )
         return plans
+
+    def _extract_event_multi_views(self, raw_event: dict[str, Any], event_query: str, max_views: int) -> list[str]:
+        values = self._extract_text_values(
+            raw_event,
+            ("multi_views", "semantic_views", "perspectives", "views", "variants"),
+            ("text", "query", "view", "perspective"),
+        )
+        values = self._dedupe([event_query, *values])
+        return self._prefer_english_values(event_query, values, max_views)
+
+    def _extract_event_text_views(self, raw_event: dict[str, Any], text_query: str, max_views: int) -> list[str]:
+        values = self._extract_text_values(
+            raw_event,
+            ("text_views", "text_multi_views", "lexical_views", "text_variants", "asr_variants"),
+            ("text", "query", "view", "perspective"),
+        )
+        return self._dedupe([text_query, *values])[:max_views]
 
     @staticmethod
     def _extract_temporal_anchor_index(raw_plan: dict[str, Any], event_count: int) -> int | None:
@@ -720,6 +790,9 @@ class AgentQueryPlanner:
             "event_index": index,
             "query": query,
             "text_query": query,
+            "multi_views": [query],
+            "semantic_views": [query],
+            "text_views": [query],
             "importance": 1.0,
             "retrieval_weights": strategy["weights"],
             "retrieval_weight_source": strategy["weight_source"],
@@ -951,16 +1024,6 @@ class AgentQueryPlanner:
         if not values:
             values = self._heuristic_temporal_events(query)
         return self._dedupe(values)[: self._max_temporal_events()]
-
-    def _factor_variants(self, search_factors: dict[str, Any]) -> list[str]:
-        variants: list[str] = []
-        for key in ("subjects", "actions", "objects", "attributes", "scene", "text_cues"):
-            values = search_factors.get(key)
-            if isinstance(values, list):
-                text = " ".join(str(value).strip() for value in values[:6] if str(value).strip())
-                if text:
-                    variants.append(text)
-        return variants
 
     def _heuristic_temporal_events(self, query: str) -> list[str]:
         return parse_temporal_events(query, max_events=self._max_temporal_events()).events

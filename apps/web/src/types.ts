@@ -1,4 +1,5 @@
 export type QueryType = "KIS" | "QA" | "TRAKE";
+export type VisualSearchMode = "openclip" | "siglip2" | "both";
 
 export interface Dataset {
   id: string;
@@ -51,6 +52,7 @@ export interface SearchResponse {
   query_name: string | null;
   normalized_query: {
     language?: string;
+    multi_views?: string[];
     variants?: string[];
     semantic_variants?: string[];
     text_variants?: string[];
@@ -65,10 +67,25 @@ export interface SearchResponse {
     retrieval_weight_source?: string;
     text_source_weights?: { asr?: number; caption?: number; ocr?: number };
     text_source_weight_source?: string;
+    visual_search?: {
+      mode?: VisualSearchMode | "profile";
+      fusion?: string;
+      formula?: string;
+      rrf_k?: number | null;
+      models?: Array<{
+        model_key?: string | null;
+        collection?: string;
+        weight?: number;
+        family?: "openclip" | "siglip2" | string;
+      }>;
+    };
     temporal_event_plans?: Array<{
       event_index?: number;
       query?: string;
       text_query?: string;
+      multi_views?: string[];
+      semantic_views?: string[];
+      text_views?: string[];
       importance?: number;
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;
@@ -91,6 +108,7 @@ export interface SearchResponse {
       };
       temporal_events?: string[];
       temporal_anchor_index?: number | null;
+      multi_views?: string[];
       variants?: string[];
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;

@@ -46,7 +46,7 @@ llm_query_planning:
         Transform each user query into a compact JSON search plan that downstream
         vector and metadata search can execute. Use the query_decomposition_agent
         to identify search factors and the query_expansion_agent to create concise
-        retrieval rewrites. Do not call filesystem or shell tools.
+        AIThena-style multi-view retrieval rewrites. Do not call filesystem or shell tools.
 
         Return exactly one JSON object with this schema and no markdown:
         {
@@ -80,6 +80,12 @@ llm_query_planning:
               "order": 1,
               "query": "standalone event query for search",
               "text_query": "Vietnamese lexical query for ASR and OCR search",
+              "multi_views": [
+                "English event-level search rewrite from one linguistic perspective"
+              ],
+              "text_views": [
+                "Vietnamese lexical event-level search rewrite for ASR/OCR"
+              ],
               "must_have": ["critical factors for this event"],
               "importance": 1.0,
               "retrieval_weights": {"visual": 0.0, "text": 0.0},
@@ -87,10 +93,10 @@ llm_query_planning:
             }
           ],
           "temporal_anchor_index": 1,
-          "variants": [
+          "multi_views": [
             {
               "text": "concise retrieval rewrite",
-              "purpose": "semantic|metadata|ocr|object|temporal"
+              "perspective": "literal|visual|object|caption|ocr|temporal"
             }
           ],
           "text_variants": [
@@ -105,14 +111,14 @@ llm_query_planning:
         - When text has nonzero weight, always set `retrieval_strategy.text_source_weights` for `asr`, `caption`, and `ocr`; these are numeric, non-negative, and sum to exactly 1.0. Use ASR for spoken dialogue, narration, or quoted speech; use caption for visible people, objects, actions, scenes, and attributes described in English frame captions. Set OCR to 0.0 unless the query explicitly requests visible words, a displayed proper name, a table/chart, symbol, logo, sign, number, code, price, date, or text on screen. Do not infer OCR need from an ordinary visual object or scene.
         - Give text substantial or dominant weight for speech, narration, dialogue, quoted/on-screen text, names, numbers, or facts unlikely to be inferred from pixels alone. Give visual substantial or dominant weight for appearance, actions, objects, colours, spatial relations, and scenes. For mixed queries, balance the weights according to the importance of the clauses.
         - Include every important clause in `retrieval_strategy.clauses`, assign its importance from 0.0 to 1.0, and state a short rationale. Do not make visual dominant merely because this is video retrieval.
-        - The user query is Vietnamese by default. Write `summary`, `temporal_events.query`, and every `variants.text` value in English for CLIP/Milvus embedding. Never return the raw Vietnamese input as a semantic variant.
-        - `text_variants` is for Elasticsearch lexical search over Vietnamese ASR/OCR. Return the original Vietnamese query plus up to two short Vietnamese phrases covering the most diagnostic spoken words, names, numbers, quoted text, or facts. Captioning uses the English semantic `variants` separately, so make those concrete enough to match English captions.
-        - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose variants.
+        - The user query is Vietnamese by default. Write `summary`, `temporal_events.query`, `temporal_events.multi_views`, and every root `multi_views.text` value in English for CLIP/Milvus embedding. Never return the raw Vietnamese input as a semantic view.
+        - `text_variants` and per-event `text_views` are for Elasticsearch lexical search over Vietnamese ASR/OCR. Return the original Vietnamese query plus up to two short Vietnamese phrases covering the most diagnostic spoken words, names, numbers, quoted text, or facts. Captioning uses the English semantic `multi_views` separately, so make those concrete enough to match English captions.
+        - Keep exact OCR or on-screen text cues in their original language/script inside `text_cues` and in OCR-purpose views.
         - Prefer concrete visual words that may appear in captions, OCR, and object tags.
         - Translate abstract descriptions into concrete, observable visual terms chosen from the user query itself. Do not use a fixed domain vocabulary or example-specific scene/object mappings.
-        - Keep each variant under 24 words.
-        - Make the first variant the best concise English retrieval rewrite, not the raw Vietnamese query.
-        - When `temporal_kis` is true for a KIS request, this rule overrides the simple-KIS rule: return 2 to 8 chronological standalone events whenever the query contains a before/after relation, a process, or a contextual target. Include the requested target moment as one event and set `temporal_anchor_index` (1-based) to that target event. Do not use only previous/current/next; represent every useful event in the inferred k-event chain. When a visual element is said to appear repeatedly, emit separate events for the visible reveals; do not collapse the count into one abstract event. Every event MUST contain English `query` for embedding/captioning and Vietnamese `text_query` for ASR/OCR. The backend independently retrieves every event and reranks the full n-event candidate chain, so never merge event descriptions. Do not invent context: return one event only when no supported before/after context can be inferred.
+        - Keep each multi-view rewrite under 24 words.
+        - Make the first root multi-view the best concise English retrieval rewrite, not the raw Vietnamese query.
+        - When `temporal_kis` is true for a KIS request, this rule overrides the simple-KIS rule: first split the query into 2 to 8 chronological standalone events whenever the query contains a before/after relation, a process, or a contextual target; then create 1 to `max_variants` (the requested maximum view count) AIThena-style `multi_views` for each event. Include the requested target moment as one event and set `temporal_anchor_index` (1-based) to that target event. Do not use only previous/current/next; represent every useful event in the inferred k-event chain. When a visual element is said to appear repeatedly, emit separate events for the visible reveals; do not collapse the count into one abstract event. Every event MUST contain English `query` and event-level English `multi_views` for embedding/captioning plus Vietnamese `text_query`/`text_views` for ASR/OCR. The backend independently retrieves every event from its own multi-views and reranks the full n-event candidate chain, so never merge event descriptions. Do not invent context: return one event only when no supported before/after context can be inferred.
         - For KIS/QA when `temporal_kis` is false, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
         - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
@@ -131,10 +137,12 @@ llm_query_planning:
       name: query_expansion_agent
       description: Generates concise search rewrites from decomposed factors.
       system_prompt: |
-        You create query expansion variants for hybrid video retrieval. Variants
-        should help both semantic embeddings and metadata search. Produce short
-        English rewrites by default, translating Vietnamese descriptions into
-        concrete visual English while preserving exact OCR strings when needed.
-        rewrites that combine the most important visual factors, OCR cues, object
-        names, and event-level wording. Avoid long explanations, synonyms that
-        change meaning, and broad generic words.
+        You create multi-view rewrites for hybrid video retrieval.
+        Views should help semantic embeddings, captions, and metadata search.
+        For temporal KIS or TRAKE, create views after event decomposition and keep
+        them attached to the corresponding event. Produce short English rewrites
+        by default, translating Vietnamese descriptions into concrete visual
+        English while preserving exact OCR strings when needed. Rewrites combine
+        the most important visual factors, OCR cues, object names, and event-level
+        wording. Avoid long explanations, synonyms that change meaning, and broad
+        generic words.

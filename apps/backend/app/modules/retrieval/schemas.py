@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 QueryType = Literal["KIS", "QA", "TRAKE", "IMAGE", "FREEFORM"]
+VisualSearchMode = Literal["profile", "openclip", "siglip2", "both"]
 
 
 class SearchOptions(BaseModel):
@@ -14,6 +15,7 @@ class SearchOptions(BaseModel):
     use_metadata: bool = True
     use_reranker: bool = True
     strict_hybrid: bool = False
+    visual_search_mode: VisualSearchMode = "profile"
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)

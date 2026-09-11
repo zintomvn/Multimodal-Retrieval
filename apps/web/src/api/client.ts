@@ -14,6 +14,7 @@ import type {
   QueryType,
   SearchResponse,
   SubmissionRow,
+  VisualSearchMode,
   VideoFrameSeekResponse,
   VideoEvidence,
   VideoPreviewUrl,
@@ -80,6 +81,7 @@ export interface RetrievalSearchInput {
   useMetadata: boolean;
   temporalMode: boolean;
   temporalStrategy: "vortex_k_context" | "aithena_weighted_ats";
+  visualSearchMode: VisualSearchMode;
 }
 
 function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> {
@@ -96,6 +98,7 @@ function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> 
       use_metadata: input.useMetadata,
       use_reranker: true,
       strict_hybrid: false,
+      visual_search_mode: input.visualSearchMode,
       delta_t_max_ms: 180000,
       temporal_mode: input.temporalMode,
       temporal_strategy: input.temporalStrategy,

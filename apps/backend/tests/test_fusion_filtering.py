@@ -55,6 +55,39 @@ class StubTextClient:
         return len(documents)
 
 
+class StaticEmbedder:
+    def embed_text(self, text: str) -> list[float]:
+        _ = text
+        return [1.0]
+
+    def embed_image_uri(self, image_uri: str) -> list[float]:
+        _ = image_uri
+        return [1.0]
+
+
+class VisualModeVectorClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def search(self, collection: str, vector: list[float], top_k: int, filters: dict | None = None) -> list[VectorHit]:
+        _ = (vector, filters)
+        self.calls.append(collection)
+        by_collection = {
+            "clip_vectors": [
+                VectorHit(id="L30_V001_F000005", score=0.95, metadata={"keyframe_id": "L30_V001_F000005", "video_id": "L30_V001"}),
+                VectorHit(id="L30_V001_F000020", score=0.50, metadata={"keyframe_id": "L30_V001_F000020", "video_id": "L30_V001"}),
+            ],
+            "siglip2_vectors": [
+                VectorHit(id="L30_V001_F000020", score=0.99, metadata={"keyframe_id": "L30_V001_F000020", "video_id": "L30_V001"}),
+            ],
+        }
+        return by_collection.get(collection, [])[:top_k]
+
+    def upsert(self, collection: str, vectors: list[tuple[str, list[float], dict]]) -> int:
+        _ = (collection, vectors)
+        return len(vectors)
+
+
 def _build_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset]:
     db_path = tmp_path / "fusion.sqlite3"
     engine = create_engine(f"sqlite:///{db_path}")
@@ -214,6 +247,92 @@ def _build_fixture(tmp_path: Path) -> tuple[Session, RetrievalService, Dataset]:
     return session, service, dataset
 
 
+def test_visual_search_mode_selects_siglip2_and_fuses_both_with_rrf(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+    vector_client = VisualModeVectorClient()
+    service.vector_client = vector_client
+    service.model_registry.embedder = StaticEmbedder()  # type: ignore[assignment]
+    service.model_registry.embedders = {
+        "clip_vith14_quickgelu_dfn5b_v2": StaticEmbedder(),  # type: ignore[dict-item]
+        "siglip2_so400m16_384_webli_openclip_1152_v1": StaticEmbedder(),  # type: ignore[dict-item]
+    }
+    service.profiles["visual_mode"] = {
+        "semantic_weight": 1.0,
+        "metadata_weight": 0.0,
+        "quality_weight": 0.0,
+        "rrf": {"enabled": False, "k": 60},
+        "visual_rrf": {"enabled": True, "k": 1},
+        "query_expansion": {"enabled_default": False, "max_variants": 1},
+        "visual_models": {
+            "clip_global": {
+                "model_key": "clip_vith14_quickgelu_dfn5b_v2",
+                "collection": "clip_vectors",
+                "weight": 1.0,
+                "enabled": True,
+            },
+            "siglip2_fine_grained": {
+                "model_key": "siglip2_so400m16_384_webli_openclip_1152_v1",
+                "collection": "siglip2_vectors",
+                "weight": 1.0,
+                "enabled": False,
+            },
+        },
+    }
+
+    common_options = {
+        "use_query_expansion": False,
+        "use_agent_query_planning": False,
+        "use_metadata": False,
+        "use_reranker": False,
+    }
+    openclip_response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="visual-openclip",
+            query_text="person in red shirt",
+            profile="visual_mode",
+            top_k=2,
+            options=SearchOptions(**common_options, visual_search_mode="openclip"),
+        )
+    )
+    siglip2_response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="visual-siglip2",
+            query_text="person in red shirt",
+            profile="visual_mode",
+            top_k=2,
+            options=SearchOptions(**common_options, visual_search_mode="siglip2"),
+        )
+    )
+    both_response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="visual-both",
+            query_text="person in red shirt",
+            profile="visual_mode",
+            top_k=2,
+            options=SearchOptions(**common_options, visual_search_mode="both"),
+        )
+    )
+
+    assert openclip_response.results[0].frame_id == "L30_V001_F000005"
+    assert siglip2_response.results[0].frame_id == "L30_V001_F000020"
+    assert both_response.results[0].frame_id == "L30_V001_F000020"
+    assert both_response.normalized_query["visual_search"]["mode"] == "both"
+    assert both_response.normalized_query["visual_search"]["fusion"] == "visual_rrf"
+    semantic_hit = both_response.results[0].score_breakdown["semantic_hit"]
+    assert semantic_hit["fusion"] == "visual_rrf"
+    assert {source["collection"] for source in semantic_hit["sources"]} == {"clip_vectors", "siglip2_vectors"}
+    assert "clip_vectors" in vector_client.calls
+    assert "siglip2_vectors" in vector_client.calls
+
+    db.close()
+
+
 def test_m4_weighted_and_rrf_profiles_change_expected_order(tmp_path: Path) -> None:
     db, service, dataset = _build_fixture(tmp_path)
 
@@ -225,7 +344,7 @@ def test_m4_weighted_and_rrf_profiles_change_expected_order(tmp_path: Path) -> N
             query_text="nguoi ao do",
             profile="m4_weighted",
             top_k=3,
-            options=SearchOptions(use_query_expansion=False),
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=False),
         )
     )
     rrf_response = service.search(
@@ -236,7 +355,7 @@ def test_m4_weighted_and_rrf_profiles_change_expected_order(tmp_path: Path) -> N
             query_text="nguoi ao do",
             profile="m4_rrf",
             top_k=3,
-            options=SearchOptions(use_query_expansion=False),
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=False),
         )
     )
 

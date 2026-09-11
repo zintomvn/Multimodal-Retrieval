@@ -19,6 +19,7 @@ embedders:
     task: multimodal_embedding
     provider: openai_compatible
     base_url: http://localhost:8003/v1
+    api_key_env: SIGLIP2_API_KEY
     model: ViT-SO400M-16-SigLIP2-384-webli
     openclip_model: ViT-SO400M-16-SigLIP2-384
     openclip_pretrained: webli
@@ -29,7 +30,7 @@ embedders:
     l2_normalize: true
     collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
     extractor_version: siglip2-so400m16-384-webli-openclip-1152-v1
-    enabled: false
+    enabled: true
     description: "Fine-grained SigLIP2 1152-dim text encoder for Vortex-style CLIP+SigLIP2 RRF fusion."
   pe_core_bigg_14_448:
     task: multimodal_embedding

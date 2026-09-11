@@ -37,6 +37,7 @@ import type {
   SearchResult,
   SearchResponse,
   SubmissionRow,
+  VisualSearchMode,
   VideoEvidence,
   VideoEvidenceItem,
 } from "./types";
@@ -621,6 +622,27 @@ function summarizeFactors(value: unknown): string {
   return parts.length > 0 ? parts.join(" / ") : "No structured factors returned.";
 }
 
+function visualSearchLabel(
+  visualSearch: SearchResponse["normalized_query"]["visual_search"],
+): string {
+  const mode = visualSearch?.mode;
+  if (mode === "siglip2") return "SigLIP2";
+  if (mode === "both") return "OpenCLIP + SigLIP2";
+  if (mode === "profile") return "Profile visual";
+  return "OpenCLIP";
+}
+
+function visualModelSummary(
+  visualSearch: SearchResponse["normalized_query"]["visual_search"],
+): string {
+  const models = visualSearch?.models ?? [];
+  if (models.length === 0) return visualSearchLabel(visualSearch);
+  return models
+    .map((model) => (model.family === "siglip2" ? "SigLIP2" : "OpenCLIP"))
+    .filter((label, index, labels) => labels.indexOf(label) === index)
+    .join(" + ");
+}
+
 function makeTraceFromResponse(
   mode: AppMode,
   queryType: QueryType,
@@ -645,7 +667,7 @@ function makeTraceFromResponse(
   // The backend may repair a collapsed agent plan before independent event retrieval.
   const temporalEvents = normalized.temporal_events ?? plan?.temporal_events ?? [];
   const textTemporalEvents = normalized.text_temporal_events ?? [];
-  const semanticVariants = normalized.semantic_variants ?? normalized.variants ?? [];
+  const semanticVariants = normalized.multi_views ?? normalized.semantic_variants ?? normalized.variants ?? [];
   const textVariants = normalized.text_variants ?? [];
   const summary = plan?.summary || semanticVariants[0] || "Query parsed.";
   const traceLabel =
@@ -655,6 +677,8 @@ function makeTraceFromResponse(
   const retrievalWeights = plan?.retrieval_weights ?? normalized.retrieval_weights;
   const weightSource = plan?.retrieval_weight_source ?? normalized.retrieval_weight_source ?? "profile";
   const textSourceWeights = plan?.text_source_weights ?? normalized.text_source_weights;
+  const visualSearch = normalized.visual_search;
+  const visualSummary = visualModelSummary(visualSearch);
   return [
     {
       title: "Agent profile",
@@ -669,6 +693,7 @@ function makeTraceFromResponse(
       raw: {
         summary: plan?.summary ?? summary,
         decomposition: plan?.decomposition ?? null,
+        multi_views: semanticVariants,
         semantic_variants: semanticVariants,
         text_variants: textVariants,
       },
@@ -682,19 +707,22 @@ function makeTraceFromResponse(
     {
       title: "Route modalities",
       detail: retrievalWeights
-        ? `Visual ${formatScore(retrievalWeights.visual ?? 0)} | Text ${formatScore(retrievalWeights.text ?? 0)} | ${weightSource}`
+        ? `Visual ${formatScore(retrievalWeights.visual ?? 0)} (${visualSummary}) | Text ${formatScore(retrievalWeights.text ?? 0)} | ${weightSource}`
         : "Using retrieval profile weights.",
       status: traceStatus,
-      raw: plan?.decomposition?.retrieval_strategy ?? {
-        weights: retrievalWeights,
-        source: weightSource,
+      raw: {
+        ...(plan?.decomposition?.retrieval_strategy ?? {
+          weights: retrievalWeights,
+          source: weightSource,
+        }),
+        visual_search: visualSearch,
       },
     },
     {
-      title: "Embedding query",
-      detail: `English: ${summarizeList(semanticVariants, "No semantic rewrite returned.")}`,
+      title: "Multi-view search",
+      detail: `English: ${summarizeList(semanticVariants, "No semantic view returned.")}`,
       status: traceStatus,
-      raw: { language: "en", variants: semanticVariants },
+      raw: { language: "en", multi_views: semanticVariants, visual_search: visualSearch },
     },
     {
       title: "Captioning query",
@@ -703,7 +731,7 @@ function makeTraceFromResponse(
       raw: {
         source: "caption",
         language: "en",
-        variants: semanticVariants,
+        multi_views: semanticVariants,
       },
     },
     {
@@ -712,7 +740,7 @@ function makeTraceFromResponse(
       status: traceStatus,
       raw: {
         language: "vi",
-        variants: textVariants,
+        text_variants: textVariants,
       },
     },
     {
@@ -722,7 +750,7 @@ function makeTraceFromResponse(
       raw: {
         source: "ocr",
         language: "vi",
-        variants: textVariants,
+        text_variants: textVariants,
       },
     },
     {
@@ -741,7 +769,7 @@ function makeTraceFromResponse(
     },
     {
       title: "Retrieve candidates",
-      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using English embedding/captioning, Vietnamese ASR, and OCR. Text weights: ASR ${formatScore(textSourceWeights?.asr ?? 0)} | Caption ${formatScore(textSourceWeights?.caption ?? 0)} | OCR ${formatScore(textSourceWeights?.ocr ?? 0)}. Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
+      detail: `${mode === "Auto" ? "Shortlisted" : "Returned"} ${resultCount} results using ${visualSummary}, English captioning, Vietnamese ASR, and OCR. Text weights: ASR ${formatScore(textSourceWeights?.asr ?? 0)} | Caption ${formatScore(textSourceWeights?.caption ?? 0)} | OCR ${formatScore(textSourceWeights?.ocr ?? 0)}. Source: ${source}${plan?.error ? ` | ${plan.error}` : ""}`,
       status: resultCount > 0 ? "done" : "warning",
       raw: {
         query_run_id: response.query_run_id,
@@ -1308,6 +1336,8 @@ export function App() {
   const [temporalStrategy, setTemporalStrategy] = useState<
     "vortex_k_context" | "aithena_weighted_ats"
   >("vortex_k_context");
+  const [visualSearchMode, setVisualSearchMode] =
+    useState<VisualSearchMode>("openclip");
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1773,6 +1803,7 @@ export function App() {
         useMetadata,
         temporalMode: queryType === "KIS" && kisTemporalMode,
         temporalStrategy,
+        visualSearchMode,
       };
 
     try {
@@ -2736,6 +2767,32 @@ export function App() {
                           }
                         />
                       </label>
+                      <div className="visual-strategy" role="group" aria-label="Visual embedding model">
+                        <span>Visual</span>
+                        <div className="segmented-control visual-segmented">
+                          <button
+                            type="button"
+                            className={visualSearchMode === "openclip" ? "active" : ""}
+                            onClick={() => setVisualSearchMode("openclip")}
+                          >
+                            OpenCLIP
+                          </button>
+                          <button
+                            type="button"
+                            className={visualSearchMode === "siglip2" ? "active" : ""}
+                            onClick={() => setVisualSearchMode("siglip2")}
+                          >
+                            SigLIP2
+                          </button>
+                          <button
+                            type="button"
+                            className={visualSearchMode === "both" ? "active" : ""}
+                            onClick={() => setVisualSearchMode("both")}
+                          >
+                            Both
+                          </button>
+                        </div>
+                      </div>
                       {queryType === "KIS" && (
                         <>
                           <label className="temporal-toggle">
