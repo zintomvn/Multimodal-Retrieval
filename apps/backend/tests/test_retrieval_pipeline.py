@@ -731,6 +731,32 @@ def test_m4_agent_query_planning_openai_profile_falls_back_when_key_missing(
     db.close()
 
 
+def test_request_agent_model_selects_allow_listed_planner_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_LLM_PROFILE", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path, use_real_planner=True)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="agent-model-picker",
+            query_text="nguoi ao do",
+            top_k=1,
+            options=SearchOptions(agent_model="gpt-5-nano"),
+        )
+    )
+
+    agent_plan = response.normalized_query["agent_query_plan"]
+    assert agent_plan["source"] == "fallback"
+    assert agent_plan["agent_metadata"]["active_profile"] == "openai_gpt5_nano"
+    assert agent_plan["agent_metadata"]["model"] == "gpt-5-nano"
+    db.close()
+
+
 def test_m4_agent_profile_env_override_resolves_provider_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

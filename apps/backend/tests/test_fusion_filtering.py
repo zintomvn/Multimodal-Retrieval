@@ -17,7 +17,7 @@ from app.db.models import Base, Dataset, Frame, FrameAnnotation, Shot, Video
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.query_planning import QueryPlanningResult
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
-from app.modules.retrieval.service import RetrievalService
+from app.modules.retrieval.service import FrameScore, RetrievalService
 from tests.fakes import DeterministicEmbedder, ExpandingQueryExpander, HintVisualQaModel
 
 
@@ -329,6 +329,98 @@ def test_visual_search_mode_selects_siglip2_and_fuses_both_with_rrf(tmp_path: Pa
     assert {source["collection"] for source in semantic_hit["sources"]} == {"clip_vectors", "siglip2_vectors"}
     assert "clip_vectors" in vector_client.calls
     assert "siglip2_vectors" in vector_client.calls
+
+    db.close()
+
+
+def test_result_diversification_prioritizes_videos_and_separated_frames(tmp_path: Path) -> None:
+    db, service, _dataset = _build_fixture(tmp_path)
+    frames = {frame.keyframe_id: frame for frame in db.query(Frame).all()}
+    near_frame = Frame(
+        keyframe_id="L30_V001_F000007",
+        video_id=frames["L30_V001_F000005"].video_id,
+        frame_idx=7,
+        timestamp_ms=7000,
+        quality_score=1.0,
+    )
+
+    def scored(frame: Frame, score: float) -> FrameScore:
+        return FrameScore(
+            frame=frame,
+            semantic_score=score,
+            text_score=0.0,
+            quality_score=1.0,
+            weighted_score=score,
+            rrf_score=0.0,
+            final_score=score,
+        )
+
+    ranked = [
+        scored(frames["L30_V001_F000005"], 0.99),
+        scored(near_frame, 0.98),
+        scored(frames["L30_V001_F000020"], 0.97),
+        scored(frames["L30_V002_F000012"], 0.96),
+    ]
+    diversified = service._diversify_ranked_frames(  # noqa: SLF001 - validates final presentation ordering.
+        ranked,
+        {
+            "result_diversification": {
+                "enabled": True,
+                "max_frames_per_video": 2,
+                "min_frame_gap_ms": 5000,
+                "min_frame_gap": 1,
+            }
+        },
+    )
+
+    assert [item.frame.keyframe_id for item in diversified[:3]] == [
+        "L30_V001_F000005",
+        "L30_V002_F000012",
+        "L30_V001_F000020",
+    ]
+    assert diversified[-1].frame.keyframe_id == "L30_V001_F000007"
+
+    db.close()
+
+
+def test_semantic_search_batches_variants_once_per_embedding_model(tmp_path: Path) -> None:
+    db, service, _dataset = _build_fixture(tmp_path)
+
+    class BatchOnlyEmbedder:
+        def __init__(self) -> None:
+            self.batches: list[list[str]] = []
+
+        def embed_text(self, text: str) -> list[float]:
+            raise AssertionError(f"Expected batch embedding, received scalar call for {text!r}")
+
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            self.batches.append(texts)
+            return [[1.0] for _ in texts]
+
+    embedder = BatchOnlyEmbedder()
+    service.model_registry.embedders = {"batch_model": embedder}  # type: ignore[dict-item]
+    profile = {
+        "visual_models": {
+            "batch_model": {
+                "model_key": "batch_model",
+                "collection": "clip_vectors",
+                "weight": 1.0,
+                "enabled": True,
+            }
+        },
+        "rrf": {"enabled": False, "k": 60},
+    }
+
+    scores, backend_error = service._semantic_scores(  # noqa: SLF001 - verifies batching boundary.
+        variants=["presenter in studio", "television news set", "woman speaking"],
+        top_k=3,
+        dataset_video_ids=set(),
+        profile=profile,
+    )
+
+    assert backend_error is False
+    assert embedder.batches == [["presenter in studio", "television news set", "woman speaking"]]
+    assert scores
 
     db.close()
 
