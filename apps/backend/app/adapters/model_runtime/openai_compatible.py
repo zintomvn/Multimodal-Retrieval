@@ -27,27 +27,37 @@ class OpenAICompatibleTextEmbedder(TextImageEmbedder):
         self.l2_normalize = l2_normalize
 
     def embed_text(self, text: str) -> list[float]:
+        values = self.embed_texts([text])
+        return values[0] if values else []
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
         payload = self._post(
             "/embeddings",
             {
                 "model": self.model,
-                "input": text,
+                "input": texts,
             },
         )
         data = payload.get("data") or []
-        if not data:
-            return []
-        vector = data[0].get("embedding")
-        if not isinstance(vector, list):
-            return []
-        values = [float(value) for value in vector]
-        if self.expected_dim and len(values) != self.expected_dim:
+        if not isinstance(data, list) or len(data) != len(texts):
             raise ValueError(
-                f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(values)} for model '{self.model}'."
+                f"Embedding response count mismatch: expected {len(texts)}, got {len(data) if isinstance(data, list) else 0}."
             )
-        if self.l2_normalize:
-            values = self._normalize(values)
-        return values
+        ordered = sorted(data, key=lambda item: int(item.get("index", 0)) if isinstance(item, dict) else 0)
+        vectors: list[list[float]] = []
+        for item in ordered:
+            vector = item.get("embedding") if isinstance(item, dict) else None
+            if not isinstance(vector, list):
+                raise ValueError(f"Embedding response for model '{self.model}' has no vector.")
+            values = [float(value) for value in vector]
+            if self.expected_dim and len(values) != self.expected_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(values)} for model '{self.model}'."
+                )
+            vectors.append(self._normalize(values) if self.l2_normalize else values)
+        return vectors
 
     def embed_image_uri(self, image_uri: str) -> list[float]:
         # Fallback to text embedding for URI form. Real multimodal image embedding

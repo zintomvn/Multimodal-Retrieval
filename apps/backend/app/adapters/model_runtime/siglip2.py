@@ -31,14 +31,20 @@ class Siglip2TextEmbedder(TextImageEmbedder):
         self._lock = Lock()
 
     def embed_text(self, text: str) -> list[float]:
-        value = text.strip()
-        if not value:
+        if not text.strip():
+            return []
+        vectors = self.embed_texts([text])
+        return vectors[0] if vectors else []
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        values_to_embed = [text.strip() for text in texts]
+        if not values_to_embed:
             return []
         self._ensure_loaded()
 
         import torch
 
-        inputs = self.processor(text=[value], padding="max_length", truncation=True, return_tensors="pt")
+        inputs = self.processor(text=values_to_embed, padding="max_length", truncation=True, return_tensors="pt")
         inputs = {
             key: item.to(self.device) if hasattr(item, "to") else item
             for key, item in inputs.items()
@@ -49,16 +55,17 @@ class Siglip2TextEmbedder(TextImageEmbedder):
             else:
                 output = self.model(**inputs)
         tensor = output if isinstance(output, torch.Tensor) else output.pooler_output
-        values = tensor.detach().cpu().float().numpy()[0].astype("float32").tolist()
-
-        if self.expected_dim and len(values) != self.expected_dim:
-            raise ValueError(
-                f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(values)} "
-                f"for model '{self.model_name}'."
-            )
-        if self.l2_normalize:
-            values = self._normalize(values)
-        return values
+        matrix = tensor.detach().cpu().float().numpy()
+        vectors: list[list[float]] = []
+        for row in matrix:
+            values = row.astype("float32").tolist()
+            if self.expected_dim and len(values) != self.expected_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(values)} "
+                    f"for model '{self.model_name}'."
+                )
+            vectors.append(self._normalize(values) if self.l2_normalize else values)
+        return vectors
 
     def embed_image_uri(self, image_uri: str) -> list[float]:
         raise RuntimeError("SigLIP2 image embedding from URI is not implemented in the backend adapter.")

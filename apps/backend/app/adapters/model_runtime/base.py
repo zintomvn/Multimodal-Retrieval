@@ -19,6 +19,10 @@ class TextImageEmbedder(ABC):
     def embed_text(self, text: str) -> list[float]:
         raise NotImplementedError
 
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed a query batch; adapters may override this for one network/model call."""
+        return [self.embed_text(text) for text in texts]
+
     @abstractmethod
     def embed_image_uri(self, image_uri: str) -> list[float]:
         raise NotImplementedError
