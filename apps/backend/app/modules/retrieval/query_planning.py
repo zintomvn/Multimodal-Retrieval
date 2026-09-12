@@ -86,6 +86,10 @@ class QueryPlanningResult:
     text_variants: list[str] = field(default_factory=list)
     temporal_events: list[str] = field(default_factory=list)
     temporal_anchor_index: int | None = None
+    temporal_intent: str = "single_event"
+    target_scope: str = "frame"
+    anchor_policy: str = "inferred"
+    temporal_edges: list[dict[str, Any]] = field(default_factory=list)
     retrieval_weights: dict[str, float] = field(default_factory=dict)
     retrieval_weight_source: str = "profile"
     text_source_weights: dict[str, float] = field(default_factory=dict)
@@ -105,6 +109,10 @@ class QueryPlanningResult:
             "decomposition": self.decomposition,
             "temporal_events": self.temporal_events,
             "temporal_anchor_index": self.temporal_anchor_index,
+            "temporal_intent": self.temporal_intent,
+            "target_scope": self.target_scope,
+            "anchor_policy": self.anchor_policy,
+            "temporal_edges": self.temporal_edges,
             "multi_views": self.multi_views or self.variants,
             "variants": self.variants,
             "text_variants": self.text_variants,
@@ -508,6 +516,20 @@ class AgentQueryPlanner:
         temporal_events = self._prefer_english_temporal_events(query, temporal_events, self._max_temporal_events())
         temporal_event_plans = self._extract_temporal_event_plans(raw_plan, temporal_events, query_type, max_variants)
         temporal_anchor_index = self._extract_temporal_anchor_index(raw_plan, len(temporal_events))
+        temporal_intent = str(raw_plan.get("temporal_intent") or ("ordered_sequence" if len(temporal_events) > 1 else "single_event"))
+        if temporal_intent not in {"single_event", "ordered_sequence", "narrative_sequence"}:
+            temporal_intent = "single_event"
+        # Preserve legacy planners that only supplied an anchor.  DEV receives an
+        # explicit scope from the updated prompt; no scope means frame semantics.
+        target_scope = str(raw_plan.get("target_scope") or "frame")
+        if target_scope not in {"frame", "video_sequence"}:
+            target_scope = "frame"
+        anchor_policy = str(raw_plan.get("anchor_policy") or ("none" if target_scope == "video_sequence" else "inferred"))
+        if anchor_policy not in {"explicit", "inferred", "none"}:
+            anchor_policy = "inferred"
+        if target_scope == "video_sequence":
+            temporal_anchor_index = None
+        temporal_edges = self._extract_temporal_edges(raw_plan, len(temporal_events))
         summary = str(raw_plan.get("summary") or "")
         summary_rewrite = self._english_retrieval_rewrite(query)
         if summary_rewrite:
@@ -527,6 +549,10 @@ class AgentQueryPlanner:
             text_variants=text_variants,
             temporal_events=temporal_events,
             temporal_anchor_index=temporal_anchor_index,
+            temporal_intent=temporal_intent,
+            target_scope=target_scope,
+            anchor_policy=anchor_policy,
+            temporal_edges=temporal_edges,
             retrieval_weights=retrieval_strategy["weights"],
             retrieval_weight_source=retrieval_strategy["weight_source"],
             text_source_weights=retrieval_strategy["text_source_weights"],
@@ -537,6 +563,10 @@ class AgentQueryPlanner:
                 "retrieval_strategy": retrieval_strategy,
                 "temporal_event_plans": temporal_event_plans,
                 "temporal_anchor_index": temporal_anchor_index,
+                "temporal_intent": temporal_intent,
+                "target_scope": target_scope,
+                "anchor_policy": anchor_policy,
+                "temporal_edges": temporal_edges,
                 "raw_temporal_events": raw_plan.get("temporal_events") if isinstance(raw_plan.get("temporal_events"), list) else [],
             },
             agent_metadata=metadata,
@@ -558,6 +588,11 @@ class AgentQueryPlanner:
             for index, event in enumerate(temporal_events, start=1)
         ]
         temporal_anchor_index = self._extract_temporal_anchor_index({}, len(temporal_events))
+        temporal_intent = "ordered_sequence" if len(temporal_events) > 1 else "single_event"
+        temporal_edges = [
+            {"from_event": index, "to_event": index + 1, "relation": "after", "gap_class": "unknown"}
+            for index in range(1, len(temporal_events))
+        ]
         return QueryPlanningResult(
             language="auto",
             intent=query_type,
@@ -567,6 +602,10 @@ class AgentQueryPlanner:
             text_variants=[query] if query else [],
             temporal_events=temporal_events,
             temporal_anchor_index=temporal_anchor_index,
+            temporal_intent=temporal_intent,
+            target_scope="video_sequence" if len(temporal_events) > 1 else "frame",
+            anchor_policy="none" if len(temporal_events) > 1 else "inferred",
+            temporal_edges=temporal_edges,
             retrieval_weights=retrieval_strategy["weights"],
             retrieval_weight_source=retrieval_strategy["weight_source"],
             text_source_weights=retrieval_strategy["text_source_weights"],
@@ -587,6 +626,10 @@ class AgentQueryPlanner:
                 "retrieval_strategy": retrieval_strategy,
                 "temporal_event_plans": temporal_event_plans,
                 "temporal_anchor_index": temporal_anchor_index,
+                "temporal_intent": temporal_intent,
+                "target_scope": "video_sequence" if len(temporal_events) > 1 else "frame",
+                "anchor_policy": "none" if len(temporal_events) > 1 else "inferred",
+                "temporal_edges": temporal_edges,
                 "raw_temporal_events": [],
             },
             agent_metadata=self._agent_metadata(),
@@ -741,6 +784,10 @@ class AgentQueryPlanner:
             except (TypeError, ValueError):
                 importance = 1.0
             text_query = " ".join(str(raw_event.get("text_query") or "").split())
+            try:
+                diagnostic_prior = float(raw_event.get("diagnostic_prior", importance))
+            except (TypeError, ValueError):
+                diagnostic_prior = importance
             evidence_query = text_query or event_query
             resolved_text_weights = text_source_weights or fallback["text_source_weights"]
             if not text_source_weights:
@@ -756,6 +803,7 @@ class AgentQueryPlanner:
                     "semantic_views": semantic_views,
                     "text_views": text_views,
                     "importance": round(min(1.0, max(0.0, importance)), 4),
+                    "diagnostic_prior": round(min(1.0, max(0.0, diagnostic_prior)), 4),
                     "retrieval_weights": weights or fallback["retrieval_weights"],
                     "retrieval_weight_source": "agent" if weights else fallback["retrieval_weight_source"],
                     "text_source_weights": resolved_text_weights,
@@ -793,6 +841,24 @@ class AgentQueryPlanner:
             return value
         return max(1, (event_count + 1) // 2)
 
+    @staticmethod
+    def _extract_temporal_edges(raw_plan: dict[str, Any], event_count: int) -> list[dict[str, Any]]:
+        values = raw_plan.get("temporal_edges")
+        edges: list[dict[str, Any]] = []
+        if isinstance(values, list):
+            for item in values:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    source, target = int(item.get("from_event")), int(item.get("to_event"))
+                except (TypeError, ValueError):
+                    continue
+                relation = str(item.get("relation") or "after")
+                gap_class = str(item.get("gap_class") or "unknown")
+                if 1 <= source < target <= event_count and relation in {"after", "before", "unknown"} and gap_class in {"short", "medium", "loose", "unknown"}:
+                    edges.append({"from_event": source, "to_event": target, "relation": relation, "gap_class": gap_class})
+        return edges or [{"from_event": index, "to_event": index + 1, "relation": "after", "gap_class": "unknown"} for index in range(1, event_count)]
+
     def _heuristic_temporal_event_plan(self, query: str, index: int, query_type: str) -> dict[str, Any]:
         strategy = self.infer_retrieval_strategy(query, query_type)
         return {
@@ -803,6 +869,7 @@ class AgentQueryPlanner:
             "semantic_views": [query],
             "text_views": [query],
             "importance": 1.0,
+            "diagnostic_prior": 0.5,
             "retrieval_weights": strategy["weights"],
             "retrieval_weight_source": strategy["weight_source"],
             "text_source_weights": strategy["text_source_weights"],

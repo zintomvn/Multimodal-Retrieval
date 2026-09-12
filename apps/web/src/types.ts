@@ -61,8 +61,17 @@ export interface SearchResponse {
     temporal_event_count?: number;
     temporal_event_source?: string;
     temporal_mode?: boolean;
-    temporal_strategy?: "vortex_k_context" | "aithena_weighted_ats" | null;
+    temporal_strategy?: "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search" | null;
     temporal_anchor_index?: number;
+    temporal_intent?: "single_event" | "ordered_sequence" | "narrative_sequence" | string;
+    target_scope?: "frame" | "video_sequence" | string;
+    anchor_policy?: "explicit" | "inferred" | "none" | string;
+    temporal_edges?: Array<{
+      from_event?: number;
+      to_event?: number;
+      relation?: "after" | "before" | "unknown" | string;
+      gap_class?: "short" | "medium" | "loose" | "unknown" | string;
+    }>;
     retrieval_weights?: { visual?: number; text?: number };
     retrieval_weight_source?: string;
     text_source_weights?: { asr?: number; caption?: number; ocr?: number };
@@ -87,6 +96,7 @@ export interface SearchResponse {
       semantic_views?: string[];
       text_views?: string[];
       importance?: number;
+      diagnostic_prior?: number;
       retrieval_weights?: { visual?: number; text?: number };
       retrieval_weight_source?: string;
       text_source_weights?: { asr?: number; caption?: number; ocr?: number };

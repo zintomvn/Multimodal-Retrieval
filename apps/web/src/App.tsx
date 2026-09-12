@@ -868,7 +868,7 @@ function makeTraceFromResponse(
       title: "Temporal reasoning",
       detail:
         temporalEvents.length > 1
-          ? `The plan separates this request into ordered moments. Embedding/captioning (English): ${summarizeList(temporalEvents, "-")} | ASR/OCR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
+          ? `${normalized.temporal_strategy === "dev_first_search" ? `DEV-first / ${normalized.target_scope ?? "frame"}: diagnostic-event video-first. ` : ""}The plan separates this request into ordered moments. Embedding/captioning (English): ${summarizeList(temporalEvents, "-")} | ASR/OCR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
           : normalized.temporal_mode
             ? "The plan uses the available temporal evidence for this request."
             : "No temporal split needed.",
@@ -1557,7 +1557,7 @@ export function App() {
   const [useMetadata, setUseMetadata] = useState(true);
   const [kisTemporalMode, setKisTemporalMode] = useState(false);
   const [temporalStrategy, setTemporalStrategy] = useState<
-    "vortex_k_context" | "aithena_weighted_ats"
+    "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
   >("vortex_k_context");
   const [visualSearchMode, setVisualSearchMode] =
     useState<VisualSearchMode>("openclip");
@@ -3134,39 +3134,23 @@ export function App() {
                       </label>
                       <div
                         className="visual-strategy"
-                        role="group"
                         aria-label="Visual embedding model"
                       >
-                        <span>Visual</span>
-                        <div className="segmented-control visual-segmented">
-                          <button
-                            type="button"
-                            className={
-                              visualSearchMode === "openclip" ? "active" : ""
-                            }
-                            onClick={() => setVisualSearchMode("openclip")}
-                          >
-                            OpenCLIP
-                          </button>
-                          <button
-                            type="button"
-                            className={
-                              visualSearchMode === "siglip2" ? "active" : ""
-                            }
-                            onClick={() => setVisualSearchMode("siglip2")}
-                          >
-                            SigLIP2
-                          </button>
-                          <button
-                            type="button"
-                            className={
-                              visualSearchMode === "both" ? "active" : ""
-                            }
-                            onClick={() => setVisualSearchMode("both")}
-                          >
-                            Both
-                          </button>
-                        </div>
+                        <label htmlFor="visual-search-mode">Visual</label>
+                        <select
+                          id="visual-search-mode"
+                          className="strategy-select"
+                          value={visualSearchMode}
+                          onChange={(event) =>
+                            setVisualSearchMode(
+                              event.target.value as VisualSearchMode,
+                            )
+                          }
+                        >
+                          <option value="openclip">OpenCLIP</option>
+                          <option value="siglip2">SigLIP2</option>
+                          <option value="both">OpenCLIP + SigLIP2</option>
+                        </select>
                       </div>
                       {queryType === "KIS" && (
                         <>
@@ -3183,38 +3167,32 @@ export function App() {
                           {kisTemporalMode && (
                             <div
                               className="temporal-strategy"
-                              role="group"
                               aria-label="Temporal strategy"
                             >
-                              <span>Strategy</span>
-                              <div className="segmented-control">
-                                <button
-                                  type="button"
-                                  className={
-                                    temporalStrategy === "vortex_k_context"
-                                      ? "active"
-                                      : ""
-                                  }
-                                  onClick={() =>
-                                    setTemporalStrategy("vortex_k_context")
-                                  }
-                                >
-                                  Strategy 1
-                                </button>
-                                <button
-                                  type="button"
-                                  className={
-                                    temporalStrategy === "aithena_weighted_ats"
-                                      ? "active"
-                                      : ""
-                                  }
-                                  onClick={() =>
-                                    setTemporalStrategy("aithena_weighted_ats")
-                                  }
-                                >
-                                  Strategy 2
-                                </button>
-                              </div>
+                              <label htmlFor="temporal-strategy">
+                                Strategy
+                              </label>
+                              <select
+                                id="temporal-strategy"
+                                className="strategy-select"
+                                value={temporalStrategy}
+                                onChange={(event) =>
+                                  setTemporalStrategy(
+                                    event.target
+                                      .value as typeof temporalStrategy,
+                                  )
+                                }
+                              >
+                                <option value="vortex_k_context">
+                                  Baseline 1
+                                </option>
+                                <option value="aithena_weighted_ats">
+                                  Baseline 2
+                                </option>
+                                <option value="dev_first_search">
+                                  DEV-first
+                                </option>
+                              </select>
                             </div>
                           )}
                         </>

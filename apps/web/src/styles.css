@@ -1469,6 +1469,8 @@ button:disabled {
 
 .visual-strategy {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  align-items: center;
   gap: 8px;
   color: var(--text-2);
   font-size: 12px;
@@ -1484,6 +1486,7 @@ button:disabled {
 
 .temporal-strategy {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
   align-items: center;
   gap: 10px;
   color: var(--text-2);
@@ -1666,6 +1669,28 @@ button:disabled {
   display: grid;
   gap: 10px;
   padding: 10px;
+}
+
+.intelligence-popover .strategy-select {
+  width: 180px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intelligence-popover .strategy-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .export-file-field,

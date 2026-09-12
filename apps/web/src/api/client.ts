@@ -81,7 +81,10 @@ export interface RetrievalSearchInput {
   agentModel?: "gpt-4o" | "gpt-5-nano" | "gpt-5.6-luna";
   useMetadata: boolean;
   temporalMode: boolean;
-  temporalStrategy: "vortex_k_context" | "aithena_weighted_ats";
+  temporalStrategy:
+    | "vortex_k_context"
+    | "aithena_weighted_ats"
+    | "dev_first_search";
   visualSearchMode: VisualSearchMode;
 }
 

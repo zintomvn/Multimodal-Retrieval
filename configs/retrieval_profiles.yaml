@@ -63,6 +63,29 @@ competition_default:
     compactness_weight: 0.35
     gap_penalty: 0.20
     per_video_sequence_limit: 4
+  dev_first:
+    diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45}
+    diagnostic_candidate_frames: 500
+    candidate_video_limit: 40
+    min_candidate_videos: 8
+    video_scoring: {best_weight: 0.55, top_m_mean_weight: 0.30, view_agreement_weight: 0.15, top_m: 3}
+    event_retrieval: {initial_top_k: 200, max_top_k: 1000, widening_factor: 2, min_candidates_per_event: 20}
+    event_nms_window_ms: 2500
+    per_video_candidate_min_gap_ms: 1500
+    per_event_per_video_limit: 12
+    sequence_beam_width: 200
+    max_sequences_per_video: 3
+    sequence_nms_window_ms: 3000
+    min_match_ratio: 0.50
+    temporal_gap_classes:
+      short: {max_gap_ms: 45000}
+      medium: {max_gap_ms: 120000}
+      loose: {max_gap_ms: 300000}
+      unknown: {max_gap_ms: null}
+    score_calibration: {relative_weight: 0.60, absolute_weight: 0.20, hybrid_weight: 0.20}
+    sequence_scoring: {evidence_weight: 0.55, coverage_weight: 0.20, strong_coverage_weight: 0.10, diagnostic_weight: 0.05, missing_penalty_weight: 0.10, temporal_gap_penalty_weight: 0.10}
+    strong_match_threshold: 0.55
+    representative_frame_policy: highest_confidence_matched_event
 
 semantic_fast:
   semantic_weight: 0.85

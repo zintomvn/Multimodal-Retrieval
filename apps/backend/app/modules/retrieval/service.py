@@ -24,6 +24,15 @@ from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
+from app.modules.temporal.dev_first import (
+    DevFirstCandidate,
+    build_dev_first_sequences,
+    calibrate_candidates,
+    event_probe,
+    score_candidate_videos,
+    select_diagnostic_event,
+    temporal_nms,
+)
 from app.modules.temporal.vortex import vortex_k_context_rerank
 
 
@@ -341,11 +350,16 @@ class RetrievalService:
             )
             if event_multi_views:
                 semantic_variants = event_multi_views
+        target_scope = str(getattr(agent_plan, "target_scope", "frame") or "frame") if temporal_source == "agent" else "frame"
+        if target_scope not in {"frame", "video_sequence"}:
+            target_scope = "frame"
         temporal_anchor_index = self._resolve_temporal_anchor_index(
             request.options,
             agent_plan if temporal_source == "agent" else None,
             len(temporal_events),
         )
+        if temporal_kis and request.options.temporal_strategy == "dev_first_search" and target_scope == "video_sequence":
+            temporal_anchor_index = None
         normalized = {
             "language": agent_plan.language if agent_plan else "auto",
             "multi_views": semantic_variants,
@@ -361,9 +375,13 @@ class RetrievalService:
             "temporal_mode": temporal_kis,
             "temporal_strategy": request.options.temporal_strategy if temporal_kis else None,
             "temporal_anchor_index": temporal_anchor_index,
+            "temporal_intent": getattr(agent_plan, "temporal_intent", "single_event") if agent_plan else "single_event",
+            "target_scope": target_scope,
+            "anchor_policy": getattr(agent_plan, "anchor_policy", "inferred") if agent_plan else "inferred",
+            "temporal_edges": getattr(agent_plan, "temporal_edges", []) if agent_plan else [],
             "temporal_retrieval": {
                 "enabled": temporal_kis,
-                "independent_event_searches": len(temporal_events) if temporal_kis else 0,
+                "independent_event_searches": len(temporal_events) if temporal_kis and request.options.temporal_strategy != "dev_first_search" else 0,
                 "multi_view_event_searches": sum(
                     len(plan.get("multi_views", []) or [plan.get("query")])
                     for plan in temporal_event_plans
@@ -820,6 +838,8 @@ class RetrievalService:
             return parsed_events or [request.query_text.strip()], temporal_parse.source
 
         if request.options.temporal_mode and len(parsed_events) > 1 and len(agent_events) < len(parsed_events):
+            if request.options.temporal_strategy == "dev_first_search" and agent_events:
+                return agent_events, "agent"
             return parsed_events, temporal_parse.source
         if agent_events:
             return agent_events, "agent"
@@ -914,6 +934,157 @@ class RetrievalService:
 
     # 2. Search temporal
 
+    def _search_dev_first_kis(
+        self,
+        run: QueryRun,
+        dataset: Dataset,
+        request: SearchRequest,
+        normalized: dict[str, Any],
+    ) -> list[ResultItem]:
+        """DEV: probe globally, choose a diagnostic event, then sequence by time."""
+        events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
+        plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
+        plans = [plan if isinstance(plan, dict) else {} for plan in plans]
+        while len(plans) < len(events):
+            plans.append({"query": events[len(plans)], "importance": 1.0, "diagnostic_prior": 0.5})
+        profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
+        config = profile.get("dev_first", {}) if isinstance(profile.get("dev_first"), dict) else {}
+        probe_cfg = config.get("diagnostic_probe", {}) if isinstance(config.get("diagnostic_probe"), dict) else {}
+        probe_top_k = max(1, int(probe_cfg.get("top_k_per_event", 40)))
+        calibration = config.get("score_calibration", {}) if isinstance(config.get("score_calibration"), dict) else {}
+
+        def retrieve(event_index: int, top_k: int) -> list[DevFirstCandidate]:
+            plan = plans[event_index - 1]
+            query = events[event_index - 1]
+            semantic_views = self._event_semantic_views(plan, query, max_views=8)
+            text_views = self._event_text_views(plan, str(plan.get("text_query") or query), max_views=8)
+            weights = self._normalize_retrieval_weights(plan.get("retrieval_weights")) or normalized.get("retrieval_weights")
+            text_weights = self._normalize_text_source_weights(plan.get("text_source_weights")) or self._normalize_text_source_weights(normalized.get("text_source_weights"))
+            ranked = self._rank_frames_multiperspective(
+                dataset=dataset, semantic_views=semantic_views, text_views=text_views,
+                query_text=text_views[0] if text_views else query, profile_name=request.profile,
+                options=request.options, top_k=top_k, retrieval_weights=weights,
+                use_agent_retrieval_weights=str(plan.get("retrieval_weight_source") or "") == "agent",
+                text_source_weights=text_weights,
+            )
+            raw = [
+                DevFirstCandidate(
+                    frame_id=item.frame.id, video_id=item.frame.video_id, video_code=item.frame.video.video_code,
+                    frame_idx=item.frame.frame_idx, event_index=event_index, event_query=query,
+                    timestamp_ms=item.frame.timestamp_ms if item.frame.timestamp_ms is not None else None,
+                    final_retrieval_score=item.final_score, semantic_raw_score=None,
+                    text_raw_score=None, rrf_score=item.rrf_score,
+                )
+                for item in ranked
+            ]
+            return calibrate_candidates(raw, calibration)
+
+        probes = [retrieve(index, probe_top_k) for index in range(1, len(events) + 1)]
+        diagnostic_index, diagnostics = select_diagnostic_event(
+            plans,
+            [event_probe(candidates, probe_top_k) for candidates in probes],
+            config,
+        )
+        diagnostic = temporal_nms(
+            retrieve(diagnostic_index, max(probe_top_k, int(config.get("diagnostic_candidate_frames", 500)))),
+            int(config.get("event_nms_window_ms", 2500)),
+        )
+        video_ranking = score_candidate_videos(diagnostic, config)
+        candidate_limit = max(1, int(config.get("candidate_video_limit", 40)))
+        candidate_video_ids = {video_id for video_id, _score in video_ranking[:candidate_limit]}
+        fallback_stages: list[str] = []
+        if len(candidate_video_ids) < int(config.get("min_candidate_videos", 8)):
+            fallback_stages.append("global_event_retrieval")
+
+        event_cfg = config.get("event_retrieval", {}) if isinstance(config.get("event_retrieval"), dict) else {}
+        initial_top_k = max(1, int(event_cfg.get("initial_top_k", 200)))
+        max_top_k = max(initial_top_k, int(event_cfg.get("max_top_k", 1000)))
+        widening = max(2, int(event_cfg.get("widening_factor", 2)))
+        minimum = max(1, int(event_cfg.get("min_candidates_per_event", 20)))
+        candidate_sets: list[list[DevFirstCandidate]] = []
+        event_summaries: list[dict[str, Any]] = []
+        for event_index, query in enumerate(events, start=1):
+            if event_index == diagnostic_index:
+                candidates = diagnostic
+            else:
+                current_top_k = initial_top_k
+                candidates = []
+                while True:
+                    found = retrieve(event_index, current_top_k)
+                    filtered = [item for item in found if not candidate_video_ids or item.video_id in candidate_video_ids]
+                    candidates = filtered if filtered or candidate_video_ids else found
+                    if len(candidates) >= minimum or current_top_k >= max_top_k:
+                        break
+                    current_top_k = min(max_top_k, current_top_k * widening)
+                if not candidates and candidate_video_ids:
+                    # Recall recovery remains DEV scoring, never ATS/Vortex.
+                    candidates = retrieve(event_index, max_top_k)
+                    fallback_stages.append(f"global_recovery_event_{event_index}")
+            candidates = temporal_nms(
+                candidates,
+                int(config.get("per_video_candidate_min_gap_ms", 1500)),
+                int(config.get("per_event_per_video_limit", 12)),
+            )
+            candidate_sets.append(candidates)
+            plan = plans[event_index - 1]
+            event_summaries.append({
+                "event_index": event_index, "query": query,
+                "multi_views": self._event_semantic_views(plan, query, max_views=8),
+                "candidate_count": len(candidates), "importance": round(float(plan.get("importance", 1.0)), 4),
+                "diagnostic_prior": round(float(plan.get("diagnostic_prior", 0.5)), 4),
+            })
+
+        weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in plans[:len(events)]]
+        if not weights or sum(weights) <= 0:
+            weights = [1.0] * len(events)
+        ratio = max(0.0, min(1.0, float(config.get("min_match_ratio", 0.5))))
+        min_match = request.options.min_match or max(1, math.ceil(len(events) * ratio))
+        sequences = build_dev_first_sequences(
+            candidate_sets, weights, diagnostic_index,
+            normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
+            config, min_match, max(request.top_k * 4, request.top_k),
+        )
+        target_scope = str(normalized.get("target_scope") or "frame")
+        anchor_index = normalized.get("temporal_anchor_index")
+        if target_scope == "frame" and anchor_index:
+            sequences = [sequence for sequence in sequences if any(item.event_index == anchor_index for item in sequence.candidates)]
+        sequences = sequences[:request.top_k]
+        ids = {candidate.frame_id for sequence in sequences for candidate in sequence.candidates}
+        frames = {frame.id: frame for frame in self.db.query(Frame).options(joinedload(Frame.video)).filter(Frame.id.in_(ids)).all()} if ids else {}
+        coordinate = "timestamp_ms" if all(candidate.timestamp_ms is not None for candidates in candidate_sets for candidate in candidates) else "frame_idx_fallback"
+        items: list[ResultItem] = []
+        for rank, sequence in enumerate(sequences, start=1):
+            representative = max(sequence.candidates, key=lambda item: item.calibrated_event_score)
+            frame = frames.get(representative.frame_id)
+            if frame is None:
+                continue
+            sequence_frames = [{
+                "frame_id": item.frame_id, "frame_idx": item.frame_idx, "video_code": item.video_code,
+                "timestamp_ms": item.timestamp_ms, "score": round(item.calibrated_event_score, 4),
+                "event_index": item.event_index, "event_query": item.event_query,
+                "thumbnail_url": f"/api/media/frames/{item.frame_id}/thumbnail",
+                "image_url": self._browser_image_url(frames.get(item.frame_id)),
+            } for item in sequence.candidates]
+            result = RetrievalResult(
+                id=new_id(), query_run_id=run.id, rank=rank, video_id=sequence.video_id,
+                frame_id=representative.frame_id, score=sequence.score,
+                score_breakdown={
+                    "temporal_score": round(sequence.score, 6), "final_score": round(sequence.score, 6),
+                    "temporal_reranker": "dev_first_search", "temporal_strategy": "dev_first_search",
+                    "target_scope": target_scope, "representative_frame_policy": config.get("representative_frame_policy", "highest_confidence_matched_event"),
+                    "representative_event_index": representative.event_index, "diagnostic_event_index": diagnostic_index,
+                    "diagnostic_events": diagnostics, "candidate_video_count": len(candidate_video_ids),
+                    "fallback_stages": fallback_stages, "matched_events": len(sequence.candidates),
+                    "expected_events": len(events), "min_match": min_match, "event_queries": event_summaries,
+                    "event_weights": [round(weight, 6) for weight in weights], "temporal_coordinate": coordinate,
+                    "sequence_evidence": sequence.details,
+                }, sequence_frames=sequence_frames,
+            )
+            result.frame, result.video = frame, frame.video
+            self.db.add(result)
+            items.append(self._result_to_item(result))
+        return items
+
     def _search_temporal_kis(
         self,
         run: QueryRun,
@@ -921,6 +1092,8 @@ class RetrievalService:
         request: SearchRequest,
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
+        if request.options.temporal_strategy == "dev_first_search":
+            return self._search_dev_first_kis(run, dataset, request, normalized)
         events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
         event_plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
 

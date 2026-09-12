@@ -111,11 +111,16 @@ llm_query_planning:
               ],
               "must_have": ["critical factors for this event"],
               "importance": 1.0,
+              "diagnostic_prior": 0.0,
               "retrieval_weights": {"visual": 0.0, "text": 0.0},
               "text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0}
             }
           ],
+          "temporal_intent": "single_event|ordered_sequence|narrative_sequence",
+          "target_scope": "frame|video_sequence",
+          "anchor_policy": "explicit|inferred|none",
           "temporal_anchor_index": 1,
+          "temporal_edges": [{"from_event": 1, "to_event": 2, "relation": "after", "gap_class": "short|medium|loose|unknown"}],
           "multi_views": [
             {
               "text": "concise retrieval rewrite",
@@ -141,7 +146,7 @@ llm_query_planning:
         - Translate abstract descriptions into concrete, observable visual terms chosen from the user query itself. Do not use a fixed domain vocabulary or example-specific scene/object mappings.
         - Keep each multi-view rewrite under 24 words.
         - Make the first root multi-view the best concise English retrieval rewrite, not the raw Vietnamese query.
-        - When `temporal_kis` is true for a KIS request, this rule overrides the simple-KIS rule: first split the query into 2 to 8 chronological standalone events whenever the query contains a before/after relation, a process, or a contextual target; then create 1 to `max_variants` (the requested maximum view count) AIThena-style `multi_views` for each event. Include the requested target moment as one event and set `temporal_anchor_index` (1-based) to that target event. Do not use only previous/current/next; represent every useful event in the inferred k-event chain. When a visual element is said to appear repeatedly, emit separate events for the visible reveals; do not collapse the count into one abstract event. Every event MUST contain English `query` and event-level English `multi_views` for embedding/captioning plus Vietnamese `text_query`/`text_views` for ASR/OCR. The backend independently retrieves every event from its own multi-views and reranks the full n-event candidate chain, so never merge event descriptions. Do not invent context: return one event only when no supported before/after context can be inferred.
+        - When `temporal_kis` is true for a KIS request, always decide whether the query has one event, an explicit ordered sequence, or an implicit narrative sequence. Narrative scene changes across sentences can be chronological even without cue words. Split only independently retrievable visual moments (2 to 8 events) and create event-level English multi_views plus Vietnamese text views. Set `temporal_intent`, a [0,1] `diagnostic_prior` relative to this chain, and one edge per adjacent event using a semantic gap class; never invent exact durations. Use `target_scope=video_sequence`, `anchor_policy=none`, and null anchor when the whole clip is described; never choose the middle event as a semantic target. Use `target_scope=frame` and an explicit 1-based anchor only when the user identifies a requested moment. Do not invent context: return one event only when no supported transition can be inferred.
         - For KIS/QA when `temporal_kis` is false, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
         - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
