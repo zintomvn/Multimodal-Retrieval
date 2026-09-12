@@ -3197,7 +3197,7 @@ export function App() {
                           )}
                         </>
                       )}
-                      <button
+                      {/* <button
                         type="button"
                         className="reserved-slot"
                         disabled
@@ -3208,7 +3208,7 @@ export function App() {
                         className="reserved-slot"
                         disabled
                         aria-label="Future reranker slot"
-                      />
+                      /> */}
                     </div>
                   )}
                 </div>
