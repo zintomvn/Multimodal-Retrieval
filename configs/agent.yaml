@@ -29,6 +29,29 @@ llm_query_planning:
       min_request_interval_s: 5.0
       cache_ttl_s: 600
       description: OpenAI API profile for higher-quality planning and future multimodal routing.
+    openai_gpt5_nano:
+      provider: openai
+      model: gpt-5-nano
+      api_key_env: OPENAI_API_KEY
+      temperature: 0.05
+      max_tokens: 2048
+      timeout_s: 30
+      max_retries: 5
+      min_request_interval_s: 1.0
+      cache_ttl_s: 600
+      description: Low-latency OpenAI reasoning profile for simple query planning.
+    openai_gpt56_luna:
+      provider: openai
+      model: gpt-5.6-luna
+      api_key_env: OPENAI_API_KEY
+      base_url_env: AGENT_GPT56_LUNA_BASE_URL
+      requires_base_url: true
+      temperature: 0.05
+      max_tokens: 2048
+      timeout_s: 30
+      max_retries: 2
+      cache_ttl_s: 600
+      description: Optional OpenAI-compatible gateway profile; requires a configured endpoint that serves gpt-5.6-luna.
   langsmith:
     enabled: true
     api_key_env: LANGSMITH_API_KEY

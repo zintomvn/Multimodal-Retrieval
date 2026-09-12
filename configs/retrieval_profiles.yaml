@@ -23,6 +23,14 @@ competition_default:
   query_expansion:
     enabled_default: true
     max_variants: 5
+  result_diversification:
+    enabled: true
+    max_frames_per_video: 1
+    min_frame_gap_ms: 10000
+    min_frame_gap: 300
+    candidate_pool_multiplier: 20
+    min_candidate_pool: 500
+    max_candidate_pool: 1000
   milvus:
     collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
     model_key: clip_vith14_quickgelu_dfn5b_v2
@@ -67,6 +75,14 @@ semantic_fast:
   query_expansion:
     enabled_default: false
     max_variants: 1
+  result_diversification:
+    enabled: true
+    max_frames_per_video: 1
+    min_frame_gap_ms: 10000
+    min_frame_gap: 300
+    candidate_pool_multiplier: 20
+    min_candidate_pool: 500
+    max_candidate_pool: 1000
   milvus:
     collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
     model_key: clip_vith14_quickgelu_dfn5b_v2
@@ -135,6 +151,14 @@ competition_mvp_v1:
     enabled_default: true
     max_variants: 5
     decompose_temporal: true
+  result_diversification:
+    enabled: true
+    max_frames_per_video: 1
+    min_frame_gap_ms: 10000
+    min_frame_gap: 300
+    candidate_pool_multiplier: 20
+    min_candidate_pool: 500
+    max_candidate_pool: 1000
   milvus:
     collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
     model_key: clip_vith14_quickgelu_dfn5b_v2
