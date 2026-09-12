@@ -1,4 +1,4 @@
-# Technical Report: Multimodal Video Retrieval System
+# Technical Report: Multimodal Video Retrieval System (Version 1)
 
 ## 1. Executive Summary
 
@@ -37,28 +37,28 @@ and trace payload used by the UI.
 
 ### 2.1 Supported search modes
 
-| Mode | User objective | Retrieval and result contract |
-| --- | --- | --- |
-| KIS | Find the keyframe that best matches a description. | Returns independently ranked frame candidates. |
-| QA | Locate visual evidence and answer a concise question. | Retrieves frame evidence, applies QA post-processing, and returns an answer plus supporting video/frame. |
-| TRAKE | Find an ordered sequence of events in one video. | Retrieves event-level candidates, enforces chronological order, and returns `sequence_frames` with one frame per event. |
+| Mode  | User objective                                        | Retrieval and result contract                                                                                           |
+| ----- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| KIS   | Find the keyframe that best matches a description.    | Returns independently ranked frame candidates.                                                                          |
+| QA    | Locate visual evidence and answer a concise question. | Retrieves frame evidence, applies QA post-processing, and returns an answer plus supporting video/frame.                |
+| TRAKE | Find an ordered sequence of events in one video.      | Retrieves event-level candidates, enforces chronological order, and returns `sequence_frames` with one frame per event. |
 
 ### 2.2 Active and planned components
 
-| Component | Current state | Notes |
-| --- | --- | --- |
-| React web application | Active | KIS, QA, TRAKE, reasoning trace, score display, video preview, frame selection, CSV workflow. |
-| FastAPI backend | Active | REST API, retrieval orchestration, media redirects, persistence, and ingest endpoints. |
-| GPT-4o planner | Active when `OPENAI_API_KEY` is configured | Produces structured English-oriented retrieval plans. A deterministic fallback preserves search availability. |
-| Elasticsearch | Active in the local compose stack | ASR and other text fields are indexed for lexical retrieval. |
-| Redis | Active in the local compose stack | Seven-day cached search response history; latest 100 run IDs retained. |
-| Relational database | Active with SQLite in the checked-in local compose file; PostgreSQL/Supabase supported by configuration | PostgreSQL/Supabase is the intended cloud catalog and audit store. |
-| Milvus/Zilliz | Supported by the backend adapter and ingestion flow | May be external to the compact local compose stack; collection schema must be provisioned before vector ingest. |
-| GCS media | Supported and used as the cloud-first media path | Browser receives direct public or signed URLs/redirects. |
-| CLIP/OpenCLIP | Active primary visual registry entry | `clip_vith14_quickgelu_dfn5b_v2` is the default visual model. |
-| SigLIP2 | Registered but disabled | Intended as the second visual collection for RRF fusion after validated feature ingest. |
-| OCR, captions, object detection | Schema and adapters available; not required for current ASR-first text search | Text index can be expanded without changing the search API. |
-| VLM reranking | Configured as an extension point, disabled | Candidate-level VLM verification is a future optimization. |
+| Component                       | Current state                                                                                           | Notes                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| React web application           | Active                                                                                                  | KIS, QA, TRAKE, reasoning trace, score display, video preview, frame selection, CSV workflow.                   |
+| FastAPI backend                 | Active                                                                                                  | REST API, retrieval orchestration, media redirects, persistence, and ingest endpoints.                          |
+| GPT-4o planner                  | Active when `OPENAI_API_KEY` is configured                                                              | Produces structured English-oriented retrieval plans. A deterministic fallback preserves search availability.   |
+| Elasticsearch                   | Active in the local compose stack                                                                       | ASR and other text fields are indexed for lexical retrieval.                                                    |
+| Redis                           | Active in the local compose stack                                                                       | Seven-day cached search response history; latest 100 run IDs retained.                                          |
+| Relational database             | Active with SQLite in the checked-in local compose file; PostgreSQL/Supabase supported by configuration | PostgreSQL/Supabase is the intended cloud catalog and audit store.                                              |
+| Milvus/Zilliz                   | Supported by the backend adapter and ingestion flow                                                     | May be external to the compact local compose stack; collection schema must be provisioned before vector ingest. |
+| GCS media                       | Supported and used as the cloud-first media path                                                        | Browser receives direct public or signed URLs/redirects.                                                        |
+| CLIP/OpenCLIP                   | Active primary visual registry entry                                                                    | `clip_vith14_quickgelu_dfn5b_v2` is the default visual model.                                                   |
+| SigLIP2                         | Registered but disabled                                                                                 | Intended as the second visual collection for RRF fusion after validated feature ingest.                         |
+| OCR, captions, object detection | Schema and adapters available; not required for current ASR-first text search                           | Text index can be expanded without changing the search API.                                                     |
+| VLM reranking                   | Configured as an extension point, disabled                                                              | Candidate-level VLM verification is a future optimization.                                                      |
 
 ## 3. System Architecture
 
@@ -113,16 +113,16 @@ ModelRegistryRecord, IndexBuild, and Job record operational state.
 
 Important tables and responsibilities are:
 
-| Table/model | Responsibility |
-| --- | --- |
-| `Dataset` | Dataset code, version, root URI, state, and corpus boundary. |
-| `Video` | Video identity, code, source URI, duration, and cloud media metadata. |
-| `Shot` and `Frame` | Temporal positions, frame indices, timestamps, quality score, image URI/key, and links to video/shot. |
-| `FrameAnnotation` | Normalized ASR, OCR, captions, object detections, and other searchable annotations. |
-| `QueryRun` | Original query, normalized plan, options, latency, status, and reproducibility record. |
-| `RetrievalResult` | Rank, final score, per-component score breakdown, selected state, QA answer, and TRAKE sequence frames. |
-| `Submission` and `SubmissionItem` | Human-curated submission rows and validation/export state. |
-| `IndexBuild` and `Job` | Ingestion/indexing lifecycle and asynchronous operational tracking. |
+| Table/model                       | Responsibility                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Dataset`                         | Dataset code, version, root URI, state, and corpus boundary.                                            |
+| `Video`                           | Video identity, code, source URI, duration, and cloud media metadata.                                   |
+| `Shot` and `Frame`                | Temporal positions, frame indices, timestamps, quality score, image URI/key, and links to video/shot.   |
+| `FrameAnnotation`                 | Normalized ASR, OCR, captions, object detections, and other searchable annotations.                     |
+| `QueryRun`                        | Original query, normalized plan, options, latency, status, and reproducibility record.                  |
+| `RetrievalResult`                 | Rank, final score, per-component score breakdown, selected state, QA answer, and TRAKE sequence frames. |
+| `Submission` and `SubmissionItem` | Human-curated submission rows and validation/export state.                                              |
+| `IndexBuild` and `Job`            | Ingestion/indexing lifecycle and asynchronous operational tracking.                                     |
 
 ### 4.2 Supabase/PostgreSQL design
 
@@ -223,17 +223,17 @@ erDiagram
 
 The relational tables hold the following minimum operational contract:
 
-| Table | Primary key | Important fields | Constraints and purpose |
-| --- | --- | --- | --- |
-| `datasets` | `dataset_id` | `dataset_code`, `name`, `version`, `root_uri`, `status` | Unique dataset code and unique `(name, version)`. Defines the corpus boundary. |
-| `videos` | `video_id` | `dataset_id`, `video_code`, `uri`, `fps`, `duration_ms`, source feature/map paths | Unique `(dataset_id, video_code)`. Supplies video identity and cloud source. |
-| `shots` | `shot_id` | `video_id`, `shot_index`, start/end frames and seconds | Unique `(video_id, shot_index)` with ordered temporal checks. |
-| `keyframes` | `keyframe_id` | `video_id`, `shot_id`, `frame_idx`, `timestamp_ms`, image URI/key, `map_n`, `embedding_index_0`, quality | Unique `(video_id, frame_idx)`. Canonical join target for all retrieval stores. |
-| `frame_annotations` | UUID `id` | `frame_id`, `kind`, text/JSON value, caption, OCR, detections, confidence, model version | Allows multiple annotation producers and versions per frame. |
-| `events` / `event_keyframes` | `event_id` / `(event_id, seq_no)` | event time boundaries, representative frame, ordered keyframes | Stores shot/event segmentation independently from search-time TRAKE events. |
-| `query_runs` | UUID `id` | raw query, mode, normalized LLM plan, options, status | Durable reproducibility and audit record. |
-| `retrieval_results` | UUID `id` | rank, final score, score breakdown, QA answer, TRAKE sequence JSON, selection flag | Unique `(query_run_id, rank)`. Preserves explainable result evidence. |
-| `submissions` / `submission_items` | UUID `id` | submission state, query name/type, rank, video code, frame indices, answer | Validates and exports selected human-reviewed outputs. |
+| Table                              | Primary key                       | Important fields                                                                                         | Constraints and purpose                                                         |
+| ---------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `datasets`                         | `dataset_id`                      | `dataset_code`, `name`, `version`, `root_uri`, `status`                                                  | Unique dataset code and unique `(name, version)`. Defines the corpus boundary.  |
+| `videos`                           | `video_id`                        | `dataset_id`, `video_code`, `uri`, `fps`, `duration_ms`, source feature/map paths                        | Unique `(dataset_id, video_code)`. Supplies video identity and cloud source.    |
+| `shots`                            | `shot_id`                         | `video_id`, `shot_index`, start/end frames and seconds                                                   | Unique `(video_id, shot_index)` with ordered temporal checks.                   |
+| `keyframes`                        | `keyframe_id`                     | `video_id`, `shot_id`, `frame_idx`, `timestamp_ms`, image URI/key, `map_n`, `embedding_index_0`, quality | Unique `(video_id, frame_idx)`. Canonical join target for all retrieval stores. |
+| `frame_annotations`                | UUID `id`                         | `frame_id`, `kind`, text/JSON value, caption, OCR, detections, confidence, model version                 | Allows multiple annotation producers and versions per frame.                    |
+| `events` / `event_keyframes`       | `event_id` / `(event_id, seq_no)` | event time boundaries, representative frame, ordered keyframes                                           | Stores shot/event segmentation independently from search-time TRAKE events.     |
+| `query_runs`                       | UUID `id`                         | raw query, mode, normalized LLM plan, options, status                                                    | Durable reproducibility and audit record.                                       |
+| `retrieval_results`                | UUID `id`                         | rank, final score, score breakdown, QA answer, TRAKE sequence JSON, selection flag                       | Unique `(query_run_id, rank)`. Preserves explainable result evidence.           |
+| `submissions` / `submission_items` | UUID `id`                         | submission state, query name/type, rank, video code, frame indices, answer                               | Validates and exports selected human-reviewed outputs.                          |
 
 #### Milvus collection schema
 
@@ -356,10 +356,10 @@ map it to a canonical relational frame and then to a cloud image/video URL.
 
 The retrieval profile uses the following visual-collection pattern:
 
-| Role | Registry key | Collection | State |
-| --- | --- | --- | --- |
-| Primary global visual model | `clip_vith14_quickgelu_dfn5b_v2` | `keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2` | Enabled |
-| Fine-grained second model | `siglip2_so400m16_384_webli_openclip_1152_v1` | `keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1` | Disabled until validated ingest |
+| Role                        | Registry key                                  | Collection                                                        | State                           |
+| --------------------------- | --------------------------------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| Primary global visual model | `clip_vith14_quickgelu_dfn5b_v2`              | `keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2`              | Enabled                         |
+| Fine-grained second model   | `siglip2_so400m16_384_webli_openclip_1152_v1` | `keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1` | Disabled until validated ingest |
 
 For every query variant, the backend embeds the text in the matching model
 space, queries each enabled collection, and keeps the best score per frame.
@@ -441,20 +441,36 @@ The planner returns:
   "intent": "KIS|QA|TRAKE",
   "summary": "English retrieval summary",
   "search_factors": {
-    "subjects": [], "actions": [], "objects": [], "attributes": [],
-    "scene": [], "text_cues": [], "time_cues": [],
+    "subjects": [],
+    "actions": [],
+    "objects": [],
+    "attributes": [],
+    "scene": [],
+    "text_cues": [],
+    "time_cues": [],
     "negative_constraints": []
   },
   "retrieval_strategy": {
-    "clauses": [{"text": "...", "evidence": "visual|text|both", "importance": 0.0}],
-    "weights": {"visual": 0.0, "text": 0.0},
+    "clauses": [
+      { "text": "...", "evidence": "visual|text|both", "importance": 0.0 }
+    ],
+    "weights": { "visual": 0.0, "text": 0.0 },
     "rationale": "..."
   },
-  "temporal_events": [{
-    "order": 1, "query": "English event query", "importance": 1.0,
-    "retrieval_weights": {"visual": 0.0, "text": 0.0}
-  }],
-  "variants": [{"text": "English retrieval rewrite", "purpose": "semantic|metadata|temporal"}]
+  "temporal_events": [
+    {
+      "order": 1,
+      "query": "English event query",
+      "importance": 1.0,
+      "retrieval_weights": { "visual": 0.0, "text": 0.0 }
+    }
+  ],
+  "variants": [
+    {
+      "text": "English retrieval rewrite",
+      "purpose": "semantic|metadata|temporal"
+    }
+  ]
 }
 ```
 
@@ -840,16 +856,16 @@ authentication, rate limiting, and persistent service infrastructure.
 
 Current performance choices are intentionally conservative:
 
-| Area | Technique | Purpose |
-| --- | --- | --- |
-| Candidate retrieval | ANN search in Milvus | Avoid scanning the full keyframe corpus. |
-| Text retrieval | Elasticsearch multi-match | Fast lexical recall for ASR and metadata. |
-| Score fusion | Normalization plus RRF | Stabilize ranking across heterogeneous score scales. |
-| TRAKE | Per-event candidates plus bounded beam search | Search ordered sequences without enumerating all frame combinations. |
-| Media | Direct GCS/public/signed URLs | Keep media bytes off the FastAPI server. |
-| UI | Metadata preload, poster frame, 50-result default | Improve perceived responsiveness. |
-| History | Redis TTL cache | Reduce repeated history/database reads. |
-| LLM | Direct structured GPT-4o plan | Avoid tool-less agent overhead while retaining reasoning. |
+| Area                | Technique                                         | Purpose                                                              |
+| ------------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| Candidate retrieval | ANN search in Milvus                              | Avoid scanning the full keyframe corpus.                             |
+| Text retrieval      | Elasticsearch multi-match                         | Fast lexical recall for ASR and metadata.                            |
+| Score fusion        | Normalization plus RRF                            | Stabilize ranking across heterogeneous score scales.                 |
+| TRAKE               | Per-event candidates plus bounded beam search     | Search ordered sequences without enumerating all frame combinations. |
+| Media               | Direct GCS/public/signed URLs                     | Keep media bytes off the FastAPI server.                             |
+| UI                  | Metadata preload, poster frame, 50-result default | Improve perceived responsiveness.                                    |
+| History             | Redis TTL cache                                   | Reduce repeated history/database reads.                              |
+| LLM                 | Direct structured GPT-4o plan                     | Avoid tool-less agent overhead while retaining reasoning.            |
 
 Recommended measurements for the next evaluation iteration are Recall@K and
 MRR for KIS/QA, sequence recall or exact sequence accuracy for TRAKE, p50/p95
