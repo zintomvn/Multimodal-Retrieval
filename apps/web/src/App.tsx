@@ -2819,7 +2819,7 @@ export function App() {
             </div>
           </div>
 
-          {mode !== "Chat" && (
+          {/* {mode !== "Chat" && (
             <div className="filter-row">
               <div className="filter-input">
                 <Search size={15} />
@@ -2831,7 +2831,7 @@ export function App() {
               </div>
               {!loading && <span>{visibleResults.length} shown</span>}
             </div>
-          )}
+          )} */}
 
           {mode === "Search" && (
             <section className="frame-section">
@@ -3254,13 +3254,13 @@ export function App() {
                     }
                     aria-label="Reasoning model"
                   >
-                    {(Object.keys(reasoningModelLabels) as ReasoningModel[]).map(
-                      (model) => (
-                        <option key={model} value={model}>
-                          {reasoningModelLabels[model]}
-                        </option>
-                      ),
-                    )}
+                    {(
+                      Object.keys(reasoningModelLabels) as ReasoningModel[]
+                    ).map((model) => (
+                      <option key={model} value={model}>
+                        {reasoningModelLabels[model]}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <button
