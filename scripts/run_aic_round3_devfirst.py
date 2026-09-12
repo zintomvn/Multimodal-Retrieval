@@ -37,6 +37,8 @@ def main() -> None:
     parser.add_argument("--agent-model", choices=["gpt-4o", "gpt-5-nano", "gpt-5.6-luna"], default="gpt-4o")
     parser.add_argument("--visual-search-mode", choices=["openclip", "siglip2", "both", "profile"], default="both")
     parser.add_argument("--include-missing-ground-truth", action="store_true")
+    parser.add_argument("--query-ids", nargs="*", default=[], help="Optional Query ID subset for diagnosis.")
+    parser.add_argument("--print-records", action="store_true", help="Print all per-query records to stdout.")
     parser.add_argument("--output", type=Path, default=Path("data/benchmarks/aic_2026_round3_devfirst.json"))
     args = parser.parse_args()
     with args.benchmark.open(encoding="utf-8-sig", newline="") as handle:
@@ -44,6 +46,9 @@ def main() -> None:
     rows = all_rows if args.include_missing_ground_truth else [
         row for row in all_rows if str(row.get("GT Video ID", "")).strip()
     ]
+    requested_ids = {value.strip() for value in args.query_ids if value.strip()}
+    if requested_ids:
+        rows = [row for row in rows if row.get("Query ID") in requested_ids]
     rows = rows[: args.limit]
     report: dict[str, Any] = {"benchmark": str(args.benchmark), "query_count": len(rows), "strategies": {}}
     for strategy in args.strategies:
@@ -90,13 +95,15 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     for strategy, records in report["strategies"].items():
-        print(json.dumps({
+        summary = {
             "strategy": strategy,
             "queries": len(records),
             "top10_video_hits": sum(item["top10_video_hit"] for item in records),
             "top10_frame_hits": sum(item["top10_frame_hit"] for item in records),
-            "records": records,
-        }, ensure_ascii=False))
+        }
+        if args.print_records:
+            summary["records"] = records
+        print(json.dumps(summary, ensure_ascii=False))
 
 
 if __name__ == "__main__":
