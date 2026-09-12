@@ -45,6 +45,13 @@ import type {
 type AppMode = "Search" | "Auto" | "Chat";
 type ThemeMode = "light" | "dark" | "system";
 type SearchTask = QueryType | "VIDEO";
+type ReasoningModel = "gpt-4o" | "gpt-5-nano" | "gpt-5.6-luna";
+
+const reasoningModelLabels: Record<ReasoningModel, string> = {
+  "gpt-4o": "GPT-4o",
+  "gpt-5-nano": "GPT-5 nano",
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+};
 
 // Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
@@ -227,6 +234,29 @@ function resultForTrakeFrame(
   };
 }
 
+function diversifyResultsForDisplay(
+  results: SearchResult[],
+  queryType: string,
+): SearchResult[] {
+  if (queryType !== "KIS" && queryType !== "QA") return results;
+
+  const firstByVideo: SearchResult[] = [];
+  const deferred: SearchResult[] = [];
+  const seenVideos = new Set<string>();
+  for (const result of results) {
+    if (seenVideos.has(result.video_id)) {
+      deferred.push(result);
+      continue;
+    }
+    seenVideos.add(result.video_id);
+    firstByVideo.push(result);
+  }
+  return [...firstByVideo, ...deferred].map((result, index) => ({
+    ...result,
+    rank: index + 1,
+  }));
+}
+
 function timestampLabel(timestampMs: number | null): string {
   if (timestampMs === null) return "00:00";
   const total = Math.max(0, Math.floor(timestampMs / 1000));
@@ -267,7 +297,12 @@ function scoreComponents(result: SearchResult): Array<{
   kind: "visual" | "text" | "rrf" | "final";
 }> {
   const visual =
-    scoreFromBreakdown(result, ["semantic_score", "visual_score", "semantic", "visual"]) ?? 0;
+    scoreFromBreakdown(result, [
+      "semantic_score",
+      "visual_score",
+      "semantic",
+      "visual",
+    ]) ?? 0;
   const text =
     scoreFromBreakdown(result, ["text_score", "metadata_score", "text"]) ?? 0;
   const rrf = scoreFromBreakdown(result, ["rrf_score", "rrf"]);
@@ -368,7 +403,9 @@ function buildSubmissionCsv(rows: SubmissionRow[]): string {
     return `${rows.map(submissionCsvLine).join("\r\n")}\r\n`;
   }
   const lines = [
-    ["query_name", "video_code", "frame_indices", "answer"].map(csvCell).join(","),
+    ["query_name", "video_code", "frame_indices", "answer"]
+      .map(csvCell)
+      .join(","),
     ...rows.map((row) =>
       [
         csvCell(row.query_name),
@@ -397,7 +434,10 @@ function downloadCsvBlob(blob: Blob, fileName: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-async function downloadCsvFromUrl(url: string, fileName: string): Promise<void> {
+async function downloadCsvFromUrl(
+  url: string,
+  fileName: string,
+): Promise<void> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`CSV download failed: ${response.status}`);
   downloadCsvBlob(await response.blob(), fileName);
@@ -527,6 +567,7 @@ function makeAgentTrace(
   mode: AppMode,
   queryType: SearchTask,
   resultCount: number,
+  reasoningModel?: ReasoningModel,
 ): AgentStep[] {
   const action = mode === "Auto" ? "Shortlist" : "Answer trace";
   const align =
@@ -536,7 +577,9 @@ function makeAgentTrace(
   return [
     {
       title: "Parse query",
-      detail: `${queryType} format detected and mapped to Codabench output.`,
+      detail: reasoningModel
+        ? `${reasoningModelLabels[reasoningModel]} selected for reasoning.`
+        : `${queryType} format detected and mapped to Codabench output.`,
       status: "done",
     },
     {
@@ -562,7 +605,10 @@ function makeVideoLookupTrace(
   frameIdx: number | null,
   resultCount: number,
 ): AgentStep[] {
-  const target = frameIdx === null ? "all indexed keyframes" : `nearest keyframes to F${frameIdx}`;
+  const target =
+    frameIdx === null
+      ? "all indexed keyframes"
+      : `nearest keyframes to F${frameIdx}`;
   return [
     {
       title: "Resolve video",
@@ -586,6 +632,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+type TemporalEventMatch = {
+  eventIndex: number;
+  query: string;
+  viewCount: number;
+  frameIdx: number | null;
+  score: number | null;
+  visualScore: number | null;
+  textScore: number | null;
+  rrfScore: number | null;
+};
+
+function temporalEventMatches(result: SearchResult): TemporalEventMatch[] {
+  const eventQueries = result.score_breakdown.event_queries;
+  if (!Array.isArray(eventQueries)) return [];
+
+  return eventQueries.flatMap((rawEvent, arrayIndex) => {
+    if (!isRecord(rawEvent)) return [];
+    const eventIndex = scoreNumber(rawEvent.event_index) ?? arrayIndex + 1;
+    const matchedFrame = result.sequence_frames.find(
+      (frame) => (frame.event_index ?? frame.order_index) === eventIndex,
+    );
+    const query = String(
+      rawEvent.query ?? matchedFrame?.event_query ?? "",
+    ).trim();
+    if (!query) return [];
+    return [
+      {
+        eventIndex,
+        query,
+        viewCount:
+          stringList(rawEvent.multi_views).length ||
+          scoreNumber(rawEvent.view_count) ||
+          1,
+        frameIdx: matchedFrame?.frame_idx ?? null,
+        score: matchedFrame?.score ?? null,
+        visualScore: matchedFrame?.visual_score ?? null,
+        textScore: matchedFrame?.text_score ?? null,
+        rrfScore: matchedFrame?.rrf_score ?? null,
+      },
+    ];
+  });
+}
+
+function hasTemporalEventMatches(result: SearchResult): boolean {
+  return temporalEventMatches(result).length > 0;
+}
+
 function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -596,7 +689,8 @@ function stringList(value: unknown): string[] {
 function summarizeList(values: string[], empty: string): string {
   if (values.length === 0) return empty;
   const shown = values.slice(0, 3);
-  const suffix = values.length > shown.length ? ` +${values.length - shown.length}` : "";
+  const suffix =
+    values.length > shown.length ? ` +${values.length - shown.length}` : "";
   return `${shown.join(" | ")}${suffix}`;
 }
 
@@ -619,7 +713,9 @@ function summarizeFactors(value: unknown): string {
       return `${label}: ${values.slice(0, 3).join(", ")}`;
     })
     .filter(Boolean);
-  return parts.length > 0 ? parts.join(" / ") : "No structured factors returned.";
+  return parts.length > 0
+    ? parts.join(" / ")
+    : "No structured factors returned.";
 }
 
 function visualSearchLabel(
@@ -665,24 +761,35 @@ function makeTraceFromResponse(
         : "key status unavailable";
   const traceStatus: AgentStep["status"] = plan?.error ? "warning" : "done";
   // The backend may repair a collapsed agent plan before independent event retrieval.
-  const temporalEvents = normalized.temporal_events ?? plan?.temporal_events ?? [];
+  const temporalEvents =
+    normalized.temporal_events ?? plan?.temporal_events ?? [];
   const textTemporalEvents = normalized.text_temporal_events ?? [];
-  const semanticVariants = normalized.multi_views ?? normalized.semantic_variants ?? normalized.variants ?? [];
+  const semanticVariants =
+    normalized.multi_views ??
+    normalized.semantic_variants ??
+    normalized.variants ??
+    [];
   const textVariants = normalized.text_variants ?? [];
   const summary = plan?.summary || semanticVariants[0] || "Query parsed.";
   const traceLabel =
     metadata?.langsmith_trace_enabled && metadata.langsmith_api_key_configured
       ? "LangSmith on"
       : "LangSmith off";
-  const retrievalWeights = plan?.retrieval_weights ?? normalized.retrieval_weights;
-  const weightSource = plan?.retrieval_weight_source ?? normalized.retrieval_weight_source ?? "profile";
-  const textSourceWeights = plan?.text_source_weights ?? normalized.text_source_weights;
+  const retrievalWeights =
+    plan?.retrieval_weights ?? normalized.retrieval_weights;
+  const weightSource =
+    plan?.retrieval_weight_source ??
+    normalized.retrieval_weight_source ??
+    "profile";
+  const textSourceWeights =
+    plan?.text_source_weights ?? normalized.text_source_weights;
   const visualSearch = normalized.visual_search;
   const visualSummary = visualModelSummary(visualSearch);
   return [
     {
       title: "Agent profile",
-      detail: `${profile} | ${provider}/${model} | ${keyStatus} | ${traceLabel}`,
+      // detail: `${profile} | ${provider}/${model} | ${keyStatus} | ${traceLabel}`,
+      detail: `${profile}`,
       status: traceStatus,
       raw: metadata ?? null,
     },
@@ -722,7 +829,11 @@ function makeTraceFromResponse(
       title: "Multi-view search",
       detail: `English: ${summarizeList(semanticVariants, "No semantic view returned.")}`,
       status: traceStatus,
-      raw: { language: "en", multi_views: semanticVariants, visual_search: visualSearch },
+      raw: {
+        language: "en",
+        multi_views: semanticVariants,
+        visual_search: visualSearch,
+      },
     },
     {
       title: "Captioning query",
@@ -755,16 +866,18 @@ function makeTraceFromResponse(
     },
     {
       title: "Temporal reasoning",
-      detail: temporalEvents.length > 1
-        ? `The plan separates this request into ordered moments. Embedding/captioning (English): ${summarizeList(temporalEvents, "-")} | ASR/OCR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
-        : normalized.temporal_mode
-          ? "The plan uses the available temporal evidence for this request."
-          : "No temporal split needed.",
+      detail:
+        temporalEvents.length > 1
+          ? `The plan separates this request into ordered moments. Embedding/captioning (English): ${summarizeList(temporalEvents, "-")} | ASR/OCR (Vietnamese): ${summarizeList(textTemporalEvents, "-")}`
+          : normalized.temporal_mode
+            ? "The plan uses the available temporal evidence for this request."
+            : "No temporal split needed.",
       status: traceStatus,
       raw: {
         semantic_events: temporalEvents,
         text_events: textTemporalEvents,
-        event_plans: normalized.temporal_event_plans ?? plan?.temporal_event_plans ?? [],
+        event_plans:
+          normalized.temporal_event_plans ?? plan?.temporal_event_plans ?? [],
       },
     },
     {
@@ -851,7 +964,8 @@ function ScoreBreakdown({
 function evidenceTimeLabel(item: VideoEvidenceItem): string {
   if (item.start_seconds === null) return "Unmapped time";
   const start = timestampLabel(item.start_seconds * 1000);
-  if (item.end_seconds === null || item.end_seconds <= item.start_seconds) return start;
+  if (item.end_seconds === null || item.end_seconds <= item.start_seconds)
+    return start;
   return `${start} - ${timestampLabel(item.end_seconds * 1000)}`;
 }
 
@@ -875,7 +989,10 @@ function VideoEvidenceSection({
       ) : (
         <div className="video-evidence-list">
           {items.map((item, index) => (
-            <article className="video-evidence-item active" key={`${item.segment_id ?? title}-${item.frame_id ?? ""}-${index}`}>
+            <article
+              className="video-evidence-item active"
+              key={`${item.segment_id ?? title}-${item.frame_id ?? ""}-${index}`}
+            >
               <time>{evidenceTimeLabel(item)}</time>
               <p>{item.text}</p>
             </article>
@@ -886,30 +1003,102 @@ function VideoEvidenceSection({
   );
 }
 
+function TemporalEventEvidence({ result }: { result: SearchResult }) {
+  const events = temporalEventMatches(result);
+  if (events.length === 0) return null;
+
+  return (
+    <section
+      className="temporal-event-evidence"
+      aria-label="Temporal event search scores"
+    >
+      <div className="video-evidence-heading">
+        <strong>Temporal event</strong>
+        <small>{events.length} events</small>
+      </div>
+      <p className="temporal-event-caption">
+        Scores show the frame selected for each event in this video sequence.
+      </p>
+      <div className="temporal-event-list">
+        {events.map((event) => (
+          <article className="temporal-event-card" key={event.eventIndex}>
+            <div className="temporal-event-card-header">
+              <span>E{event.eventIndex}</span>
+              {event.frameIdx === null ? (
+                <small>Not matched</small>
+              ) : (
+                <small>Frame {event.frameIdx}</small>
+              )}
+            </div>
+            <p>{event.query}</p>
+            <div className="temporal-event-meta">
+              <small>
+                {event.viewCount} view{event.viewCount === 1 ? "" : "s"}
+              </small>
+              <strong>
+                {event.score === null ? "—" : formatScore(event.score)}
+              </strong>
+            </div>
+            {event.score !== null && (
+              <div className="temporal-event-score-grid">
+                <span>
+                  <small>Visual</small>
+                  {formatScore(event.visualScore ?? 0)}
+                </span>
+                <span>
+                  <small>Text</small>
+                  {formatScore(event.textScore ?? 0)}
+                </span>
+                <span>
+                  <small>RRF</small>
+                  {formatScore(event.rrfScore ?? 0)}
+                </span>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function VideoEvidenceSidebar({
   evidence,
   loading,
   frameIdx,
+  result,
 }: {
   evidence: VideoEvidence | null;
   loading: boolean;
   frameIdx: number | null;
+  result: SearchResult;
 }) {
   const values = evidence?.evidence;
   return (
     <aside className="video-evidence-sidebar" aria-label="Video text evidence">
       <div className="video-evidence-sidebar-header">
         <span>
-          <strong>Text evidence</strong>
-          <small>{frameIdx === null ? "Selected frame" : `Frame ${frameIdx}`}</small>
+          <strong>Evidence</strong>
+          <small>
+            {frameIdx === null ? "Selected frame" : `Frame ${frameIdx}`}
+          </small>
         </span>
-        {loading && <Loader2 className="spin-icon" size={15} aria-label="Loading evidence" />}
+        {loading && (
+          <Loader2
+            className="spin-icon"
+            size={15}
+            aria-label="Loading evidence"
+          />
+        )}
       </div>
       <div className="video-evidence-scroll">
+        <TemporalEventEvidence result={result} />
         <VideoEvidenceSection
           title="ASR"
           items={values?.asr ?? []}
-          emptyLabel={loading ? "Loading ASR transcript" : "No ASR aligned to this frame"}
+          emptyLabel={
+            loading ? "Loading ASR transcript" : "No ASR aligned to this frame"
+          }
         />
         <VideoEvidenceSection
           title="OCR"
@@ -919,7 +1108,11 @@ function VideoEvidenceSidebar({
         <VideoEvidenceSection
           title="Captioning (English)"
           items={values?.captions ?? []}
-          emptyLabel={loading ? "Loading captions" : "No English caption aligned to this frame"}
+          emptyLabel={
+            loading
+              ? "Loading captions"
+              : "No English caption aligned to this frame"
+          }
         />
       </div>
     </aside>
@@ -1033,9 +1226,17 @@ function TrakeRows({
 }: {
   results: SearchResult[];
   eventCount: number;
-  isSelected: (result: SearchResult, frame: TrakeSequenceFrame, eventIndex: number) => boolean;
+  isSelected: (
+    result: SearchResult,
+    frame: TrakeSequenceFrame,
+    eventIndex: number,
+  ) => boolean;
   onOpen: (result: SearchResult) => void;
-  onSelect: (result: SearchResult, frame: TrakeSequenceFrame, eventIndex: number) => void;
+  onSelect: (
+    result: SearchResult,
+    frame: TrakeSequenceFrame,
+    eventIndex: number,
+  ) => void;
   onPreview: (result: SearchResult, eventIndex?: number) => void;
   selectedFrames: TrakeFrameChoice[];
   selectedEventCount: number;
@@ -1048,7 +1249,9 @@ function TrakeRows({
     1,
     eventCount,
     ...results.flatMap((result) =>
-      result.sequence_frames.map((frame) => frame.event_index ?? frame.order_index ?? 0),
+      result.sequence_frames.map(
+        (frame) => frame.event_index ?? frame.order_index ?? 0,
+      ),
     ),
   );
   const lanes = Array.from({ length: inferredEventCount }, (_, index) => index);
@@ -1087,7 +1290,10 @@ function TrakeRows({
         const uniqueLaneCells = laneCells.filter((cell) => {
           const frameKey = [
             cell.result.video_code,
-            cell.frameIdx ?? cell.sequenceFrame?.frame_id ?? cell.result.frame_id ?? cell.result.id,
+            cell.frameIdx ??
+              cell.sequenceFrame?.frame_id ??
+              cell.result.frame_id ??
+              cell.result.id,
           ].join(":");
           if (seenFrameKeys.has(frameKey)) return false;
           seenFrameKeys.add(frameKey);
@@ -1096,82 +1302,87 @@ function TrakeRows({
 
         return (
           <section className="trake-lane" key={lane}>
-          <div className="trake-lane-label">
-            <strong>E{lane + 1}</strong>
-            <span>{uniqueLaneCells.length} candidates</span>
-          </div>
-          <div className="trake-strip">
-            {uniqueLaneCells.map(
-              ({
-                result,
-                resultIndex,
-                sequenceFrame,
-                frameIdx,
-                timestampMs,
-                candidates,
-                selected,
-              }) => {
-              const frameResult = sequenceFrame
-                ? resultForTrakeFrame(result, sequenceFrame)
-                : result;
-              return (
-                <article
-                  className={`trake-cell ${selected ? "selected" : ""}`}
-                  key={`${result.video_code}-${frameIdx ?? sequenceFrame?.frame_id ?? result.id}`}
-                  onClick={() => onOpen(frameResult)}
-                >
-                  <div className="trake-thumb">
-                    <CloudFrameImage
-                      candidates={candidates}
-                      alt={`${result.video_code} event ${lane + 1} frame ${frameIdx ?? "N/A"}`}
-                      eager={lane === 0 && resultIndex < 8}
-                    />
-                    <span className="rank-chip">#{result.rank}</span>
-                  </div>
-                  <div className="trake-cell-body">
-                    <strong>{result.video_code}</strong>
-                    <small>
-                      F{frameIdx ?? "N/A"} | {timestampLabel(timestampMs)}
-                    </small>
-                    {sequenceFrame ? (
-                      <TrakeFrameScores frame={sequenceFrame} />
-                    ) : (
-                      <ScoreBreakdown result={result} compact />
-                    )}
-                    <div className="trake-cell-actions">
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onPreview(frameResult, lane + 1);
-                        }}
-                      >
-                        Video
-                      </button>
-                      <button
-                        type="button"
-                        className="select-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (sequenceFrame) onSelect(result, sequenceFrame, lane + 1);
-                        }}
-                        disabled={!sequenceFrame}
-                      >
-                        {selected ? "Picked" : "Pick"}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
+            <div className="trake-lane-label">
+              <strong>E{lane + 1}</strong>
+              <span>{uniqueLaneCells.length} candidates</span>
+            </div>
+            <div className="trake-strip">
+              {uniqueLaneCells.map(
+                ({
+                  result,
+                  resultIndex,
+                  sequenceFrame,
+                  frameIdx,
+                  timestampMs,
+                  candidates,
+                  selected,
+                }) => {
+                  const frameResult = sequenceFrame
+                    ? resultForTrakeFrame(result, sequenceFrame)
+                    : result;
+                  return (
+                    <article
+                      className={`trake-cell ${selected ? "selected" : ""}`}
+                      key={`${result.video_code}-${frameIdx ?? sequenceFrame?.frame_id ?? result.id}`}
+                      onClick={() => onOpen(frameResult)}
+                    >
+                      <div className="trake-thumb">
+                        <CloudFrameImage
+                          candidates={candidates}
+                          alt={`${result.video_code} event ${lane + 1} frame ${frameIdx ?? "N/A"}`}
+                          eager={lane === 0 && resultIndex < 8}
+                        />
+                        <span className="rank-chip">#{result.rank}</span>
+                      </div>
+                      <div className="trake-cell-body">
+                        <strong>{result.video_code}</strong>
+                        <small>
+                          F{frameIdx ?? "N/A"} | {timestampLabel(timestampMs)}
+                        </small>
+                        {sequenceFrame ? (
+                          <TrakeFrameScores frame={sequenceFrame} />
+                        ) : (
+                          <ScoreBreakdown result={result} compact />
+                        )}
+                        <div className="trake-cell-actions">
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onPreview(frameResult, lane + 1);
+                            }}
+                          >
+                            Video
+                          </button>
+                          <button
+                            type="button"
+                            className="select-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (sequenceFrame)
+                                onSelect(result, sequenceFrame, lane + 1);
+                            }}
+                            disabled={!sequenceFrame}
+                          >
+                            {selected ? "Picked" : "Pick"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                },
+              )}
+            </div>
+          </section>
         );
       })}
       <div className="trake-selection-toolbar" aria-live="polite">
         <div>
-          <strong>{selectedEventCount} frame{selectedEventCount === 1 ? "" : "s"} selected</strong>
+          <strong>
+            {selectedEventCount} frame{selectedEventCount === 1 ? "" : "s"}{" "}
+            selected
+          </strong>
           <small>
             {selectedVideoCode
               ? `Video ${selectedVideoCode}`
@@ -1197,7 +1408,10 @@ function TrakeRows({
           </button>
         </div>
       </div>
-      <section className="trake-picked-sequence" aria-label="Selected TRAKE sequence">
+      <section
+        className="trake-picked-sequence"
+        aria-label="Selected TRAKE sequence"
+      >
         <div className="trake-picked-heading">
           <strong>Sequence draft</strong>
           <small>Click a chosen frame to review it in the video.</small>
@@ -1205,7 +1419,9 @@ function TrakeRows({
         <div className="trake-picked-strip">
           {lanes.map((lane) => {
             const eventIndex = lane + 1;
-            const choice = selectedFrames.find((item) => item.eventIndex === eventIndex);
+            const choice = selectedFrames.find(
+              (item) => item.eventIndex === eventIndex,
+            );
             const frameResult = choice
               ? resultForTrakeFrame(choice.result, choice.frame)
               : null;
@@ -1221,7 +1437,10 @@ function TrakeRows({
               >
                 {choice ? (
                   <CloudFrameImage
-                    candidates={sequenceImageCandidates(choice.frame, choice.result)}
+                    candidates={sequenceImageCandidates(
+                      choice.frame,
+                      choice.result,
+                    )}
                     alt={`Selected event ${eventIndex}, frame ${choice.frame.frame_idx}`}
                   />
                 ) : (
@@ -1231,7 +1450,8 @@ function TrakeRows({
                   <strong>E{eventIndex}</strong>
                   {choice ? (
                     <small>
-                      {choice.result.video_code} | F{choice.frame.frame_idx} | {timestampLabel(choice.frame.timestamp_ms ?? null)}
+                      {choice.result.video_code} | F{choice.frame.frame_idx} |{" "}
+                      {timestampLabel(choice.frame.timestamp_ms ?? null)}
                     </small>
                   ) : (
                     <small>Not selected</small>
@@ -1254,7 +1474,9 @@ function ReasoningDisclosure({
   compact?: boolean;
 }) {
   const running = steps.some((step) => step.status === "running");
-  const doneCount = steps.filter((step) => step.status === "done" || step.status === "warning").length;
+  const doneCount = steps.filter(
+    (step) => step.status === "done" || step.status === "warning",
+  ).length;
   return (
     <details
       className={`reasoning-disclosure ${compact ? "compact" : ""}`}
@@ -1325,6 +1547,7 @@ export function App() {
   const [datasetId, setDatasetId] = useState("");
   const [queryType, setQueryType] = useState<SearchTask>("KIS");
   const [queryName, setQueryName] = useState(queryNameByType.KIS);
+  const [exportFileName, setExportFileName] = useState(queryNameByType.KIS);
   const [queryText, setQueryText] = useState(sampleQueries.KIS);
   const [videoCodeQuery, setVideoCodeQuery] = useState(sampleQueries.VIDEO);
   const [videoFrameQuery, setVideoFrameQuery] = useState("");
@@ -1348,7 +1571,9 @@ export function App() {
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [trakeEventCount, setTrakeEventCount] = useState(4);
-  const [trakeFrameChoices, setTrakeFrameChoices] = useState<TrakeFrameChoice[]>([]);
+  const [trakeFrameChoices, setTrakeFrameChoices] = useState<
+    TrakeFrameChoice[]
+  >([]);
   const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -1371,6 +1596,8 @@ export function App() {
     typeof window === "undefined" ? true : window.innerWidth > 1180,
   );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [reasoningModel, setReasoningModel] =
+    useState<ReasoningModel>("gpt-4o");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
@@ -1381,7 +1608,9 @@ export function App() {
   ]);
   const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
   const [videoEvidenceOpen, setVideoEvidenceOpen] = useState(false);
-  const [videoPlaybackSeconds, setVideoPlaybackSeconds] = useState<number | null>(null);
+  const [videoPlaybackSeconds, setVideoPlaybackSeconds] = useState<
+    number | null
+  >(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return (
@@ -1461,7 +1690,9 @@ export function App() {
       .then((evidence) => {
         if (cancelled) return;
         setVideoPreview((current) =>
-          current && current.result.id === preview.result.id && current.selectedFrameIdx === frame.frame_idx
+          current &&
+          current.result.id === preview.result.id &&
+          current.selectedFrameIdx === frame.frame_idx
             ? { ...current, evidence, evidenceLoading: false }
             : current,
         );
@@ -1469,7 +1700,9 @@ export function App() {
       .catch(() => {
         if (cancelled) return;
         setVideoPreview((current) =>
-          current && current.result.id === preview.result.id && current.selectedFrameIdx === frame.frame_idx
+          current &&
+          current.result.id === preview.result.id &&
+          current.selectedFrameIdx === frame.frame_idx
             ? { ...current, evidenceLoading: false }
             : current,
         );
@@ -1572,17 +1805,23 @@ export function App() {
   }, [galleryResults, hasSearched, queryType, resultFilter, results]);
 
   const selectedKeys = useMemo(() => new Set(selected.map(rowKey)), [selected]);
-  const selectedTrakeVideoCode = trakeFrameChoices[0]?.result.video_code ?? null;
+  const selectedTrakeVideoCode =
+    trakeFrameChoices[0]?.result.video_code ?? null;
   const sortedTrakeFrameChoices = useMemo(
-    () => [...trakeFrameChoices].sort((left, right) => left.eventIndex - right.eventIndex),
+    () =>
+      [...trakeFrameChoices].sort(
+        (left, right) => left.eventIndex - right.eventIndex,
+      ),
     [trakeFrameChoices],
   );
   const canAddTrakeSequence =
     sortedTrakeFrameChoices.length === trakeEventCount &&
-    new Set(sortedTrakeFrameChoices.map((choice) => choice.result.video_code)).size === 1 &&
+    new Set(sortedTrakeFrameChoices.map((choice) => choice.result.video_code))
+      .size === 1 &&
     sortedTrakeFrameChoices.every(
       (choice, index, choices) =>
-        index === 0 || choices[index - 1].frame.frame_idx < choice.frame.frame_idx,
+        index === 0 ||
+        choices[index - 1].frame.frame_idx < choice.frame.frame_idx,
     );
 
   // Functions
@@ -1594,7 +1833,9 @@ export function App() {
       video_code: result.video_code,
       frame_indices:
         queryType === "TRAKE" && result.sequence_frames.length > 0
-          ? uniqueFrameIndices(result.sequence_frames.map((item) => item.frame_idx))
+          ? uniqueFrameIndices(
+              result.sequence_frames.map((item) => item.frame_idx),
+            )
           : result.frame_idx === null
             ? []
             : [result.frame_idx],
@@ -1605,6 +1846,7 @@ export function App() {
   function changeType(type: SearchTask) {
     setQueryType(type);
     setQueryName(queryNameByType[type]);
+    setExportFileName(queryNameByType[type]);
     setQueryText(sampleQueries[type]);
     setResults([]);
     setHasSearched(false);
@@ -1665,7 +1907,9 @@ export function App() {
   function addResult(result: SearchResult) {
     const frameIndices =
       queryType === "TRAKE" && result.sequence_frames.length > 0
-        ? uniqueFrameIndices(result.sequence_frames.map((item) => item.frame_idx))
+        ? uniqueFrameIndices(
+            result.sequence_frames.map((item) => item.frame_idx),
+          )
         : result.frame_idx === null
           ? []
           : [result.frame_idx];
@@ -1720,7 +1964,9 @@ export function App() {
         return current;
       }
 
-      const remainingChoices = current.filter((choice) => choice.eventIndex !== eventIndex);
+      const remainingChoices = current.filter(
+        (choice) => choice.eventIndex !== eventIndex,
+      );
       const selectedVideoCode = remainingChoices[0]?.result.video_code;
       if (selectedVideoCode && selectedVideoCode !== result.video_code) {
         setStatus(`TRAKE frames must belong to ${selectedVideoCode}`);
@@ -1728,10 +1974,7 @@ export function App() {
       }
 
       setStatus(`Set E${eventIndex} to frame ${frame.frame_idx}`);
-      return [
-        ...remainingChoices,
-        { eventIndex, result, frame },
-      ];
+      return [...remainingChoices, { eventIndex, result, frame }];
     });
   }
 
@@ -1752,7 +1995,9 @@ export function App() {
       query_type: "TRAKE",
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: firstChoice.result.video_code,
-      frame_indices: sortedTrakeFrameChoices.map((choice) => choice.frame.frame_idx),
+      frame_indices: sortedTrakeFrameChoices.map(
+        (choice) => choice.frame.frame_idx,
+      ),
       answer: null,
     };
     setSelected((current) => {
@@ -1793,32 +2038,40 @@ export function App() {
     setAutoTrace(runningTrace);
 
     const searchInput = {
-        datasetId,
-        queryType,
-        queryName,
-        queryText,
-        topK,
-        useExpansion,
-        useAgentPlanning,
-        useMetadata,
-        temporalMode: queryType === "KIS" && kisTemporalMode,
-        temporalStrategy,
-        visualSearchMode,
-      };
+      datasetId,
+      queryType,
+      queryName,
+      queryText,
+      topK,
+      useExpansion,
+      useAgentPlanning,
+      agentModel: reasoningModel,
+      useMetadata,
+      temporalMode: queryType === "KIS" && kisTemporalMode,
+      temporalStrategy,
+      visualSearchMode,
+    };
 
     try {
       const shouldShowPlanEarly =
-        useAgentPlanning || queryType === "TRAKE" || (queryType === "KIS" && kisTemporalMode);
+        useAgentPlanning ||
+        queryType === "TRAKE" ||
+        (queryType === "KIS" && kisTemporalMode);
       if (shouldShowPlanEarly) {
         try {
           const planned = await planSearch(searchInput);
-          const planningTrace = makeTraceFromResponse(mode, queryType, {
-            query_run_id: "planning",
-            query_type: queryType,
-            query_name: queryName,
-            normalized_query: planned.normalized_query,
-            results: [],
-          }, 0).map((step) =>
+          const planningTrace = makeTraceFromResponse(
+            mode,
+            queryType,
+            {
+              query_run_id: "planning",
+              query_type: queryType,
+              query_name: queryName,
+              normalized_query: planned.normalized_query,
+              results: [],
+            },
+            0,
+          ).map((step) =>
             step.title === "Retrieve candidates"
               ? {
                   ...step,
@@ -1834,7 +2087,8 @@ export function App() {
               step.title === "Parse query"
                 ? {
                     ...step,
-                    detail: "Planning is unavailable. Continuing with retrieval.",
+                    detail:
+                      "Planning is unavailable. Continuing with retrieval.",
                     status: "warning" as const,
                   }
                 : step,
@@ -1844,7 +2098,10 @@ export function App() {
       }
 
       const response = await runSearch(searchInput);
-      const nextResults = response.results;
+      const nextResults = diversifyResultsForDisplay(
+        response.results,
+        queryType,
+      );
       if (queryType === "TRAKE") {
         setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
       }
@@ -1856,24 +2113,28 @@ export function App() {
             ? "No complete ordered sequence found"
             : "No results found",
       );
-      const trace = makeTraceFromResponse(mode, queryType, response, nextResults.length);
+      const trace = makeTraceFromResponse(
+        mode,
+        queryType,
+        response,
+        nextResults.length,
+      );
       setAutoTrace(trace);
       rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
       const nextResults: SearchResult[] = [];
-      const trace = makeAgentTrace(mode, queryType, 0).map(
-        (step, index) =>
-          index === 0
-            ? {
-                ...step,
-                detail:
-                  error instanceof Error
-                    ? `Search API fallback: ${error.message.slice(0, 96)}`
-                    : "Search API fallback.",
-                status: "warning" as const,
-              }
-            : step,
+      const trace = makeAgentTrace(mode, queryType, 0).map((step, index) =>
+        index === 0
+          ? {
+              ...step,
+              detail:
+                error instanceof Error
+                  ? `Search API fallback: ${error.message.slice(0, 96)}`
+                  : "Search API fallback.",
+              status: "warning" as const,
+            }
+          : step,
       );
       setResults(nextResults);
       setStatus(
@@ -1893,7 +2154,9 @@ export function App() {
     const videoCode = videoCodeQuery.trim();
     const parsedFrame = Number(videoFrameQuery);
     const frameIdx =
-      videoFrameQuery.trim() && Number.isInteger(parsedFrame) && parsedFrame >= 0
+      videoFrameQuery.trim() &&
+      Number.isInteger(parsedFrame) &&
+      parsedFrame >= 0
         ? parsedFrame
         : null;
     if (!datasetId || !videoCode) {
@@ -1919,14 +2182,21 @@ export function App() {
         datasetId,
         videoCode,
         frameIdx: frameIdx ?? undefined,
-        limit: frameIdx === null ? Math.min(topK, 200) : Math.min(Math.max(topK, 12), 200),
+        limit:
+          frameIdx === null
+            ? Math.min(topK, 200)
+            : Math.min(Math.max(topK, 12), 200),
         offset: 0,
         presentOnly: true,
       });
       const nextResults = response.frames.map((frame, index) =>
         frameToResult(frame, index + 1),
       );
-      const trace = makeVideoLookupTrace(videoCode, frameIdx, nextResults.length);
+      const trace = makeVideoLookupTrace(
+        videoCode,
+        frameIdx,
+        nextResults.length,
+      );
       setResults(nextResults);
       setQueryText(videoCode);
       setAutoTrace(trace);
@@ -1939,11 +2209,12 @@ export function App() {
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
       const detail =
-        error instanceof Error ? error.message.slice(0, 64) : "Video lookup failed";
-      const trace = makeVideoLookupTrace(videoCode, frameIdx, 0).map((step, index) =>
-        index === 0
-          ? { ...step, detail, status: "warning" as const }
-          : step,
+        error instanceof Error
+          ? error.message.slice(0, 64)
+          : "Video lookup failed";
+      const trace = makeVideoLookupTrace(videoCode, frameIdx, 0).map(
+        (step, index) =>
+          index === 0 ? { ...step, detail, status: "warning" as const } : step,
       );
       setAutoTrace(trace);
       setStatus(`Video lookup failed: ${detail}`);
@@ -1953,37 +2224,104 @@ export function App() {
     }
   }
 
-  function submitChat() {
+  async function submitChat() {
     const prompt = queryText.trim();
     if (!prompt && attachedFiles.length === 0) return;
     const fileNames = attachedFiles.map((file) => file.name);
-    const trace = makeAgentTrace(
+    const fallbackTrace = makeAgentTrace(
       "Chat",
       "QA",
       fileNames.length > 0 ? fileNames.length : 4,
+      reasoningModel,
     );
-    const answerText =
-      fileNames.length > 0
-        ? "Video received. I prepared a QA trace and can turn a confirmed answer into a Codabench row."
-        : "I will answer in QA mode and keep evidence frames ready for export.";
+    const messageId = Date.now();
     setChatMessages((current) => [
       ...current,
       {
-        id: `user-${Date.now()}`,
+        id: `user-${messageId}`,
         role: "user",
         text: prompt || "Uploaded video for QA",
         files: fileNames,
       },
-      {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        text: answerText,
-        trace,
-      },
     ]);
     setQueryText("");
     setAttachedFiles([]);
-    setStatus("Chat trace ready");
+    if (!datasetId || !prompt) {
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${messageId}`,
+          role: "assistant",
+          text: `${reasoningModelLabels[reasoningModel]} is selected. Enter a message and select a dataset to run QA retrieval.`,
+          trace: fallbackTrace,
+        },
+      ]);
+      setStatus("Chat model selected");
+      return;
+    }
+
+    setLoading(true);
+    setStatus(`Reasoning with ${reasoningModelLabels[reasoningModel]}`);
+    try {
+      const response = await runSearch({
+        datasetId,
+        queryType: "QA",
+        queryName,
+        queryText: prompt,
+        topK,
+        useExpansion,
+        useAgentPlanning: true,
+        agentModel: reasoningModel,
+        useMetadata,
+        temporalMode: false,
+        temporalStrategy,
+        visualSearchMode,
+      });
+      const nextResults = diversifyResultsForDisplay(response.results, "QA");
+      setResults(nextResults);
+      setHasSearched(true);
+      const trace = makeTraceFromResponse(
+        "Chat",
+        "QA",
+        response,
+        nextResults.length,
+      );
+      const answer = nextResults[0]?.answer?.trim();
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${messageId}`,
+          role: "assistant",
+          text:
+            answer ||
+            `Found ${nextResults.length} evidence frame${nextResults.length === 1 ? "" : "s"}.`,
+          trace,
+        },
+      ]);
+      if (nextResults[0]) void openFrameContext(nextResults[0]);
+      setStatus(
+        answer ? "QA answer ready" : `${nextResults.length} evidence frames`,
+      );
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? error.message.slice(0, 96)
+          : "QA request failed";
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${messageId}`,
+          role: "assistant",
+          text: `${reasoningModelLabels[reasoningModel]} could not complete the QA request: ${detail}`,
+          trace: fallbackTrace.map((step, index) =>
+            index === 0 ? { ...step, detail, status: "warning" } : step,
+          ),
+        },
+      ]);
+      setStatus("Chat request failed");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function restoreHistory(item: SearchHistoryItem) {
@@ -1998,7 +2336,10 @@ export function App() {
     if (item.results[0]) void openFrameContext(item.results[0]);
   }
 
-  async function openVideoPreview(result: SearchResult, trakeEventIndex: number | null = null) {
+  async function openVideoPreview(
+    result: SearchResult,
+    trakeEventIndex: number | null = null,
+  ) {
     let videoUrl = firstMediaUrl(
       result.video_url,
       `/api/media/videos/${result.video_id}/preview`,
@@ -2017,9 +2358,11 @@ export function App() {
     const fallbackFrame = contextFrameFromResult(result);
     const initialFrames = fallbackFrame ? [fallbackFrame] : [];
     const initialTimestamp = fallbackFrame?.timestamp_ms ?? result.timestamp_ms;
-    const frameLabel = fallbackFrame ? `frame ${fallbackFrame.frame_idx}` : "sequence";
+    const frameLabel = fallbackFrame
+      ? `frame ${fallbackFrame.frame_idx}`
+      : "sequence";
     const initialSeconds = Math.max(0, (initialTimestamp ?? 0) / 1000);
-    setVideoEvidenceOpen(false);
+    setVideoEvidenceOpen(hasTemporalEventMatches(result));
     setVideoPreview({
       title: result.video_code,
       subtitle: `${frameLabel} | ${timestampLabel(initialTimestamp)}`,
@@ -2042,7 +2385,9 @@ export function App() {
       const nextContext = await getFrameContext(result.frame_id);
       const targetIndex = Math.max(
         0,
-        nextContext.frames.findIndex((frame) => frame.id === nextContext.target_frame_id),
+        nextContext.frames.findIndex(
+          (frame) => frame.id === nextContext.target_frame_id,
+        ),
       );
       const activeFrame = nextContext.frames[targetIndex] ?? fallbackFrame;
       setVideoPreview((current) => {
@@ -2099,7 +2444,12 @@ export function App() {
   async function selectCurrentVideoFrame() {
     const current = videoPreview;
     const seconds = videoPreviewRef.current?.currentTime;
-    if (!current || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+    if (
+      !current ||
+      seconds === undefined ||
+      !Number.isFinite(seconds) ||
+      seconds < 0
+    ) {
       setStatus("Video time is not ready yet");
       return;
     }
@@ -2148,7 +2498,11 @@ export function App() {
         frameIdx: frame.frame_idx,
         direction,
       });
-      applyVideoPreviewFrame(current.result.id, resolved.frame, resolved.selection);
+      applyVideoPreviewFrame(
+        current.result.id,
+        resolved.frame,
+        resolved.selection,
+      );
       setStatus(`Frame ${resolved.selection.frame_idx} selected`);
     } catch {
       setVideoPreview((preview) =>
@@ -2174,25 +2528,33 @@ export function App() {
         video_code: videoPreview.result.video_code,
         timestamp_ms: videoPreview.selectedTimestampMs,
         score: videoPreview.result.score,
-        visual_score: scoreFromBreakdown(videoPreview.result, [
-          "semantic_score",
-          "visual_score",
-          "semantic",
-          "visual",
-        ]) ?? undefined,
-        text_score: scoreFromBreakdown(videoPreview.result, [
-          "text_score",
-          "metadata_score",
-          "text",
-        ]) ?? undefined,
-        rrf_score: scoreFromBreakdown(videoPreview.result, ["rrf_score", "rrf"]) ?? undefined,
+        visual_score:
+          scoreFromBreakdown(videoPreview.result, [
+            "semantic_score",
+            "visual_score",
+            "semantic",
+            "visual",
+          ]) ?? undefined,
+        text_score:
+          scoreFromBreakdown(videoPreview.result, [
+            "text_score",
+            "metadata_score",
+            "text",
+          ]) ?? undefined,
+        rrf_score:
+          scoreFromBreakdown(videoPreview.result, ["rrf_score", "rrf"]) ??
+          undefined,
         event_index: videoPreview.trakeEventIndex,
         thumbnail_url: frame.thumbnail_url,
         image_url: frame.image_url ?? null,
         image_uri: frame.image_uri ?? null,
         image_storage_key: frame.image_storage_key ?? null,
       };
-      pickTrakeFrame(videoPreview.result, trakeFrame, videoPreview.trakeEventIndex);
+      pickTrakeFrame(
+        videoPreview.result,
+        trakeFrame,
+        videoPreview.trakeEventIndex,
+      );
       return;
     }
     const row: SubmissionRow = {
@@ -2207,14 +2569,16 @@ export function App() {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
       return normalizeRanks([...current, row]).slice(0, 100);
     });
-    setStatus(`Added ${videoPreview.result.video_code} frame ${videoPreview.selectedFrameIdx}`);
+    setStatus(
+      `Added ${videoPreview.result.video_code} frame ${videoPreview.selectedFrameIdx}`,
+    );
   }
 
   function exportLocalCsv() {
     const blob = new Blob([buildSubmissionCsv(selected)], {
       type: "text/csv;charset=utf-8",
     });
-    const name = csvDownloadName(queryName || "submission");
+    const name = csvDownloadName(exportFileName || "submission");
     downloadCsvBlob(blob, name);
     setStatus("CSV downloaded");
   }
@@ -2225,7 +2589,7 @@ export function App() {
     try {
       if (datasetId.startsWith("mock"))
         throw new Error("Using local mock dataset");
-      const csvName = csvDownloadName(queryName || "submission");
+      const csvName = csvDownloadName(exportFileName || "submission");
       const name = csvName.replace(/\.csv$/i, "");
       const exported = await createAndExportSubmission(
         datasetId,
@@ -2419,7 +2783,9 @@ export function App() {
                     Video name / code
                     <input
                       value={videoCodeQuery}
-                      onChange={(event) => setVideoCodeQuery(event.target.value)}
+                      onChange={(event) =>
+                        setVideoCodeQuery(event.target.value)
+                      }
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
@@ -2436,7 +2802,9 @@ export function App() {
                       min={0}
                       step={1}
                       value={videoFrameQuery}
-                      onChange={(event) => setVideoFrameQuery(event.target.value)}
+                      onChange={(event) =>
+                        setVideoFrameQuery(event.target.value)
+                      }
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
@@ -2448,13 +2816,6 @@ export function App() {
                   </label>
                 </>
               )}
-              <label className="compact-field query-file">
-                Query file
-                <input
-                  value={queryName}
-                  onChange={(event) => setQueryName(event.target.value)}
-                />
-              </label>
             </div>
           </div>
 
@@ -2474,7 +2835,9 @@ export function App() {
 
           {mode === "Search" && (
             <section className="frame-section">
-              {(loading || hasSearched) && <ReasoningDisclosure steps={autoTrace} />}
+              {(loading || hasSearched) && (
+                <ReasoningDisclosure steps={autoTrace} />
+              )}
               {loading ? (
                 <SearchLoadingStage frameColumns={frameColumns} />
               ) : galleryLoading && !hasSearched ? (
@@ -2681,7 +3044,9 @@ export function App() {
           <div className="composer">
             {queryType === "VIDEO" && mode !== "Chat" ? (
               <div className="video-lookup-composer" aria-live="polite">
-                <strong>{videoCodeQuery.trim() || "Video code required"}</strong>
+                <strong>
+                  {videoCodeQuery.trim() || "Video code required"}
+                </strong>
                 <span>
                   {videoFrameQuery.trim()
                     ? `nearest to F${videoFrameQuery}`
@@ -2767,26 +3132,36 @@ export function App() {
                           }
                         />
                       </label>
-                      <div className="visual-strategy" role="group" aria-label="Visual embedding model">
+                      <div
+                        className="visual-strategy"
+                        role="group"
+                        aria-label="Visual embedding model"
+                      >
                         <span>Visual</span>
                         <div className="segmented-control visual-segmented">
                           <button
                             type="button"
-                            className={visualSearchMode === "openclip" ? "active" : ""}
+                            className={
+                              visualSearchMode === "openclip" ? "active" : ""
+                            }
                             onClick={() => setVisualSearchMode("openclip")}
                           >
                             OpenCLIP
                           </button>
                           <button
                             type="button"
-                            className={visualSearchMode === "siglip2" ? "active" : ""}
+                            className={
+                              visualSearchMode === "siglip2" ? "active" : ""
+                            }
                             onClick={() => setVisualSearchMode("siglip2")}
                           >
                             SigLIP2
                           </button>
                           <button
                             type="button"
-                            className={visualSearchMode === "both" ? "active" : ""}
+                            className={
+                              visualSearchMode === "both" ? "active" : ""
+                            }
                             onClick={() => setVisualSearchMode("both")}
                           >
                             Both
@@ -2800,24 +3175,42 @@ export function App() {
                             <input
                               type="checkbox"
                               checked={kisTemporalMode}
-                              onChange={(event) => setKisTemporalMode(event.target.checked)}
+                              onChange={(event) =>
+                                setKisTemporalMode(event.target.checked)
+                              }
                             />
                           </label>
                           {kisTemporalMode && (
-                            <div className="temporal-strategy" role="group" aria-label="Temporal strategy">
+                            <div
+                              className="temporal-strategy"
+                              role="group"
+                              aria-label="Temporal strategy"
+                            >
                               <span>Strategy</span>
                               <div className="segmented-control">
                                 <button
                                   type="button"
-                                  className={temporalStrategy === "vortex_k_context" ? "active" : ""}
-                                  onClick={() => setTemporalStrategy("vortex_k_context")}
+                                  className={
+                                    temporalStrategy === "vortex_k_context"
+                                      ? "active"
+                                      : ""
+                                  }
+                                  onClick={() =>
+                                    setTemporalStrategy("vortex_k_context")
+                                  }
                                 >
                                   Strategy 1
                                 </button>
                                 <button
                                   type="button"
-                                  className={temporalStrategy === "aithena_weighted_ats" ? "active" : ""}
-                                  onClick={() => setTemporalStrategy("aithena_weighted_ats")}
+                                  className={
+                                    temporalStrategy === "aithena_weighted_ats"
+                                      ? "active"
+                                      : ""
+                                  }
+                                  onClick={() =>
+                                    setTemporalStrategy("aithena_weighted_ats")
+                                  }
                                 >
                                   Strategy 2
                                 </button>
@@ -2851,21 +3244,41 @@ export function App() {
                   </button>
                 )}
               </div>
-              <button
-                type="button"
-                className="send-button"
-                onClick={() => void submitSearch()}
-                disabled={loading}
-                aria-label={mode === "Chat" ? "Send message" : "Run search"}
-              >
-                {loading ? (
-                  <Loader2 className="spin-icon" size={18} />
-                ) : mode === "Chat" ? (
-                  <Send size={18} />
-                ) : (
-                  <Search size={18} />
-                )}
-              </button>
+              <div className="composer-submit-actions">
+                <label className="reasoning-model-select">
+                  <span className="sr-only">Reasoning model</span>
+                  <select
+                    value={reasoningModel}
+                    onChange={(event) =>
+                      setReasoningModel(event.target.value as ReasoningModel)
+                    }
+                    aria-label="Reasoning model"
+                  >
+                    {(Object.keys(reasoningModelLabels) as ReasoningModel[]).map(
+                      (model) => (
+                        <option key={model} value={model}>
+                          {reasoningModelLabels[model]}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="send-button"
+                  onClick={() => void submitSearch()}
+                  disabled={loading}
+                  aria-label={mode === "Chat" ? "Send message" : "Run search"}
+                >
+                  {loading ? (
+                    <Loader2 className="spin-icon" size={18} />
+                  ) : mode === "Chat" ? (
+                    <Send size={18} />
+                  ) : (
+                    <Search size={18} />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </footer>
@@ -2911,7 +3324,7 @@ export function App() {
         <section className="context-panel">
           <div className="panel-heading">
             <strong>Frame context</strong>
-            <span>{context?.video_code ?? activeDataset.name}</span>
+            {/* <span>{context?.video_code ?? activeDataset.name}</span> */}
           </div>
           <div className="context-list">
             {context?.frames.map((frame) => (
@@ -2933,6 +3346,15 @@ export function App() {
         </section>
 
         <section className="export-panel">
+          <label className="export-file-field">
+            Query file
+            <input
+              value={exportFileName}
+              onChange={(event) => setExportFileName(event.target.value)}
+              placeholder="submission"
+              aria-label="Export CSV file name"
+            />
+          </label>
           <button
             type="button"
             className="export-button"
@@ -2957,7 +3379,7 @@ export function App() {
               <X size={14} />
             </button>
           </div>
-          <div className="settings-block">
+          {/* <div className="settings-block">
             <span>Search coefficients</span>
             {(Object.keys(weights) as Array<keyof typeof weights>).map(
               (key) => (
@@ -2976,7 +3398,7 @@ export function App() {
                 </label>
               ),
             )}
-          </div>
+          </div> */}
           <div className="settings-block toggles">
             <button
               type="button"
@@ -3049,9 +3471,17 @@ export function App() {
                   type="button"
                   className={`icon-button ${videoEvidenceOpen ? "active" : ""}`}
                   onClick={() => setVideoEvidenceOpen((open) => !open)}
-                  aria-label={videoEvidenceOpen ? "Hide text evidence" : "Show text evidence"}
+                  aria-label={
+                    videoEvidenceOpen
+                      ? "Hide text evidence"
+                      : "Show text evidence"
+                  }
                   aria-pressed={videoEvidenceOpen}
-                  title={videoEvidenceOpen ? "Hide text evidence" : "Show text evidence"}
+                  title={
+                    videoEvidenceOpen
+                      ? "Hide text evidence"
+                      : "Show text evidence"
+                  }
                 >
                   <PanelLeft size={16} />
                 </button>
@@ -3071,103 +3501,120 @@ export function App() {
                   evidence={videoPreview.evidence}
                   loading={videoPreview.evidenceLoading}
                   frameIdx={videoPreview.selectedFrameIdx}
+                  result={videoPreview.result}
                 />
               )}
               <div className="video-modal-main">
                 <video
-              ref={videoPreviewRef}
-              className="video-preview-player"
-              src={videoPreview.url}
-              poster={videoPreview.posterUrl ?? undefined}
-              controls
-              preload="metadata"
-              playsInline
-              onLoadedMetadata={(event) => event.currentTarget.pause()}
-                  onTimeUpdate={(event) => setVideoPlaybackSeconds(event.currentTarget.currentTime)}
+                  ref={videoPreviewRef}
+                  className="video-preview-player"
+                  src={videoPreview.url}
+                  poster={videoPreview.posterUrl ?? undefined}
+                  controls
+                  preload="metadata"
+                  playsInline
+                  onLoadedMetadata={(event) => event.currentTarget.pause()}
+                  onTimeUpdate={(event) =>
+                    setVideoPlaybackSeconds(event.currentTarget.currentTime)
+                  }
                 />
                 <div className="video-current-frame-actions">
-              {videoPreview.trakeEventIndex !== null && (
-                <label className="trake-video-slot">
-                  <span>Sequence slot</span>
-                  <select
-                    value={videoPreview.trakeEventIndex}
-                    onChange={(event) => {
-                      const nextIndex = Number.parseInt(event.target.value, 10);
-                      if (!Number.isInteger(nextIndex)) return;
-                      setVideoPreview((current) =>
-                        current
-                          ? { ...current, trakeEventIndex: nextIndex }
-                          : current,
-                      );
-                    }}
+                  {videoPreview.trakeEventIndex !== null && (
+                    <label className="trake-video-slot">
+                      <span>Sequence slot</span>
+                      <select
+                        value={videoPreview.trakeEventIndex}
+                        onChange={(event) => {
+                          const nextIndex = Number.parseInt(
+                            event.target.value,
+                            10,
+                          );
+                          if (!Number.isInteger(nextIndex)) return;
+                          setVideoPreview((current) =>
+                            current
+                              ? { ...current, trakeEventIndex: nextIndex }
+                              : current,
+                          );
+                        }}
+                      >
+                        {Array.from(
+                          { length: trakeEventCount },
+                          (_, index) => index + 1,
+                        ).map((eventIndex) => (
+                          <option key={eventIndex} value={eventIndex}>
+                            E{eventIndex}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={videoPreview.loadingFrames}
+                    onClick={() => void selectCurrentVideoFrame()}
+                    title="Select the frame currently shown in the video"
                   >
-                    {Array.from({ length: trakeEventCount }, (_, index) => index + 1).map(
-                      (eventIndex) => (
-                        <option key={eventIndex} value={eventIndex}>
-                          E{eventIndex}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-              )}
-              <button
-                type="button"
-                className="ghost-button"
-                disabled={videoPreview.loadingFrames}
-                onClick={() => void selectCurrentVideoFrame()}
-                title="Select the frame currently shown in the video"
-              >
-                <LocateFixed size={16} />
-                Select current frame
-              </button>
+                    <LocateFixed size={16} />
+                    Select current frame
+                  </button>
                 </div>
                 <div className="video-frame-toolbar">
-              <button
-                type="button"
-                className="ghost-button"
-                disabled={!videoPreviewCanStepBack}
-                onClick={() => shiftVideoPreview(-1)}
-              >
-                <ChevronLeft size={16} />
-                Prev
-              </button>
-              <div className="video-frame-current">
-                {videoPreviewFrame ? (
-                  <>
-                    <strong>Frame {videoPreview.selectedFrameIdx ?? videoPreviewFrame.frame_idx}</strong>
-                    <small>
-                      {timestampLabel(videoPreview.selectedTimestampMs)}
-                      {videoPreview.loadingFrames ? " | loading context" : ""}
-                    </small>
-                  </>
-                ) : (
-                  <>
-                    <strong>Sequence</strong>
-                    <small>{videoPreview.loadingFrames ? "loading context" : "no frame context"}</small>
-                  </>
-                )}
-              </div>
-              <button
-                type="button"
-                className="ghost-button"
-                disabled={!videoPreviewCanStepForward}
-                onClick={() => shiftVideoPreview(1)}
-              >
-                Next
-                <ChevronRight size={16} />
-              </button>
-              <button
-                type="button"
-                className="select-button"
-                disabled={!videoPreviewFrame}
-                onClick={addVideoPreviewFrame}
-              >
-                <Plus size={15} />
-                {videoPreview.trakeEventIndex !== null
-                  ? `Add to E${videoPreview.trakeEventIndex} sequence`
-                  : "Pick frame"}
-              </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={!videoPreviewCanStepBack}
+                    onClick={() => shiftVideoPreview(-1)}
+                  >
+                    <ChevronLeft size={16} />
+                    Prev
+                  </button>
+                  <div className="video-frame-current">
+                    {videoPreviewFrame ? (
+                      <>
+                        <strong>
+                          Frame{" "}
+                          {videoPreview.selectedFrameIdx ??
+                            videoPreviewFrame.frame_idx}
+                        </strong>
+                        <small>
+                          {timestampLabel(videoPreview.selectedTimestampMs)}
+                          {videoPreview.loadingFrames
+                            ? " | loading context"
+                            : ""}
+                        </small>
+                      </>
+                    ) : (
+                      <>
+                        <strong>Sequence</strong>
+                        <small>
+                          {videoPreview.loadingFrames
+                            ? "loading context"
+                            : "no frame context"}
+                        </small>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={!videoPreviewCanStepForward}
+                    onClick={() => shiftVideoPreview(1)}
+                  >
+                    Next
+                    <ChevronRight size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="select-button"
+                    disabled={!videoPreviewFrame}
+                    onClick={addVideoPreviewFrame}
+                  >
+                    <Plus size={15} />
+                    {videoPreview.trakeEventIndex !== null
+                      ? `Add to E${videoPreview.trakeEventIndex} sequence`
+                      : "Pick frame"}
+                  </button>
                 </div>
                 <div className="video-score-panel">
                   <ScoreBreakdown result={videoPreview.result} />
