@@ -782,6 +782,28 @@ def test_request_agent_model_overrides_deployment_default_profile(
     db.close()
 
 
+def test_gpt5_nano_planner_profile_preserves_reasoning_budget() -> None:
+    config_path = Path(__file__).resolve().parents[3] / "configs" / "agent.yaml"
+    planner = AgentQueryPlanner.from_config(config_path)
+    planner.agent_config["request_profile_override"] = "openai_gpt5_nano"
+
+    kwargs = planner._chat_model_kwargs("max_completion_tokens")  # noqa: SLF001 - checks profile wiring.
+
+    assert kwargs["model"] == "gpt-5-nano"
+    assert kwargs["max_completion_tokens"] == 4096
+    assert kwargs["reasoning_effort"] == "low"
+
+
+def test_dev_planner_prompt_requires_distinctive_event_priors() -> None:
+    config_path = Path(__file__).resolve().parents[3] / "configs" / "agent.yaml"
+    planner = AgentQueryPlanner.from_config(config_path)
+    prompt = planner.agent_config["agents"]["planner"]["system_prompt"]
+
+    assert "DEV-first uses two distinct event signals" in prompt
+    assert "Do not assign uniform `importance` or `diagnostic_prior` values" in prompt
+    assert "terminal cue" in prompt
+
+
 def test_m4_agent_profile_env_override_resolves_provider_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -824,6 +846,26 @@ def test_agent_planner_promotes_english_rewrite_when_agent_returns_raw_vietnames
         "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species",
         query,
     ]
+
+
+def test_agent_planner_does_not_hallucinate_red_shirt_from_red_object() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    rewrite = planner._english_retrieval_rewrite(  # noqa: SLF001 - protects a retrieval-critical heuristic.
+        "Một người phụ nữ lấy thành phẩm từ đồ vật màu đỏ rồi cho nguyên liệu vào.",
+    )
+
+    assert rewrite != "person wearing a red shirt"
+
+
+def test_agent_planner_adds_precise_visual_rewrite_for_white_noodle_strands() -> None:
+    planner = AgentQueryPlanner(config={"llm_query_planning": {"enabled": False}})
+
+    rewrite = planner._english_retrieval_rewrite(  # noqa: SLF001 - validates Vietnamese visual semantics.
+        "Thành phẩm màu trắng nở to, có hình thù giống các sợi que dính với nhau.",
+    )
+
+    assert rewrite == "white vermicelli noodle strands arranged on a white tray"
 
 
 def test_agent_planner_repairs_vietnamese_temporal_events_for_embedding(monkeypatch: pytest.MonkeyPatch) -> None:

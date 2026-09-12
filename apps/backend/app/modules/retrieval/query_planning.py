@@ -430,6 +430,9 @@ class AgentQueryPlanner:
         max_tokens = self._profile_value("max_tokens", None)
         if max_tokens is not None:
             model_kwargs[token_key] = int(max_tokens)
+        reasoning_effort = str(self._profile_value("reasoning_effort", "")).strip()
+        if reasoning_effort:
+            model_kwargs["reasoning_effort"] = reasoning_effort
         base_url_env = str(self._profile_value("base_url_env", "")).strip()
         base_url = os.getenv(base_url_env, "").strip() if base_url_env else ""
         if base_url:
@@ -1045,7 +1048,16 @@ class AgentQueryPlanner:
             )
         if ("dan ho" in folded or "ho con" in folded) and ("mien nam" in folded or "moi sinh" in folded):
             return "news segment about a tiger family in southern Vietnam with newborn tiger cubs, rare tiger species"
-        if "nguoi ao do" in folded or ("nguoi" in folded and "ao" in folded and " do" in f" {folded} "):
+        if (
+            ("no to" in folded or "phong to" in folded)
+            and ("soi que" in folded or "que dinh" in folded)
+            and "mau trang" in folded
+        ):
+            return "white vermicelli noodle strands arranged on a white tray"
+        # Match the clothing phrase as complete tokens.  Substring matching
+        # mistook ordinary Vietnamese phrases such as "vào ... sau đó" and
+        # "đồ vật màu đỏ" for a person in a red shirt.
+        if re.search(r"\bnguoi\s+(?:mac\s+)?ao\s+do\b", folded):
             return "person wearing a red shirt"
 
         phrase_map = [

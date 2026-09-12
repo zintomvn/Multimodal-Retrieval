@@ -34,7 +34,10 @@ llm_query_planning:
       model: gpt-5-nano
       api_key_env: OPENAI_API_KEY
       temperature: 0.05
-      max_tokens: 2048
+      # GPT-5 reserves part of the completion budget for reasoning.  A short
+      # budget can therefore end before it emits the JSON plan.
+      max_tokens: 4096
+      reasoning_effort: low
       timeout_s: 30
       max_retries: 5
       min_request_interval_s: 1.0
@@ -146,11 +149,15 @@ llm_query_planning:
         - Translate abstract descriptions into concrete, observable visual terms chosen from the user query itself. Do not use a fixed domain vocabulary or example-specific scene/object mappings.
         - Keep each multi-view rewrite under 24 words.
         - Make the first root multi-view the best concise English retrieval rewrite, not the raw Vietnamese query.
-        - When `temporal_kis` is true for a KIS request, always decide whether the query has one event, an explicit ordered sequence, or an implicit narrative sequence. Narrative scene changes across sentences can be chronological even without cue words. Split only independently retrievable visual moments (2 to 8 events) and create event-level English multi_views plus Vietnamese text views. Set `temporal_intent`, a [0,1] `diagnostic_prior` relative to this chain, and one edge per adjacent event using a semantic gap class; never invent exact durations. Use `target_scope=video_sequence`, `anchor_policy=none`, and null anchor when the whole clip is described; never choose the middle event as a semantic target. Use `target_scope=frame` and an explicit 1-based anchor only when the user identifies a requested moment. Do not invent context: return one event only when no supported transition can be inferred.
+        - Before returning JSON, verify that every summary and root multi-view is supported by the current query. Never reuse people, clothing, objects, or actions from an earlier request; remove an unsupported view instead of keeping it.
+        - When `temporal_kis` is true for a KIS request, always decide whether the query has one event, an explicit ordered sequence, or an implicit narrative sequence. Narrative scene changes across sentences can be chronological even without cue words. Split only independently retrievable visual moments (2 to 8 events) and create event-level English multi_views plus Vietnamese text views. Set `temporal_intent`, a [0,1] `diagnostic_prior` relative to this chain, and one edge per adjacent event using a semantic gap class; never invent exact durations. Use `target_scope=video_sequence`, `anchor_policy=none`, and null anchor when the whole clip is described. However, for KIS with an explicit terminal cue (`finally`, `last`, `cuối cùng`) that identifies the requested culmination, use `target_scope=frame`, `anchor_policy=explicit`, and set `temporal_anchor_index` to that terminal event. Never choose a middle event as a semantic target. Do not invent context: return one event only when no supported transition can be inferred.
         - For KIS/QA when `temporal_kis` is false, return one temporal event equal to the main target.
         - For TRAKE or ordered queries, split events into chronological standalone queries.
         - For TRAKE queries with labels like E1, E2, ..., En, return exactly n `temporal_events` in the same order; never merge them into one query.
-        - For every temporal event, set `importance` from 0.0 to 1.0 based on how diagnostic that event is for identifying the sequence, and infer its own `retrieval_weights` and `text_source_weights` using the same evidence rules. Both weight objects must sum to 1.0. Cooking actions, body motion, object contact, and spatial changes usually favor visual/caption evidence; spoken facts and dialogue favor ASR; visible titles, names, and numbers favor OCR.
+        - DEV-first uses two distinct event signals. Set `diagnostic_prior` to the expected ability of the event to identify the correct video before sequence construction. Set `importance` to the value of a correct frame from that event in the final result. These values may differ: a rare object/action can receive high `diagnostic_prior`, while an explicitly requested final moment can receive high `importance` and be the frame anchor.
+        - Estimate diagnostic value from observable and searchable evidence only. Give a high `diagnostic_prior` (typically 0.75--1.0) to a concrete conjunction of a distinctive object, action, state transition, colour, shape, count, or spatial relation. Give a low prior (typically 0.10--0.40) to generic evidence such as a chef, pot, boiling, stirring, or adding an unspecified ingredient. Do not claim that a frame exists or invent an object absent from the query.
+        - Do not assign uniform `importance` or `diagnostic_prior` values merely because events have equal narrative length. Unless events are genuinely indistinguishable, use a meaningful separation of at least 0.20 between the most and least diagnostic events. At least one event must have the largest diagnostic prior. Explain this distinction concisely in `retrieval_strategy.rationale`.
+        - For every temporal event, set `importance` and `diagnostic_prior` from 0.0 to 1.0, and infer its own `retrieval_weights` and `text_source_weights` using the same evidence rules. Both weight objects must sum to 1.0. Cooking actions, body motion, object contact, and spatial changes usually favor visual/caption evidence; spoken facts and dialogue favor ASR; visible titles, names, and numbers favor OCR.
     query_decomposition:
       name: query_decomposition_agent
       description: Extracts visual, textual, object, scene, and temporal factors from the query.
