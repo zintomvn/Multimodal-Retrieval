@@ -57,7 +57,7 @@ competition_default:
       top_k: 8
   temporal:
     delta_t_max_ms: 180000
-    min_match_ratio: 0.67
+    min_match_ratio: 0.50
     per_query_video_limit: 24
     prefer_full_sequences: true
     compactness_weight: 0.35
@@ -66,9 +66,10 @@ competition_default:
   dev_first:
     diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45}
     diagnostic_candidate_frames: 500
-    candidate_video_limit: 40
+    candidate_video_limit: 60
     min_candidate_videos: 8
-    video_scoring: {best_weight: 0.55, top_m_mean_weight: 0.30, view_agreement_weight: 0.15, top_m: 3}
+    video_scoring: {best_weight: 0.55, top_m_mean_weight: 0.30, view_agreement_weight: 0.15, top_m: 3, diagnostic_weight: 0.55, cross_event_weight: 0.35, coverage_weight: 0.10}
+    narrative_probe: {enabled: true, top_k: 200, candidate_video_limit: 20}
     event_retrieval: {initial_top_k: 200, max_top_k: 1000, widening_factor: 2, min_candidates_per_event: 20}
     event_nms_window_ms: 2500
     per_video_candidate_min_gap_ms: 1500

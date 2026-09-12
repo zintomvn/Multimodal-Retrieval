@@ -26,10 +26,11 @@ from app.modules.retrieval.temporal_query import TemporalEventParse, parse_tempo
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
 from app.modules.temporal.dev_first import (
     DevFirstCandidate,
-    build_dev_first_sequences,
+    build_dev_first_vortex_ats_sequences,
     calibrate_candidates,
     event_probe,
     score_candidate_videos,
+    score_candidate_videos_across_events,
     select_diagnostic_event,
     temporal_nms,
 )
@@ -961,6 +962,16 @@ class RetrievalService:
             plan = plans[event_index - 1]
             query = events[event_index - 1]
             semantic_views = self._event_semantic_views(plan, query, max_views=8)
+            # The final event often describes the sought product/state while
+            # the root plan carries a more precise semantic rewrite of the
+            # whole Vietnamese narrative.  Inject it as an auxiliary view so
+            # event retrieval retains that information instead of embedding a
+            # vague phrase such as "stick-like product" by itself.
+            if event_index == len(events):
+                semantic_views = self._dedupe_query_variants(
+                    [*semantic_views, *list(normalized.get("semantic_variants") or [])],
+                    max_variants=8,
+                )
             text_views = self._event_text_views(plan, str(plan.get("text_query") or query), max_views=8)
             weights = self._normalize_retrieval_weights(plan.get("retrieval_weights")) or normalized.get("retrieval_weights")
             text_weights = self._normalize_text_source_weights(plan.get("text_source_weights")) or self._normalize_text_source_weights(normalized.get("text_source_weights"))
@@ -993,9 +1004,61 @@ class RetrievalService:
             retrieve(diagnostic_index, max(probe_top_k, int(config.get("diagnostic_candidate_frames", 500)))),
             int(config.get("event_nms_window_ms", 2500)),
         )
-        video_ranking = score_candidate_videos(diagnostic, config)
+        # Preserve the diagnostic event's role, but seed candidate videos with
+        # every event probe so a broad diagnostic event cannot remove the true
+        # video before the later frame-level sequence search starts.
+        seed_candidate_sets = list(probes)
+        # The chosen diagnostic event is intentionally retrieved to a deeper
+        # pool. Keep that recall in video seeding; the lightweight probes from
+        # other events only add corroborating evidence.
+        seed_candidate_sets[diagnostic_index - 1] = diagnostic
+        video_ranking = score_candidate_videos_across_events(seed_candidate_sets, diagnostic_index, config)
+        if not video_ranking:
+            video_ranking = score_candidate_videos(diagnostic, config)
         candidate_limit = max(1, int(config.get("candidate_video_limit", 40)))
         candidate_video_ids = {video_id for video_id, _score in video_ranking[:candidate_limit]}
+        narrative_cfg = config.get("narrative_probe", {}) if isinstance(config.get("narrative_probe"), dict) else {}
+        if len(events) > 1 and bool(narrative_cfg.get("enabled", True)):
+            narrative_views = self._dedupe_query_variants(
+                list(normalized.get("semantic_variants") or []) + [request.query_text],
+                max_variants=8,
+            )
+            narrative_text = self._dedupe_query_variants(
+                list(normalized.get("text_variants") or []) + [request.query_text],
+                max_variants=8,
+            )
+            narrative_ranked = self._rank_frames_multiperspective(
+                dataset=dataset,
+                semantic_views=narrative_views,
+                text_views=narrative_text,
+                query_text=request.query_text,
+                profile_name=request.profile,
+                options=request.options,
+                top_k=max(1, int(narrative_cfg.get("top_k", 200))),
+                retrieval_weights=normalized.get("retrieval_weights"),
+                use_agent_retrieval_weights=normalized.get("retrieval_weight_source") == "agent",
+                text_source_weights=self._normalize_text_source_weights(normalized.get("text_source_weights")),
+            )
+            narrative_candidates = calibrate_candidates(
+                [
+                    DevFirstCandidate(
+                        frame_id=item.frame.id,
+                        video_id=item.frame.video_id,
+                        video_code=item.frame.video.video_code,
+                        frame_idx=item.frame.frame_idx,
+                        event_index=0,
+                        event_query=request.query_text,
+                        timestamp_ms=item.frame.timestamp_ms if item.frame.timestamp_ms is not None else None,
+                        final_retrieval_score=item.final_score,
+                        rrf_score=item.rrf_score,
+                    )
+                    for item in narrative_ranked
+                ],
+                calibration,
+            )
+            narrative_videos = score_candidate_videos(narrative_candidates, config)
+            narrative_limit = max(0, int(narrative_cfg.get("candidate_video_limit", 20)))
+            candidate_video_ids.update(video_id for video_id, _score in narrative_videos[:narrative_limit])
         fallback_stages: list[str] = []
         if len(candidate_video_ids) < int(config.get("min_candidate_videos", 8)):
             fallback_stages.append("global_event_retrieval")
@@ -1021,7 +1084,8 @@ class RetrievalService:
                         break
                     current_top_k = min(max_top_k, current_top_k * widening)
                 if not candidates and candidate_video_ids:
-                    # Recall recovery remains DEV scoring, never ATS/Vortex.
+                    # Recover the event globally.  The later Vortex--ATS stage
+                    # still performs all temporal construction and DEV scoring.
                     candidates = retrieve(event_index, max_top_k)
                     fallback_stages.append(f"global_recovery_event_{event_index}")
             candidates = temporal_nms(
@@ -1043,10 +1107,13 @@ class RetrievalService:
             weights = [1.0] * len(events)
         ratio = max(0.0, min(1.0, float(config.get("min_match_ratio", 0.5))))
         min_match = request.options.min_match or max(1, math.ceil(len(events) * ratio))
-        sequences = build_dev_first_sequences(
+        if len(events) > 1:
+            min_match = max(2, min_match)
+        sequences = build_dev_first_vortex_ats_sequences(
             candidate_sets, weights, diagnostic_index,
             normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
             config, min_match, max(request.top_k * 4, request.top_k),
+            request.options.delta_t_max_ms,
         )
         target_scope = str(normalized.get("target_scope") or "frame")
         anchor_index = normalized.get("temporal_anchor_index")
@@ -1058,7 +1125,19 @@ class RetrievalService:
         coordinate = "timestamp_ms" if all(candidate.timestamp_ms is not None for candidates in candidate_sets for candidate in candidates) else "frame_idx_fallback"
         items: list[ResultItem] = []
         for rank, sequence in enumerate(sequences, start=1):
-            representative = max(sequence.candidates, key=lambda item: item.calibrated_event_score)
+            anchor_candidate = next(
+                (item for item in sequence.candidates if item.event_index == anchor_index),
+                None,
+            ) if target_scope == "frame" and anchor_index else None
+            representative = anchor_candidate or max(
+                sequence.candidates,
+                key=lambda item: item.calibrated_event_score,
+            )
+            representative_policy = (
+                "requested_anchor_event"
+                if anchor_candidate is not None
+                else config.get("representative_frame_policy", "highest_confidence_matched_event")
+            )
             frame = frames.get(representative.frame_id)
             if frame is None:
                 continue
@@ -1074,8 +1153,9 @@ class RetrievalService:
                 frame_id=representative.frame_id, score=sequence.score,
                 score_breakdown={
                     "temporal_score": round(sequence.score, 6), "final_score": round(sequence.score, 6),
-                    "temporal_reranker": "dev_first_search", "temporal_strategy": "dev_first_search",
-                    "target_scope": target_scope, "representative_frame_policy": config.get("representative_frame_policy", "highest_confidence_matched_event"),
+                    "temporal_reranker": "dev_first_vortex_ats", "temporal_strategy": "dev_first_search",
+                    "temporal_components": ["vortex_hard_anchor", "aithena_ats_recovery", "dev_sequence_score"],
+                    "target_scope": target_scope, "representative_frame_policy": representative_policy,
                     "representative_event_index": representative.event_index, "diagnostic_event_index": diagnostic_index,
                     "diagnostic_events": diagnostics, "candidate_video_count": len(candidate_video_ids),
                     "fallback_stages": fallback_stages, "matched_events": len(sequence.candidates),

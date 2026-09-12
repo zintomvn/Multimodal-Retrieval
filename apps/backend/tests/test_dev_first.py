@@ -3,7 +3,9 @@ from __future__ import annotations
 from app.modules.temporal.dev_first import (
     DevFirstCandidate,
     build_dev_first_sequences,
+    build_dev_first_vortex_ats_sequences,
     score_candidate_videos,
+    score_candidate_videos_across_events,
     temporal_nms,
 )
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
@@ -73,9 +75,52 @@ def test_timestamp_constraint_does_not_use_frame_rate_assumption() -> None:
     assert [sequence.video_id for sequence in sequences] == ["good"]
 
 
+def test_dev_vortex_ats_recovers_a_sequence_with_a_missing_event() -> None:
+    sequences = build_dev_first_vortex_ats_sequences(
+        [
+            [candidate("target", 1, 1000, .90)],
+            [],
+            [candidate("target", 3, 3000, .90)],
+        ],
+        [1, 1, 1], 1,
+        [], config(), min_match=2, limit=10, default_max_gap_ms=5000,
+    )
+
+    assert sequences
+    assert [item.event_index for item in sequences[0].candidates] == [1, 3]
+    assert sequences[0].details["sequence_constructor"] == "vortex_hard_anchor_then_ats"
+
+
+def test_dev_vortex_ats_applies_timestamp_edges_after_ats() -> None:
+    sequences = build_dev_first_vortex_ats_sequences(
+        [
+            [candidate("good", 1, 1000, .80), candidate("bad", 1, 1000, .95)],
+            [candidate("good", 2, 1050, .80), candidate("bad", 2, 1200, .95)],
+        ],
+        [1, 1], 1,
+        [{"from_event": 1, "to_event": 2, "gap_class": "short"}],
+        config(), min_match=2, limit=10, default_max_gap_ms=100,
+    )
+
+    assert [sequence.video_id for sequence in sequences] == ["good"]
+
+
 def test_video_scoring_does_not_reward_duplicate_count() -> None:
     ranked = score_candidate_videos([candidate("a", 1, 1000, .9), candidate("a", 1, 2000, .1), candidate("b", 1, 1000, .8)], {"video_scoring": {"best_weight": 1, "top_m_mean_weight": 0, "view_agreement_weight": 0, "top_m": 3}})
     assert ranked[0][0] == "a"
+
+
+def test_cross_event_video_scoring_recovers_evidence_missed_by_generic_diagnostic() -> None:
+    ranked = score_candidate_videos_across_events(
+        [
+            [candidate("generic", 1, 1000, .95), candidate("target", 1, 1000, .80)],
+            [candidate("target", 2, 2000, .80)],
+        ],
+        diagnostic_index=1,
+        config={"video_scoring": {"diagnostic_weight": .55, "cross_event_weight": .35, "coverage_weight": .10}},
+    )
+
+    assert ranked[0][0] == "target"
 
 
 def test_dev_strategy_is_explicitly_dispatched_by_retrieval_service(tmp_path, monkeypatch) -> None:
@@ -92,7 +137,35 @@ def test_dev_strategy_is_explicitly_dispatched_by_retrieval_service(tmp_path, mo
         options=SearchOptions(use_query_expansion=False, temporal_mode=True, temporal_strategy="dev_first_search", temporal_events=["first", "second"], min_match=2),
     ))
     assert response.results
-    assert response.results[0].score_breakdown["temporal_reranker"] == "dev_first_search"
+    assert response.results[0].score_breakdown["temporal_reranker"] == "dev_first_vortex_ats"
+    assert response.results[0].score_breakdown["temporal_components"] == ["vortex_hard_anchor", "aithena_ats_recovery", "dev_sequence_score"]
     assert response.results[0].score_breakdown["temporal_coordinate"] == "timestamp_ms"
     assert [item["event_index"] for item in response.results[0].sequence_frames] == [1, 2]
+    db.close()
+
+
+def test_dev_frame_scope_returns_the_requested_anchor_not_the_best_event(tmp_path, monkeypatch) -> None:
+    db, service, dataset, first, second = _build_retrieval_fixture(tmp_path)
+
+    def fake_rank(**kwargs):
+        semantic_views = kwargs["semantic_views"]
+        frame = first if "first" in semantic_views[0] else second
+        score = .95 if frame is first else .60
+        return [FrameScore(frame=frame, semantic_score=score, text_score=.0, quality_score=.0, weighted_score=score, rrf_score=.0, final_score=score)]
+
+    monkeypatch.setattr(service, "_rank_frames_multiperspective", fake_rank)
+    response = service.search(SearchRequest(
+        dataset_id=dataset.dataset_id, query_type="KIS", query_text="first then second", top_k=3,
+        options=SearchOptions(
+            use_query_expansion=False,
+            temporal_mode=True,
+            temporal_strategy="dev_first_search",
+            temporal_events=["first", "second"],
+            temporal_anchor_index=2,
+            min_match=2,
+        ),
+    ))
+
+    assert response.results[0].frame_id == second.keyframe_id
+    assert response.results[0].score_breakdown["representative_frame_policy"] == "requested_anchor_event"
     db.close()

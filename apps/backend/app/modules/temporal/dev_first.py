@@ -1,14 +1,18 @@
 """Timestamp-aware Diagnostic Event Video-first (DEV) temporal retrieval.
 
-This module deliberately does not share ATS/Vortex's frame-index sequence
-builder.  It contains only deterministic, backend-independent operations so
-the service can use the normal hybrid frame retrieval stack around it.
+DEV narrows the collection with a diagnostic event, uses Vortex to select
+high-confidence temporal anchors, and uses ATS to recover valid partial
+sequences when a planned event has no retrieved frame.  Its final scorer and
+edge validation remain timestamp-aware and backend-independent.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import log
 from typing import Any
+
+from app.modules.temporal.ats import Candidate, adaptive_temporal_search
+from app.modules.temporal.vortex import vortex_k_context_rerank
 
 
 def _clamp(value: float) -> float:
@@ -146,6 +150,49 @@ def score_candidate_videos(candidates: list[DevFirstCandidate], config: dict[str
     return sorted(scored, key=lambda item: item[1], reverse=True)
 
 
+def score_candidate_videos_across_events(
+    candidate_sets: list[list[DevFirstCandidate]],
+    diagnostic_index: int,
+    config: dict[str, Any],
+) -> list[tuple[str, float]]:
+    """Rank videos from early evidence across the entire event chain.
+
+    A diagnostic event narrows the corpus, but it can be visually generic (for
+    example, "ingredients in a pot").  Scoring only that event can discard the
+    target before later, more discriminative events are searched.  This keeps
+    the diagnostic event dominant while rewarding independent support and
+    coverage from the remaining event probes.
+    """
+    cfg = config.get("video_scoring", {}) if isinstance(config.get("video_scoring"), dict) else {}
+    weights = _weights(
+        {
+            "diagnostic": cfg.get("diagnostic_weight", 0.55),
+            "cross_event": cfg.get("cross_event_weight", 0.35),
+            "coverage": cfg.get("coverage_weight", 0.10),
+        },
+        ("diagnostic", "cross_event", "coverage"),
+    )
+    event_count = max(1, len(candidate_sets))
+    per_video: dict[str, dict[int, float]] = {}
+    for event_index, candidates in enumerate(candidate_sets, start=1):
+        for candidate in candidates:
+            scores = per_video.setdefault(candidate.video_id, {})
+            scores[event_index] = max(scores.get(event_index, 0.0), candidate.calibrated_event_score)
+
+    ranked: list[tuple[str, float]] = []
+    for video_id, event_scores in per_video.items():
+        diagnostic = event_scores.get(diagnostic_index, 0.0)
+        cross_event = sum(event_scores.values()) / event_count
+        coverage = len(event_scores) / event_count
+        score = (
+            weights["diagnostic"] * diagnostic
+            + weights["cross_event"] * cross_event
+            + weights["coverage"] * coverage
+        )
+        ranked.append((video_id, _clamp(score)))
+    return sorted(ranked, key=lambda item: item[1], reverse=True)
+
+
 def resolve_edge_constraints(event_count: int, edges: list[dict[str, Any]], config: dict[str, Any]) -> dict[tuple[int, int], int | None]:
     classes = config.get("temporal_gap_classes", {}) if isinstance(config.get("temporal_gap_classes"), dict) else {}
     resolved: dict[tuple[int, int], int | None] = {}
@@ -220,6 +267,128 @@ def build_dev_first_sequences(candidate_sets: list[list[DevFirstCandidate]], eve
                 continue
             score, details = score_dev_first_sequence(state, event_weights, diagnostic_index, config)
             sequences.append(DevFirstSequence(video_id=video_id, video_code=code, candidates=state, score=score, details=details))
+    return diversify_sequences(sequences, config)[:limit]
+
+
+def build_dev_first_vortex_ats_sequences(
+    candidate_sets: list[list[DevFirstCandidate]],
+    event_weights: list[float],
+    diagnostic_index: int,
+    edges: list[dict[str, Any]],
+    config: dict[str, Any],
+    min_match: int,
+    limit: int,
+    default_max_gap_ms: int,
+) -> list[DevFirstSequence]:
+    """Construct DEV sequences through Vortex anchors followed by ATS recovery.
+
+    Vortex supplies high-confidence same-video anchors around the diagnostic
+    event.  ATS then searches the complete filtered candidate pools for those
+    videos and can explicitly skip an event with no candidate.  The candidate
+    projection uses timestamps as its coordinate, so neither component assumes
+    a fixed video frame rate.  DEV finally re-applies planner edge constraints
+    and its calibrated sequence score.
+    """
+    if not candidate_sets:
+        return []
+
+    constraints = resolve_edge_constraints(len(candidate_sets), edges, config)
+    known_gaps = [gap for gap in constraints.values() if gap is not None]
+    max_gap = max(1, max(known_gaps, default=max(1, default_max_gap_ms)))
+    per_event_limit = max(1, int(config.get("per_event_per_video_limit", 12)))
+    beam_width = max(1, int(config.get("sequence_beam_width", 200)))
+    video_limit = max(1, int(config.get("candidate_video_limit", 60)))
+
+    # Candidate.frame_idx is a generic ATS/Vortex coordinate.  Project stored
+    # timestamps into it, preserving frame_idx only when timestamps are absent.
+    original: dict[tuple[int, str], DevFirstCandidate] = {}
+    projected_sets: list[list[Candidate]] = []
+    for event_candidates in candidate_sets:
+        projected: list[Candidate] = []
+        for item in event_candidates:
+            original[(item.event_index, item.frame_id)] = item
+            projected.append(Candidate(
+                frame_id=item.frame_id,
+                video_id=item.video_id,
+                video_code=item.video_code,
+                frame_idx=item.timestamp_ms if item.timestamp_ms is not None else item.frame_idx,
+                score=item.calibrated_event_score,
+                text="",
+                event_index=item.event_index,
+                event_query=item.event_query,
+                visual_score=float(item.semantic_raw_score or 0.0),
+                text_score=float(item.text_raw_score or 0.0),
+                rrf_score=item.rrf_score,
+            ))
+        projected_sets.append(projected)
+
+    # Vortex fixes hard diagnostic anchors and ranks their compatible context.
+    # Request enough anchors to retain evidence from distinct selected videos.
+    anchor_limit = max(video_limit, sum(len(items) for items in projected_sets))
+    hard_sequences = vortex_k_context_rerank(
+        candidate_sets=projected_sets,
+        weights=event_weights,
+        anchor_index=diagnostic_index,
+        delta_frame_max=max_gap,
+        limit=anchor_limit,
+        per_query_video_limit=per_event_limit,
+        compactness_weight=0.0,
+        gap_penalty=0.0,
+    )
+    hard_video_ids: list[str] = []
+    for sequence in hard_sequences:
+        if sequence.video_id not in hard_video_ids:
+            hard_video_ids.append(sequence.video_id)
+        if len(hard_video_ids) >= video_limit:
+            break
+    allowed_videos = set(hard_video_ids)
+    if not allowed_videos:
+        allowed_videos = {item.video_id for event in candidate_sets for item in event}
+
+    # ATS consumes all filtered candidates from Vortex-selected videos, rather
+    # than only Vortex context frames, so it can recover an omitted event.
+    ats_sets = [[item for item in event if item.video_id in allowed_videos] for event in projected_sets]
+    ats_limit = max(limit * 20, max(1, len(allowed_videos)) * 5)
+    ats_sequences = adaptive_temporal_search(
+        candidate_sets=ats_sets,
+        weights=event_weights,
+        delta_frame_max=max_gap,
+        min_match=min_match,
+        limit=ats_limit,
+        per_query_video_limit=per_event_limit,
+        beam_width=beam_width,
+        prefer_full_sequences=False,
+        compactness_weight=0.0,
+        per_video_sequence_limit=0,
+    )
+
+    sequences: list[DevFirstSequence] = []
+    for sequence in ats_sequences:
+        candidates = [
+            original[(item.event_index, item.frame_id)]
+            for item in sequence.candidates
+            if (item.event_index, item.frame_id) in original
+        ]
+        if len(candidates) < min_match:
+            continue
+        if any(
+            not _valid_extension(previous, current, constraints)
+            for previous, current in zip(candidates, candidates[1:])
+        ):
+            continue
+        score, details = score_dev_first_sequence(candidates, event_weights, diagnostic_index, config)
+        details = {
+            **details,
+            "sequence_constructor": "vortex_hard_anchor_then_ats",
+            "vortex_anchor_video_count": len(hard_video_ids),
+        }
+        sequences.append(DevFirstSequence(
+            video_id=sequence.video_id,
+            video_code=sequence.video_code,
+            candidates=candidates,
+            score=score,
+            details=details,
+        ))
     return diversify_sequences(sequences, config)[:limit]
 
 
