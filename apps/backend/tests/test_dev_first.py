@@ -8,6 +8,7 @@ from app.modules.temporal.dev_first import (
 )
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
 from app.modules.retrieval.service import FrameScore
+from app.modules.retrieval.temporal_query import parse_temporal_events
 from tests.test_retrieval_pipeline import _build_retrieval_fixture
 
 
@@ -34,6 +35,19 @@ def config() -> dict:
 def test_temporal_nms_is_per_event_per_video_and_uses_timestamp() -> None:
     kept = temporal_nms([candidate("a", 1, 1000, .9), candidate("a", 1, 1100, .8), candidate("a", 2, 1100, .8), candidate("b", 1, 1100, .8)], 500)
     assert {(item.video_id, item.event_index) for item in kept} == {("a", 1), ("a", 2), ("b", 1)}
+
+
+def test_temporal_parser_splits_vietnamese_ordinal_event_cues() -> None:
+    parsed = parse_temporal_events(
+        "Đầu tiên người đầu bếp cho rau vào nồi. Sau đó đổ nấm. Cuối cùng thêm thịt.",
+    )
+
+    assert parsed.source == "soft_separators"
+    assert parsed.events == [
+        "người đầu bếp cho rau vào nồi",
+        "đổ nấm",
+        "thêm thịt",
+    ]
 
 
 def test_dev_sequence_prefers_strong_partial_over_weak_full_but_not_single_event() -> None:

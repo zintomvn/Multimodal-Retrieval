@@ -74,8 +74,11 @@ competition_default:
     per_video_candidate_min_gap_ms: 1500
     per_event_per_video_limit: 12
     sequence_beam_width: 200
-    max_sequences_per_video: 3
-    sequence_nms_window_ms: 3000
+    # DEV-first ranks videos before choosing a representative frame.  Keep one
+    # well-separated sequence per video in the interactive result list so a
+    # single shot cannot occupy neighbouring cards.
+    max_sequences_per_video: 1
+    sequence_nms_window_ms: 10000
     min_match_ratio: 0.50
     temporal_gap_classes:
       short: {max_gap_ms: 45000}

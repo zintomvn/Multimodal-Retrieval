@@ -757,6 +757,31 @@ def test_request_agent_model_selects_allow_listed_planner_profile(
     db.close()
 
 
+def test_request_agent_model_overrides_deployment_default_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path, use_real_planner=True)
+
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="agent-model-request-overrides-env",
+            query_text="nguoi ao do",
+            top_k=1,
+            options=SearchOptions(agent_model="gpt-5-nano"),
+        )
+    )
+
+    metadata = response.normalized_query["agent_query_plan"]["agent_metadata"]
+    assert metadata["active_profile"] == "openai_gpt5_nano"
+    assert metadata["model"] == "gpt-5-nano"
+    db.close()
+
+
 def test_m4_agent_profile_env_override_resolves_provider_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_LLM_PROFILE", "openai_gpt4o")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

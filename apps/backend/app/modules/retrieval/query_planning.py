@@ -215,8 +215,9 @@ class AgentQueryPlanner:
             "max_temporal_events": self._max_temporal_events(),
             "temporal_kis": temporal_kis,
             "task": (
-                "Temporal KIS is enabled. Return 2-8 chronological event queries and a 1-based "
-                "temporal_anchor_index for the requested target frame."
+                "Temporal KIS is enabled. Return 2-8 independently retrievable chronological events "
+                "for the entire described clip. Use target_scope=video_sequence, anchor_policy=none, "
+                "and a null temporal_anchor_index unless the user explicitly asks for one particular moment."
                 if temporal_kis
                 else "Return the JSON query plan only."
             ),
@@ -1230,6 +1231,9 @@ class AgentQueryPlanner:
         return "OPENAI_API_KEY" if provider == "openai" else "GROQ_API_KEY"
 
     def _active_profile_name(self) -> str:
+        request_override = str(self.agent_config.get("request_profile_override", "")).strip()
+        if request_override:
+            return request_override
         env_profile = os.getenv("AGENT_LLM_PROFILE", "").strip()
         if env_profile:
             return env_profile

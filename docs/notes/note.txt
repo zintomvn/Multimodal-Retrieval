@@ -334,12 +334,9 @@ Filter version 1:
         1. Tách câu query ra nhiều event
         2. Mỗi câu event thì dùng Multiperspective LLM-based
         3. Phân chia search theo từng concepts
-        4. 
     + Thêm LLM multi-perspectives -> giống variants (variant chưa đủ suy luận hay)
     + Chỉnh lại UI cho phần tracing LLM planners những phần cần thiết
     + Thêm phần kết quả cho từng OCR, ASR, Visual - những phần search của từng module sẽ hiện UI lên trước
-    + 
-
 
 Future work: 
 - Refactor lại cấu trúc code 
@@ -381,3 +378,108 @@ Giao diện:
 thay vì submission thì cho ra file csv để tải về chứ không phải zip, UI khi agent phân tích thì hiện ra những file json hay trace phần phân tích lên UI để tôi xem, giống ChatGPT của openAI, 
 
 liên kết relational data của tôi vào supabase cloud để có thể dùng chung trong nhiều máy khi chạy, 
+
+
+
+
+
+
+Study more (Nghiên cứu theo syllabus trong Software architecture):
+- Studying the contract of frontend and backend
+    + Request/Response format
+    + API endpoint
+    + Review: GET, POST, ...
+- Learn how the frontend can render logic and visualize it to the monitor (html, css)
+- Backend
+
+Web (Đừng tin những gì ở đây -> research thêm)
+- Database engineering:
+    + transaction
+    + ACID
+    + isolation levels
+    + MVCC
+    + locking
+    + deadlock
+    + replication
+    + partitioning
+    + caching
+    + database migrations
+- Network:
+    + timeout
+    + retry
+    + circuit breaker
+    + rate limiting
+    + service discovery
+    + load balancing
+    + message queue
+    + pub/sub
+    + Kafka
+    + distributed locks
+    + eventual consistency
+    + CAP theorem
+Testing: 
+    + Unit test
+    + Integration test
+    + E2E test
+    + Property-based test
+
+
+
+Run:
+docker compose up --build
+python .\apps\backend\scripts\serve_openclip_embeddings.py
+
+
+
+- Đo từng 
+model embedding
+model reasoning 
+OCR
+ASR
+
+Improving version 4: DIAGNOSTIC-EVENT-VIDEO-FIRST-SEARCH
+- diagnostic-event selection
+    - tìm câu cần search trước để truy ngược - dùng LLM phân tích semantic (discriminative)
+    - event-aware planner: Thay đổi strategy decomposition
+- video-first retrieval
+- adaptive temporal window cho phụ thuộc semantic câu search
+- temporal sequence chưa tối ưu -> context size 
+- Self host reranker VLM: qwen3-vl-reranker (find more VLM to test)
+- phần nút trong UI thì chỉnh chọn strategy thành dạng list để chọn strategy thay vì nút
+- temporal NMS / shot-level dedup
+
+query
+↓
+planner
+↓
+E1 / E2 / E3
+↓
+target_scope detection
+↓
+diagnostic event selection
+↓
+global diagnostic retrieval
+↓
+candidate videos
+↓
+remaining event retrieval inside candidate videos
+↓
+constraint-aware event scoring
+↓
+temporal NMS
+↓
+timestamp-based sequence search
+↓
+soft coverage sequence scoring
+↓
+sequence diversification
+↓
+optional local frame refinement
+↓
+final sequence / representative frame
+
+
+Future works:
+- Improve code
+- Find other places to save data big data - video
+- Study more about the fundamental (data, cloud, agent, web)

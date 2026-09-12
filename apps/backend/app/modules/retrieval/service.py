@@ -417,6 +417,10 @@ class RetrievalService:
         if not isinstance(profiles, dict) or profile_name not in profiles:
             logger.warning("Selected agent model profile is not configured: %s", selected_model)
             return self.query_planner
+        # A request-scoped preference must take precedence over AGENT_LLM_PROFILE.
+        # The latter is a deployment default; otherwise a running container pinned
+        # to GPT-4o silently ignores the model selected in the web UI.
+        planner_config["request_profile_override"] = profile_name
         planner_config["active_profile"] = profile_name
         return AgentQueryPlanner(config=config, config_path=self.query_planner.config_path)
 

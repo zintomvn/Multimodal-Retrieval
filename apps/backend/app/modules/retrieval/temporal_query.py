@@ -15,7 +15,8 @@ EVENT_LABEL_RE = re.compile(
 NUMBERED_LINE_RE = re.compile(r"(?m)^\s*(?P<order>\d{1,2})\s*[:.)-]\s+")
 SOFT_SEPARATOR_RE = re.compile(
     r"\s*(?:\bthen\b|\bafter that\b|\bnext\b|\bfinally\b|"
-    r"sau\s+\u0111\u00f3|ti\u1ebfp\s+\u0111\u1ebfn|ti\u1ebfp\s+theo|cu\u1ed1i\s+c\u00f9ng|r\u1ed3i|;)\s*",
+    r"\u0111\u1ea7u\s+ti\u00ean|tr\u01b0\u1edbc\s+h\u1ebft|sau\s+\u0111\u00f3|ti\u1ebfp\s+\u0111\u1ebfn|"
+    r"ti\u1ebfp\s+theo|cu\u1ed1i\s+c\u00f9ng|r\u1ed3i|;)\s*",
     flags=re.IGNORECASE,
 )
 CONTEXT_CHAIN_RE = re.compile(

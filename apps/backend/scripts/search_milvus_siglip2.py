@@ -28,15 +28,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--embedding-base-url", default=os.getenv("EMBEDDING_BASE_URL", DEFAULT_EMBEDDING_BASE_URL))
+    parser.add_argument(
+        "--api-key-env",
+        default="",
+        help="Optional environment-variable name containing the embedding endpoint API key.",
+    )
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--target-video", default="")
     return parser.parse_args()
 
 
-def text_embedding(query: str, model_name: str, base_url: str) -> list[float]:
+def text_embedding(query: str, model_name: str, base_url: str, api_key: str = "") -> list[float]:
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     with httpx.Client(timeout=30.0) as client:
         response = client.post(
             f"{base_url.rstrip('/')}/embeddings",
+            headers=headers,
             json={"model": model_name, "input": query},
         )
     response.raise_for_status()
@@ -80,7 +87,9 @@ def main() -> None:
     uri = os.getenv("MILVUS_URI", settings.milvus_uri)
     token = os.getenv("MILVUS_TOKEN", settings.milvus_token)
     client = MilvusClient(uri=uri, token=token)
-    query_vector = text_embedding(args.query, args.model_name, args.embedding_base_url)
+    default_key_env = "SIGLIP2_API_KEY" if "siglip2" in args.model_name.lower() else ""
+    api_key = os.getenv(args.api_key_env or default_key_env, "")
+    query_vector = text_embedding(args.query, args.model_name, args.embedding_base_url, api_key=api_key)
     # Client
     raw = client.search(
         collection_name=args.collection,
