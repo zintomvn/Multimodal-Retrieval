@@ -7,11 +7,13 @@ from pydantic import BaseModel, Field
 
 QueryType = Literal["KIS", "QA", "TRAKE", "IMAGE", "FREEFORM"]
 VisualSearchMode = Literal["profile", "openclip", "siglip2", "both"]
+AgentModel = Literal["gpt-4o", "gpt-5-nano", "gpt-5.6-luna"]
 
 
 class SearchOptions(BaseModel):
     use_query_expansion: bool = True
     use_agent_query_planning: bool = True
+    agent_model: AgentModel | None = None
     use_metadata: bool = True
     use_reranker: bool = True
     strict_hybrid: bool = False

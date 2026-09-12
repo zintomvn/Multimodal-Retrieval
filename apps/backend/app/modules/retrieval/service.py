@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import re
+from copy import deepcopy
 from collections import Counter
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -50,6 +51,12 @@ VIETNAMESE_SIGNAL_TOKENS = {
     "o",
     "trong",
     "voi",
+}
+
+AGENT_MODEL_PROFILES = {
+    "gpt-4o": "openai_gpt4o",
+    "gpt-5-nano": "openai_gpt5_nano",
+    "gpt-5.6-luna": "openai_gpt56_luna",
 }
 
 
@@ -246,11 +253,12 @@ class RetrievalService:
         semantic_variants = [query_text]
         text_variants = [query_text]
         temporal_kis = request.query_type == "KIS" and request.options.temporal_mode
+        query_planner = self._planner_for_request(request)
         agent_plan = None
         if request.options.use_agent_query_planning or temporal_kis:
             if temporal_kis:
                 try:
-                    agent_plan = self.query_planner.plan(
+                    agent_plan = query_planner.plan(
                         query=query_text,
                         query_type=request.query_type,
                         max_variants=max_variants,
@@ -260,13 +268,13 @@ class RetrievalService:
                     if "temporal_kis" not in str(exc):
                         raise
                     # Keeps third-party planners implementing the prior contract usable.
-                    agent_plan = self.query_planner.plan(
+                    agent_plan = query_planner.plan(
                         query=query_text,
                         query_type=request.query_type,
                         max_variants=max_variants,
                     )
             else:
-                agent_plan = self.query_planner.plan(
+                agent_plan = query_planner.plan(
                     query=query_text,
                     query_type=request.query_type,
                     max_variants=max_variants,
@@ -376,6 +384,23 @@ class RetrievalService:
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
         return normalized
+
+    def _planner_for_request(self, request: SearchRequest) -> AgentQueryPlanner:
+        """Bind a UI-selected, allow-listed model without mutating shared planner state."""
+        selected_model = request.options.agent_model
+        profile_name = AGENT_MODEL_PROFILES.get(selected_model or "")
+        if not profile_name:
+            return self.query_planner
+        config = deepcopy(self.query_planner.config)
+        planner_config = config.setdefault("llm_query_planning", {})
+        if not isinstance(planner_config, dict):
+            return self.query_planner
+        profiles = planner_config.get("profiles")
+        if not isinstance(profiles, dict) or profile_name not in profiles:
+            logger.warning("Selected agent model profile is not configured: %s", selected_model)
+            return self.query_planner
+        planner_config["active_profile"] = profile_name
+        return AgentQueryPlanner(config=config, config_path=self.query_planner.config_path)
 
     @staticmethod
     def _resolve_temporal_anchor_index(options: SearchOptions, agent_plan: Any, event_count: int) -> int:
@@ -1315,9 +1340,17 @@ class RetrievalService:
             rrf_semantic_weight = rrf_total * modality_weights["visual"]
             rrf_text_weight = rrf_total * modality_weights["text"]
         configured_ann_top_k = int(profile.get("milvus", {}).get("top_k_per_model", 0))
-        # TRAKE asks this method for a wider per-event pool; honor that recall target
-        # even when the interactive KIS profile uses a small default ANN limit.
-        ann_top_k = max(configured_ann_top_k, top_k, 1)
+        diversification_config = profile.get("result_diversification", {})
+        diversification_config = diversification_config if isinstance(diversification_config, dict) else {}
+        candidate_pool_multiplier = max(1, int(diversification_config.get("candidate_pool_multiplier", 20)))
+        min_candidate_pool = max(1, int(diversification_config.get("min_candidate_pool", 500)))
+        max_candidate_pool = max(top_k, int(diversification_config.get("max_candidate_pool", 1000)))
+        # Diversification can only surface other videos if the retrieval pool has
+        # candidates beyond the first cluster from a single video.
+        ann_top_k = min(
+            max_candidate_pool,
+            max(configured_ann_top_k, top_k * candidate_pool_multiplier, min_candidate_pool, 1),
+        )
 
         dataset_video_ids = self._dataset_video_ids(dataset)
         semantic_scores, semantic_backend_error = self._semantic_scores(
@@ -1452,7 +1485,8 @@ class RetrievalService:
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        return self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
+        reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
+        return self._diversify_ranked_frames(reranked, profile)
 
     def _semantic_scores(
         self,
@@ -1475,23 +1509,26 @@ class RetrievalService:
             1.0,
             float(visual_rrf_config.get("k", profile.get("rrf", {}).get("k", 60))),
         )
-        query_vectors: dict[tuple[str, str], list[float]] = {}
+        query_vectors_by_model: dict[str, list[list[float]]] = {}
         per_model_scores: dict[str, dict[str, float]] = {}
         per_model_weights: dict[str, float] = {}
         per_frame_sources: dict[str, dict[str, dict[str, Any]]] = {}
-        for variant in variants:
-            for target in collections:
-                model_id = target.model_key or target.collection
-                per_model_weights.setdefault(model_id, target.weight)
-                vector_key = (target.model_key or "__default__", variant)
-                if vector_key not in query_vectors:
-                    try:
-                        query_vectors[vector_key] = self.model_registry.embedder_for(target.model_key).embed_text(variant)
-                    except Exception:
-                        # Keep retrieval available even when one embedder runtime is misconfigured.
-                        backend_error = True
-                        query_vectors[vector_key] = []
-                query_vector = query_vectors[vector_key]
+        for target in collections:
+            model_id = target.model_key or target.collection
+            per_model_weights.setdefault(model_id, target.weight)
+            if model_id not in query_vectors_by_model:
+                try:
+                    embedder = self.model_registry.embedder_for(target.model_key)
+                    batch_embed = getattr(embedder, "embed_texts", None)
+                    vectors = batch_embed(variants) if callable(batch_embed) else [embedder.embed_text(value) for value in variants]
+                    if len(vectors) != len(variants):
+                        raise ValueError(f"Embedding batch returned {len(vectors)} vectors for {len(variants)} queries.")
+                    query_vectors_by_model[model_id] = vectors
+                except Exception:
+                    # Keep retrieval available even when one embedder runtime is misconfigured.
+                    backend_error = True
+                    query_vectors_by_model[model_id] = [[] for _ in variants]
+            for variant, query_vector in zip(variants, query_vectors_by_model[model_id], strict=True):
                 if not query_vector:
                     continue
                 try:
@@ -1908,7 +1945,8 @@ class RetrievalService:
                 )
             )
         scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        return self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
+        reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
+        return self._diversify_ranked_frames(reranked, profile)
 
     def _apply_reranking(
         self,
@@ -1986,6 +2024,82 @@ class RetrievalService:
         reranked = reranked_top + scored[top_k:]
         reranked.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
         return reranked
+
+    @staticmethod
+    def _diversify_ranked_frames(scored: list[FrameScore], profile: dict[str, Any]) -> list[FrameScore]:
+        """Front-load distinct videos and well-separated moments without dropping recall.
+
+        The full candidate list is retained. Only its order changes, so the interactive
+        top-k shows broad video coverage first while callers that need a deeper pool can
+        still access every close-by frame later in the list.
+        """
+        raw_config = profile.get("result_diversification", {})
+        config = raw_config if isinstance(raw_config, dict) else {}
+        if len(scored) < 2 or not bool(config.get("enabled", True)):
+            return scored
+
+        max_per_video = max(1, int(config.get("max_frames_per_video", 1)))
+        min_gap_ms = max(0, int(config.get("min_frame_gap_ms", 10000)))
+        min_gap_frames = max(0, int(config.get("min_frame_gap", 300)))
+        by_video: dict[str, list[FrameScore]] = {}
+        for item in scored:
+            by_video.setdefault(item.frame.video_id, []).append(item)
+
+        selected: list[FrameScore] = []
+        selected_ids: set[str] = set()
+        selected_by_video: dict[str, list[FrameScore]] = {}
+
+        while True:
+            round_candidates: list[FrameScore] = []
+            for video_id, candidates in by_video.items():
+                already_selected = selected_by_video.get(video_id, [])
+                if len(already_selected) >= max_per_video:
+                    continue
+                candidate = next(
+                    (
+                        item
+                        for item in candidates
+                        if item.frame.keyframe_id not in selected_ids
+                        and RetrievalService._is_frame_sufficiently_separated(
+                            item,
+                            already_selected,
+                            min_gap_ms=min_gap_ms,
+                            min_gap_frames=min_gap_frames,
+                        )
+                    ),
+                    None,
+                )
+                if candidate is not None:
+                    round_candidates.append(candidate)
+
+            if not round_candidates:
+                break
+            round_candidates.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
+            for candidate in round_candidates:
+                selected.append(candidate)
+                selected_ids.add(candidate.frame.keyframe_id)
+                selected_by_video.setdefault(candidate.frame.video_id, []).append(candidate)
+
+        deferred = [item for item in scored if item.frame.keyframe_id not in selected_ids]
+        return [*selected, *deferred]
+
+    @staticmethod
+    def _is_frame_sufficiently_separated(
+        candidate: FrameScore,
+        selected: list[FrameScore],
+        *,
+        min_gap_ms: int,
+        min_gap_frames: int,
+    ) -> bool:
+        for previous in selected:
+            candidate_timestamp = candidate.frame.timestamp_ms
+            previous_timestamp = previous.frame.timestamp_ms
+            if candidate_timestamp is not None and previous_timestamp is not None:
+                if abs(int(candidate_timestamp) - int(previous_timestamp)) < min_gap_ms:
+                    return False
+            if abs(int(candidate.frame.frame_idx) - int(previous.frame.frame_idx)) < min_gap_frames:
+                return False
+        return True
 
     def _needs_frame_annotations(self, options: SearchOptions) -> bool:
         return bool(options.objects or (options.scene or "").strip() or options.use_reranker)

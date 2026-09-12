@@ -231,7 +231,7 @@ class AgentQueryPlanner:
             return self._get_model().invoke(
                 [
                     {"role": "system", "content": planner_prompt},
-                    {"role": "user", "content": json.dumps(user_payload)},
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
                 config=runnable_config,
             )
@@ -242,11 +242,11 @@ class AgentQueryPlanner:
             import langsmith as ls  # type: ignore
         except ImportError:
             self._wait_for_openai_slot()
-            return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload)}]}, config=runnable_config)
+            return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}]}, config=runnable_config)
 
         with ls.tracing_context(enabled=trace_enabled):
             self._wait_for_openai_slot()
-            return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload)}]}, config=runnable_config)
+            return agent.invoke({"messages": [{"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}]}, config=runnable_config)
 
     def _requires_temporal_repair(
         self,
@@ -298,7 +298,7 @@ class AgentQueryPlanner:
             output = self._get_model().invoke(
                 [
                     {"role": "system", "content": self._planner_system_prompt()},
-                    {"role": "user", "content": json.dumps(payload)},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                 ],
                 config=runnable_config,
             )
@@ -421,6 +421,10 @@ class AgentQueryPlanner:
         max_tokens = self._profile_value("max_tokens", None)
         if max_tokens is not None:
             model_kwargs[token_key] = int(max_tokens)
+        base_url_env = str(self._profile_value("base_url_env", "")).strip()
+        base_url = os.getenv(base_url_env, "").strip() if base_url_env else ""
+        if base_url:
+            model_kwargs["base_url"] = base_url.rstrip("/")
         return model_kwargs
 
     def _unavailable_reason(self) -> str | None:
@@ -432,6 +436,11 @@ class AgentQueryPlanner:
         provider = self._provider()
         if provider not in {"chatgroq", "openai"}:
             return f"unsupported agent provider: {provider}"
+
+        if bool(self._profile_value("requires_base_url", False)):
+            base_url_env = str(self._profile_value("base_url_env", "")).strip()
+            if not base_url_env or not os.getenv(base_url_env, "").strip():
+                return f"missing {base_url_env or 'OpenAI-compatible base URL'}"
 
         default_key_env = self._default_api_key_env(provider)
         api_key_env = self._api_key_env(provider)
@@ -1048,7 +1057,7 @@ class AgentQueryPlanner:
         try:
             parsed = json.loads(content)
             if isinstance(parsed, dict):
-                return parsed
+                return self._repair_utf8_mojibake(parsed)
         except json.JSONDecodeError:
             pass
 
@@ -1056,7 +1065,7 @@ class AgentQueryPlanner:
         if fence_match:
             parsed = json.loads(fence_match.group("body"))
             if isinstance(parsed, dict):
-                return parsed
+                return self._repair_utf8_mojibake(parsed)
 
         decoder = json.JSONDecoder()
         for idx, char in enumerate(content):
@@ -1067,8 +1076,36 @@ class AgentQueryPlanner:
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):
-                return parsed
+                return self._repair_utf8_mojibake(parsed)
         raise ValueError("agent response did not contain a JSON object")
+
+    def _repair_utf8_mojibake(self, value: Any) -> Any:
+        """Recover UTF-8 text incorrectly decoded as Latin-1 by an LLM gateway.
+
+        Some OpenAI-compatible endpoints return Vietnamese JSON values such as
+        ``"trÃ¡Â»Â©ng"``.  Repair only strings with unambiguous mojibake markers;
+        normal English and correctly encoded Unicode values are left untouched.
+        """
+        if isinstance(value, dict):
+            return {key: self._repair_utf8_mojibake(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._repair_utf8_mojibake(item) for item in value]
+        if not isinstance(value, str):
+            return value
+
+        repaired = value
+        markers = ("Ã", "Ä", "Å", "Æ", "Â", "á»", "áº")
+        for _ in range(2):
+            if not any(marker in repaired for marker in markers):
+                break
+            try:
+                candidate = repaired.encode("latin-1").decode("utf-8")
+            except UnicodeError:
+                break
+            if candidate == repaired:
+                break
+            repaired = candidate
+        return repaired
 
     def _extract_content(self, output: Any) -> str:
         if isinstance(output, dict):
