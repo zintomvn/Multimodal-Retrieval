@@ -2653,6 +2653,7 @@ export function App() {
         <div className="brand-row">
           <div className="brand-mark">CS</div>
           <strong>ChatShasimi</strong>
+          {/* {Chat} */}
         </div>
 
         <button type="button" className="new-button" onClick={newSession}>
@@ -2764,7 +2765,7 @@ export function App() {
               {modeCaption && <span>{modeCaption}</span>}
             </div>
             <div className="workspace-controls">
-              <label className="compact-field">
+              {/* <label className="compact-field">
                 Dataset
                 <select
                   value={datasetId}
@@ -2776,7 +2777,7 @@ export function App() {
                     </option>
                   ))}
                 </select>
-              </label>
+              </label> */}
               {queryType === "VIDEO" && mode !== "Chat" && (
                 <>
                   <label className="compact-field video-code-field">
