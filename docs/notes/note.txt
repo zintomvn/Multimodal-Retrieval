@@ -380,10 +380,6 @@ thay vì submission thì cho ra file csv để tải về chứ không phải zi
 liên kết relational data của tôi vào supabase cloud để có thể dùng chung trong nhiều máy khi chạy, 
 
 
-
-
-
-
 Study more (Nghiên cứu theo syllabus trong Software architecture):
 - Studying the contract of frontend and backend
     + Request/Response format
@@ -423,12 +419,10 @@ Testing:
     + E2E test
     + Property-based test
 
-
-
 Run:
 docker compose up --build
 python .\apps\backend\scripts\serve_openclip_embeddings.py
-
+docker run --rm -it -e NGROK_AUTHTOKEN=3ID14PUUiFf3PUMxiEAJz5yUZM9_uck67De6dhN9joHAk5nZ ngrok/ngrok:latest http host.docker.internal:5173
 
 
 - Đo từng 
@@ -447,6 +441,7 @@ Improving version 4: DIAGNOSTIC-EVENT-VIDEO-FIRST-SEARCH
 - Self host reranker VLM: qwen3-vl-reranker (find more VLM to test)
 - phần nút trong UI thì chỉnh chọn strategy thành dạng list để chọn strategy thay vì nút
 - temporal NMS / shot-level dedup
+
 
 query
 ↓
@@ -483,3 +478,11 @@ Future works:
 - Improve code
 - Find other places to save data big data - video
 - Study more about the fundamental (data, cloud, agent, web)
+
+
+
+Agent cải tiến
+- Chỉnh lại câu prompt phân tích ý nghĩa nguyên câu và tách thành những event tương ứng chứ không phải tách câu theo rule-based
+- Ưu tiên những candidate nằm trên sequence hơn thay vì lệch quá nhiều vào frame cao điểm
+- chỉnh lại logic search bằng temporal thì khi đưa vào giải thuật thì xét mỗi video thỏa, trọng số chỉnh lại ưu tiên những candidate có đủ frame trên sequence hơn thay vì candidate có điểm lệch quá nhiều vào frame cao nhất dẫn đến lệch
+

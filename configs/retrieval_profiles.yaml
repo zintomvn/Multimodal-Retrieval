@@ -63,6 +63,14 @@ competition_default:
     compactness_weight: 0.35
     gap_penalty: 0.20
     per_video_sequence_limit: 4
+    # NMS happens after multiperspective fusion; these retain a deep event pool
+    # before sequence construction and diversify the final KIS presentation.
+    event_nms_window_ms: 1500
+    event_nms_per_video_limit: 24
+    anchor_nms_window_ms: 1500
+    sequence_nms_window_ms: 3000
+    max_sequences_per_video: 1
+    min_representative_gap_ms: 10000
   dev_first:
     diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45}
     diagnostic_candidate_frames: 500

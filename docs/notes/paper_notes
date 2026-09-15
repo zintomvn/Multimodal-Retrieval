@@ -1,0 +1,42 @@
+Gap:
+
+- Global search
+  - phạm vi tìm kiếm quá nhiều
+  - Trùng nhiều frame trong 1 video
+  -
+-
+
+# Related work
+
+| Paper                                                                 | Vấn đề chính                                              | Điều liên quan nhất tới bạn           |
+| --------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
+| **AIthena-Vision** — SOICT 2025                                       | multimodal + LLM multiperspective + temporal              | baseline rất gần hệ thống bạn         |
+| **Vortex** — SOICT 2025                                               | CLIP + SigLIP2 + RRF + metadata + feedback                | multimodal fusion / temporal          |
+| **Enhanced Multimodal Video Retrieval** — SOICT 2025                  | event có modality khác nhau                               | event-specific modality               |
+| **Adaptive Agent-Guided DP** — SOICT 2025                             | global temporal optimization                              | temporal sequence                     |
+| **Lucifer-TRACE** — SOICT 2025                                        | DP + LVLM verification                                    | verifier                              |
+| **Applying LLM Agents for Automated Lifelog Retrieval** — SOICT 2025  | planner chọn tool + parameters + self-evaluation          | agent planner                         |
+| **RAPID** — SOICT 2024                                                | LLM query expansion + parallel retrieval + rerank         | query expansion / candidate explosion |
+| **Smart Routing** — ICCVW 2025                                        | LLM chọn ASR/OCR/visual                                   | modality routing                      |
+| **VideoAgent** — ECCV 2024                                            | iterative frame retrieval                                 | search refinement                     |
+| **Adaptive Multi-Agent Reasoning for Text-to-Video Retrieval** — 2025 | reason → reformulate → retrieve again                     | rất sát “refiner”                     |
+| **C2F-RAG** — MAGMaR/ACL 2026                                         | semantic coarse retrieval → multimodal logical refinement | cực sát hybrid search                 |
+| **CRAFT** — MAGMaR/ACL 2026                                           | dynamic frames + critic loop                              | cực sát duplicate + refiner           |
+| **TRACE** — MAGMaR/ACL 2026                                           | OCR/object grounding before VLM                           | metadata-guided search                |
+| **MARQUIS** — MAGMaR/ACL 2026                                         | decomposition + rank fusion + reranker                    | candidate pipeline                    |
+| **T\*** — CVPR 2025                                                   | minimal relevant frame search                             | quá nhiều frame                       |
+| **LongVidSearch** — 2026                                              | agentic multi-hop retrieval planning                      | planning/evidence acquisition         |
+
+Agent ideas:
+
+Retrieval ideas:
+
+- Retrieval-grounded diagnostic planning
+-
+
+Experiments:
+RQ:
+
+- Temporal search / DEV-first có cải thiện multi-event KIS và TRAKE không?
+- Multimodal weight do LLMs sinh ra có tốt hơn fixed weights không?
+- Dynamic weights do LLMs sinh có tốt hơn fixed weights không?

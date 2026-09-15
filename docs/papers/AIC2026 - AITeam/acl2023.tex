@@ -1,0 +1,661 @@
+% This must be in the first 5 lines to tell arXiv to use pdfLaTeX, which is strongly recommended.
+\pdfoutput=1
+% In particular, the hyperref package requires pdfLaTeX in order to break URLs across lines.
+
+\documentclass[11pt]{article}
+
+% Remove the "review" option to generate the final version.
+\usepackage{ACL2023}
+
+% Standard package includes
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Pseudocode
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+
+% For proper rendering and hyphenation of words containing Latin characters (including in bib files)
+\usepackage[T1]{fontenc}
+% For Vietnamese characters
+% \usepackage[T5]{fontenc}
+% See https://www.latex-project.org/help/documentation/encguide.pdf for other character sets
+
+% This assumes your files are encoded as UTF8
+\usepackage[utf8]{inputenc}
+
+% This is not strictly necessary, and may be commented out.
+% However, it will improve the layout of the manuscript,
+% and will typically save some space.
+\usepackage{microtype}
+
+% This is also not strictly necessary, and may be commented out.
+% However, it will improve the aesthetics of text in
+% the typewriter font.
+\usepackage{inconsolata}
+
+
+% If the title and author information does not fit in the area allocated, uncomment the following
+%
+%\setlength\titlebox{<dim>}
+%
+% and set <dim> to something 5cm or larger.
+
+\title{AITeàm? in AI Challenge 2026}
+
+% Author information can be set in various styles:
+% For several authors from the same institution:
+\author{Author 1 \and ... \and Author n \\
+        Address line \\ ... \\ Address line}
+% if the names do not fit well on one line use
+%         Author 1 \\ {\bf Author 2} \\ ... \\ {\bf Author n} \\
+% For authors from different institutions:
+% \author{Author 1 \\ Address line \\  ... \\ Address line
+%         \And  ... \And
+%         Author n \\ Address line \\ ... \\ Address line}
+% To start a seperate ``row'' of authors use \AND, as in
+% \author{Author 1 \\ Address line \\  ... \\ Address line
+%         \AND
+%         Author 2 \\ Address line \\ ... \\ Address line \And
+%         Author 3 \\ Address line \\ ... \\ Address line}
+
+% \author{Hello world \\
+%   Affiliation / Address line 1 \\
+%   Affiliation / Address line 2 \\
+%   Affiliation / Address line 3 \\
+%   \texttt{email@domain} \\\And
+%   Second Author \\
+%   Affiliation / Address line 1 \\
+%   Affiliation / Address line 2 \\
+%   Affiliation / Address line 3 \\
+%   \texttt{email@domain} \\}
+\author{
+  Duc Minh Le \and
+  An Thien Tran Nguyen \and
+  Khuong Xuan Dinh 
+  \AND
+  Loc Thanh Duong \and
+  Phuong Hong Tran \and
+  Thang Minh To
+   \\
+  Faculty of Information Technology, University of Science, VNU-HCM \\
+  Ho Chi Minh City, Vietnam \\
+  \texttt{\{email1,email2,email3,email4,email5,email6\}@domain.com}
+}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+cải tiến:
+1. weight dùng LLM để gán weight dữ trên intent của từng task
+2.(mạnh nhất) Search TRAKE dùng idea của 2 team là Votex (tìm frame ở giữa xong tìm trước và sau xem coi có cùng chuỗi không) và team AIThena (chọn 100 frame xong beam search): lấy frame quan trọng nhất để tìm temperal search, dùng LLM để xác định frame quan trọng nhất. 
+3. ASR Embedding để hổ trợ Retrieval
+\end{abstract}
+
+
+
+\section{Introduction}
+summary lại những gì mà đã làm ở dưới (An) 
+
+\section{Related Work}
+
+Interactive video retrieval requires both relevant evidence for individual
+frames and contextual information about the events they depict.
+AIthena-Vision and Vortex address these requirements through multimodal
+retrieval and temporal search in the Ho Chi Minh City AI Challenge
+\citep{nguyen2027aithena,nguyen2027vortex}. We discuss their relationship
+to our system along two complementary dimensions: evidence fusion and
+query planning with temporal alignment.
+
+\subsection{Multimodal Retrieval and Evidence Fusion}
+\label{sec:related-work-retrieval}
+
+AIthena-Vision combines Perception Encoder representations with OCR,
+ASR, and object-detection evidence to support video event
+retrieval~\citep{nguyen2027aithena}. Vortex similarly integrates visual
+embeddings with textual metadata, using AutoShot-based keyframe
+selection, redundancy filtering, and OCR, caption, and speech-transcript
+indexing~\citep{nguyen2027vortex}. Its visual retrieval branch combines
+CLIP and SigLIP2 rankings through reciprocal rank fusion (RRF), with
+Milvus and Elasticsearch supporting vector and metadata search,
+respectively~\citep{nguyen2027vortex}. These systems demonstrate that
+combining semantic visual matches with textual evidence is an
+established design choice, rather than a contribution unique to our
+work.
+
+Our system adopts this multimodal foundation, using OpenCLIP and an
+optional SigLIP2 branch with weighted RRF. We focus on coordinating
+visual and textual evidence through query-dependent modality weights
+and source-specific weights for ASR, OCR, and captions. These weights
+connect the retrieval plan to metadata search and hybrid ranking.
+The encoder configurations, indexing scheme, and scoring equations are
+described in the architecture section rather than repeated here.
+
+\subsection{Query Planning and Temporal Alignment}
+\label{sec:related-work-temporal}
+
+Beyond evidence fusion, retrieval systems must interpret ambiguous
+queries and relate multiple events. AIthena-Vision uses LLM-generated
+retrieval perspectives to diversify query formulations and incorporates
+Adaptive Temporal Search (ATS) for multi-event
+retrieval~\citep{nguyen2027aithena}. Vortex supports iterative query-vector
+refinement through Rocchio relevance feedback and retrieves previous,
+current, and next event descriptions independently
+\citep{nguyen2027vortex}. Its temporal reranking aggregates the current
+candidate's score with the strongest preceding- and subsequent-query
+matches from the same video. The published reranking algorithm does
+not explicitly test the timestamps of these matches; thus, this score
+alone should be interpreted as video-level contextual support, not as
+a guarantee of chronological order~\citep{nguyen2027vortex}.
+
+Our approach combines structured query planning with explicit temporal
+alignment. The LLM generates semantic rewrites, lexical queries, event
+decompositions, and the evidence weights used by the retrieval stage.
+It operates before retrieval and receives no retrieved evidence.
+Diagnostic-Event-Video-First search (Algorithm~\ref{alg:dev-first}) then
+combines planner-derived event importance with preliminary retrieval
+probes to select a diagnostic event and identify promising videos.
+Candidates are subsequently aligned within each video using bounded
+beam search with increasing frame indices and bounded adjacent gaps.
+The distinction lies in linking query-dependent evidence selection to
+diagnostic-event-guided sequence construction, rather than in query
+expansion, rank fusion, or temporal search in isolation.
+
+
+\section{Architecture}
+
+
+\subsection{Data Preprocessing}
+
+\subsection{Semantic Vector Retrieval}
+
+Semantic vector retrieval provides the primary correspondence between
+natural-language descriptions and indexed video frames. Given a
+keyframe image $I_f$, an image encoder maps it to an
+$\ell_2$-normalized representation
+\begin{equation}
+    \mathbf{v}^{(m)}_f =
+    \frac{E^{(m)}_{\mathrm{img}}(I_f)}
+    {\left\|E^{(m)}_{\mathrm{img}}(I_f)\right\|_2},
+\end{equation}
+where $m$ identifies an embedding model. These frame representations
+are computed offline and stored in a model-specific Milvus collection
+together with identifiers that map each vector to its video and
+canonical keyframe record.
+
+The primary retrieval space uses OpenCLIP
+ViT-H/14-quickgelu with DFN5B weights, producing 1024-dimensional
+vectors. This dual-encoder representation supports direct comparison
+between a textual description and visual keyframes, while offline
+frame encoding reduces online computation to query encoding and
+nearest-neighbor search. The system also supports a
+1152-dimensional SigLIP2 SO400M/16 representation as an optional
+fine-grained retrieval branch. Each model is assigned a separate
+collection because embeddings from different encoders and dimensions
+do not share a directly comparable vector space.
+
+At query time, the original query or its LLM-generated English
+semantic rewrites $\{q_j\}_{j=1}^{J}$ are encoded by the text tower of
+the same model used to index the frames:
+\begin{equation}
+    \mathbf{z}^{(m)}_j =
+    \frac{E^{(m)}_{\mathrm{text}}(q_j)}
+    {\left\|E^{(m)}_{\mathrm{text}}(q_j)\right\|_2}.
+\end{equation}
+Milvus retrieves approximate nearest neighbors using cosine
+similarity. When several rewrites are available, the implementation
+retains the strongest match for each frame,
+\begin{equation}
+    s_m(f)=
+    \max_{1\leq j\leq J}
+    \left[\cos\!\left(
+    \mathbf{z}^{(m)}_j,\mathbf{v}^{(m)}_f
+    \right)\right]_{+},
+\end{equation}
+where $[\cdot]_{+}$ denotes truncation at zero. This maximum operation
+allows complementary descriptions to recover the same visual event
+without requiring every rewrite to match.
+
+When both OpenCLIP and SigLIP2 are selected, their raw similarities
+are not added because the two models have different score
+distributions. Instead, the system combines their ranked lists using
+weighted reciprocal rank fusion:
+\begin{equation}
+    s_{\mathrm{vec}}(f)=
+    \sum_{m\in\mathcal{M}}
+    \frac{\beta_m}{K+r_m(f)},
+    \qquad K=60,
+\end{equation}
+where $r_m(f)$ is the rank of frame $f$ under model $m$ and
+$\beta_m$ is its configured weight. With a single active model, the
+weighted similarity is used directly. The resulting vector score is
+subsequently normalized over the candidate pool and combined with
+caption, OCR, and ASR retrieval signals by the hybrid ranking stage.
+
+The same vector mechanism serves all supported tasks. KIS and QA
+search the semantic rewrites of the complete query, whereas TRAKE and
+temporal KIS apply vector retrieval independently to each decomposed
+event before deterministic temporal alignment. Thus, vector search
+selects visually relevant frame candidates, while task-specific
+components perform answer generation or sequence construction after
+retrieval.
+% Dùng siglip và openclip
+% Phuong
+
+\subsection{Metadata Retrieval}
+\label{sec:metadata-retrieval}
+
+Visual retrieval may be insufficient for queries involving names, numbers,
+spoken content, or text appearing in the video. Therefore, we complement it
+with a metadata retrieval branch based on Elasticsearch. For each keyframe,
+metadata is extracted from automatic speech recognition (ASR), optical
+character recognition (OCR), and image captioning.
+
+The query planner generates lexical variants for ASR/OCR and English semantic
+rewrites for caption retrieval. Elasticsearch performs boosted
+\texttt{multi\_match} search over these sources. The metadata score for
+keyframe $f$ is
+
+\[
+S_{\mathrm{meta}}(f,q)
+=
+\max_{\substack{s \in \mathcal{S} \\ q_i \in \mathcal{Q}_s}}
+\left[
+b_s w_s S_{\mathrm{ES}}(f,q_i,s)
+\right],
+\]
+
+where
+$\mathcal{S}=\{\mathrm{asr},\mathrm{ocr},\mathrm{caption}\}$,
+$S_{\mathrm{ES}}$ is the Elasticsearch relevance score, and $b_s$ and $w_s$
+are source-specific boost and adaptive weights.
+
+The metadata score is then combined with visual similarity:
+
+\[
+S_{\mathrm{weighted}}(f,q)
+=
+\alpha S_{\mathrm{visual}}(f,q)
++
+\beta S_{\mathrm{meta}}(f,q)
++
+\gamma S_{\mathrm{quality}}(f).
+\]
+
+Since the score scales differ, the ranked results are additionally fused using
+Reciprocal Rank Fusion (RRF):
+
+\[
+S_{\mathrm{RRF}}(f)
+=
+\frac{\alpha}{k+r_{\mathrm{visual}}(f)}
++
+\frac{\beta}{k+r_{\mathrm{meta}}(f)},
+\]
+
+where $k=60$. This hybrid retrieval supports both visual-semantic queries and
+queries requiring textual evidence such as dialogue, signs, numbers, or named
+entities.
+
+
+
+
+
+\subsection{Adaptive Temporal Search}
+
+\subsection{Search}
+\label{sec:search}
+
+\paragraph{Notation.}
+Let $\mathcal{E}=(e_1,\ldots,e_n)$ denote the ordered event sequence.
+For each event, the LLM planner provides retrieval weights $\boldsymbol{\eta}_i$,
+importance $w_i$, diagnostic prior $p_i$, and temporal edges $G$. The hybrid
+retriever is denoted by $R(e_i;\boldsymbol{\eta}_i,b)$, where $b$ is its
+candidate budget. Each calibrated candidate frame $f$ has video identity
+$v(f)$, score $s(f)$, and temporal coordinate
+\[
+\tau(f)=
+\begin{cases}
+\texttt{timestamp\_ms}(f), & \text{if available},\\
+\texttt{frame\_idx}(f), & \text{otherwise}.
+\end{cases}
+\]
+
+\paragraph{Diagnostic event and frame filtering.}
+A lightweight probe produces candidate set $C_i$ and the selectivity $u_i$,
+score margin $m_i$, and top confidence $c_i$ for each $e_i$. DEV selects
+the diagnostic event $e_d$ by
+\[
+\rho_i=0.55p_i+0.45(0.4u_i+0.3m_i+0.3c_i),
+\qquad d=\arg\max_i\rho_i.
+\]
+The selected event is retrieved with a larger budget and filtered by temporal
+non-maximum suppression. Within the same $(v,e_i)$ group, a candidate $f$ is
+retained only if
+\[
+|\tau(f)-\tau(f')|\geq\delta,
+\qquad \forall f'\in\mathcal{K}_{v(f),i},
+\]
+where $\mathcal{K}_{v(f),i}$ is the retained set. DEV uses $\delta=2500$ ms
+for the diagnostic pool and $\delta=1500$ ms for the per-event pool.
+
+\paragraph{Vortex--ATS sequence recovery.}
+Candidate videos are first ranked from diagnostic evidence, cross-event
+evidence, and event coverage. Vortex then uses $e_d$ as a hard anchor and
+selects compatible preceding and subsequent frames in these videos. ATS is
+applied to the full filtered candidate pools of the Vortex-selected videos;
+thus, it may skip an event with no retrieved frame while retaining a valid
+partial sequence. A retained sequence must satisfy strict temporal order and
+all applicable LLM-provided gap classes in $G$.
+
+For normalized event weights $\bar{w}_i$, DEV applies the final profile-based
+score
+\[
+S(\pi)=\operatorname{clip}_{[0,1]}\left[
+\alpha_E E(\pi)+\alpha_C C(\pi)+\alpha_S C^{+}(\pi)
++\alpha_D D(\pi)-\alpha_M(1-C(\pi))-\alpha_G P_{\mathrm{gap}}(\pi)
+\right],
+\]
+where $E$, $C$, $C^{+}$, $D$, and $P_{\mathrm{gap}}$ are weighted evidence,
+coverage, strong-event coverage, diagnostic evidence, and gap penalty.
+The LLM controls $\boldsymbol{\eta}_i$, $w_i$, $p_i$, and $G$; the
+coefficients $\alpha_*$ are fixed by the retrieval profile.
+
+\begin{algorithm}[t]
+\small
+\caption{Diagnostic-Event-Video-First Search with Vortex and ATS}
+\label{alg:dev-first}
+\begin{algorithmic}[1]
+\Require LLM plan $(\mathcal{E},\boldsymbol{\eta},\mathbf{w},\mathbf{p},G)$, retriever $R$, limit $K$
+\Ensure Ranked video--frame sequences $\mathcal{S}$
+\For{$e_i\in\mathcal{E}$}
+    \State $C_i\gets\mathsf{Calibrate}(R(e_i;\boldsymbol{\eta}_i,40))$
+    \State $\rho_i\gets\mathsf{ProbeScore}(C_i,p_i)$
+\EndFor
+\State $d\gets\arg\max_i\rho_i$; $D\gets\mathsf{NMS}_{2500\mathrm{ms}}(R(e_d;\boldsymbol{\eta}_d,500))$
+\State $\mathcal{V}\gets\mathsf{TopVideos}(\{C_i\},D,d)$
+\State $A_i\gets\mathsf{NMS}_{1500\mathrm{ms}}(R(e_i;\boldsymbol{\eta}_i,200)|_{\mathcal{V}})$ for all $e_i$
+\State $H\gets\mathsf{Vortex}(\{A_i\},\mathbf{w},d)$ \Comment{hard anchors}
+\State $\Pi\gets\mathsf{ATS}(\{A_i|_{V(H)}\},\mathbf{w})$ \Comment{partial sequences allowed}
+\State $\Pi\gets\mathsf{ValidTime}(\Pi,G)$; $\mathcal{S}\gets\mathsf{Diversify}(\Pi)$
+\State \Return $\mathsf{Top}_{K}(\mathcal{S})$
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsection{LLM Assist}
+
+The LLM provides semantic search planning for KIS, QA, and TRAKE.
+Given the query and requested task, it generates complementary
+English retrieval rewrites, original-language lexical queries, and
+evidence weights. Frame retrieval is performed by vision--language
+encoders and vector indexes, together with a text-search backend;
+the planner receives no retrieved evidence.
+
+\paragraph{Events and retrieval perspectives.}
+For TRAKE and optional temporal KIS, the planner decomposes the
+description into ordered, independently searchable events. Each event
+contains semantic and lexical views, an importance score, and
+visual/text and ASR/caption/OCR weights. Ordinary KIS and QA use
+query-level views. A perspective is a complementary wording of the
+same target, not a separately weighted modality. For example, the
+repository's cooking test represents ``asparagus touches oil'' using
+``asparagus piece contacts hot oil'' and ``food entering oil in a
+pan.'' These rewrites expose alternative descriptions of the action
+and its context.
+
+Semantic views are embedded using OpenCLIP or the selected visual
+encoder and also queried against captions. Lexical views address
+OCR and ASR evidence in the Elasticsearch path. Searches are
+independently evaluated in synchronous loops; embedding inputs may
+be batched. Explicit event descriptions are reconciled with the
+generated plan before temporal retrieval.
+
+\paragraph{Evidence weighting and fusion.}
+The prompt assigns visual weight to appearance, action, and spatial
+relations, and textual weight to speech, names, numbers, and visible
+writing. Event importance reflects diagnostic value for identifying
+the sequence. The backend normalizes modality/source weights and
+applies heuristic source gating where configured. Source weights
+scale text-field boosts; there are no learned perspective weights.
+
+For the default retrieval profile, let $a+b=1$ denote the effective
+visual/text weights, $\widehat{V}(x)$ and $\widehat{T}(x)$ the
+maximum-normalized retrieval scores, and $Q(x)$ the frame quality.
+The hybrid score is
+\begin{equation}
+\begin{aligned}
+H(x) ={}&
+0.65 \Bigl\{
+0.9 \bigl[
+a\widehat{V}(x)
++ b\widehat{T}(x)
+\bigr] \\
+&\quad + 0.05 Q(x)
+\Bigr\}
++ 0.35\widehat{R}(x),
+\end{aligned}
+\label{eq:hybrid_score}
+\end{equation}
+where $\widehat{R}(x)$ is the maximum-normalized weighted reciprocal
+rank fusion score. For available visual and textual ranks $r_V$ and
+$r_T$, their respective contributions are proportional to
+$a/(60+r_V)$ and $b/(60+r_T)$.
+
+Ordinary KIS, QA, and each TRAKE event retain maximum hit scores
+across rewrites within each visual model and across text hits;
+multiple selected visual models can additionally use rank fusion.
+
+Temporal KIS instead ranks semantic/lexical view pairs separately.
+For multiple views, its event-level merge is
+\begin{equation}
+\begin{aligned}
+S_i(x) ={}&
+0.58 h_i^{\max}(x)
++ 0.24 \bar{h}_i(x) \\
+&+ 0.13 \widehat{R}^{\mathrm{view}}_i(x)
++ 0.05 c_i(x),
+\end{aligned}
+\label{eq:temporal_kis_score}
+\end{equation}
+where $h_i^{\max}$ and $\bar{h}_i$ denote the maximum and mean scores
+over matched views, respectively, and $c_i$ is the fraction of
+matched views. The view-level reciprocal-rank term is obtained from
+\begin{equation}
+R^{\mathrm{view}}_i(x)
+=
+\sum_{j \in \mathcal{M}_i(x)}
+\frac{1}{60+r_{ij}},
+\label{eq:view_rrf}
+\end{equation}
+and $\widehat{R}^{\mathrm{view}}_i(x)$ denotes its normalized value.
+Here, $\mathcal{M}_i(x)$ is the set of matched views for event $i$.
+These coefficients are fixed by the implementation.
+
+\paragraph{Task-specific utilization.}
+\textbf{KIS} returns ranked video--frame pairs. Temporal KIS
+additionally uses event evidence for context-based or sequence-based
+ranking.
+
+\textbf{QA} first retrieves frames, then optionally generates a short
+answer separately for each candidate from its stored text annotations
+and answer hint, without supplying frame pixels. Answers are limited
+to 100 characters. This adapter is disabled in the supplied
+configuration, which falls back to an available stored hint.
+
+\textbf{TRAKE} (Temporal Retrieval and Alignment of Key Events)
+constructs same-video sequences by deterministic beam search with
+distinct frames, increasing frame indices, and bounded adjacent gaps.
+For event importances $u_i$, normalized event weights are
+\begin{equation}
+\alpha_i
+=
+\frac{M u_i}
+{\sum_{j=1}^{M} u_j},
+\label{eq:trake_weight}
+\end{equation}
+and a candidate sequence $\pi$ is scored as
+\begin{equation}
+T(\pi)
+=
+\frac{1}{\lvert\pi\rvert}
+\sum_{i \in I(\pi)}
+\alpha_i H_i(x_i),
+\label{eq:trake_score}
+\end{equation}
+where $M$ is the number of events and $I(\pi)$ indexes the events
+matched by sequence $\pi$. If the total event importance is zero,
+unit weights are used instead. Full event coverage is required by
+default; no subsequent LLM verification is applied.
+
+\paragraph{Algorithm: LLM-assisted retrieval.}
+\begin{enumerate}
+\setlength{\itemsep}{0pt}
+\setlength{\parskip}{0pt}
+\item Receive the query, task, retrieval profile, and explicit constraints.
+\item Obtain a structured LLM plan, or use the fallback plan.
+\item Resolve events and views, and normalize effective evidence weights.
+\item For each retrieval unit, search frame vectors and textual evidence.
+\item Fuse scores, apply explicit filters, and perform configured
+      reranking and diversification; merge separate views for temporal KIS.
+\item For TRAKE, align and rank event sequences; for temporal KIS,
+      apply the selected temporal ranking strategy.
+\item For QA, invoke configured per-candidate answer generation,
+      or use stored hints.
+\item Return ranked video--frame results, answers, or event sequences.
+\end{enumerate}
+% Khuong
+% gán weight và dùng nhiều góc nhìn, nhiều event, tách mỗi câu thành nhiều event, mỗi event lại có nhiều góc nhìn để search -> chạy song song luôn
+
+\subsection{User Interface}
+Đức 
+
+\section{Experiments}
+Experiment setup
+
+
+\subsection{Results}
+
+Table~\ref{tab:experiment-results} reports the official scores for the three evaluation rounds. The system obtained its best result in Round~2, reaching an RScore of 13.4. Although the score decreased to 12.0 in Round~3, indicating consistent retrieval performance across increasingly challenging queries.
+
+\begin{table}[t]
+\centering
+\caption{Official evaluation results on the AIC 2026 benchmark.}
+\label{tab:experiment-results}
+\small
+\begin{tabular}{lcc}
+\hline
+\textbf{Round} & \textbf{No. of Queries} & \textbf{Official RScore} \\
+\hline
+Round 1 & 24 & 11.6 \\
+Round 2 & 30 & \textbf{13.4} \\
+Round 3 & 35 & 12.0 \\
+\hline
+\end{tabular}
+\end{table}
+
+Overall, the results demonstrate that the proposed multimodal and temporal retrieval pipeline is effective for video retrieval. The lower score in Round~3 suggests that long and compositional queries remain high reasoning, particularly when several events must be localized and ordered correctly within a video.
+
+\section{Conclusion}
+
+
+Limits
+
+
+Future works
+
+
+\section{Document Body}
+
+\subsection{Footnotes}
+
+Footnotes are inserted with the \verb|\footnote| command.\footnote{This is a footnote.}
+
+\subsection{Tables and figures}
+
+See Table~\ref{tab:accents} for an example of a table and its caption.
+\textbf{Do not override the default caption sizes.}
+
+\subsection{Hyperlinks}
+
+Users of older versions of \LaTeX{} may encounter the following error during compilation: 
+\begin{quote}
+\tt\verb|\pdfendlink| ended up in different nesting level than \verb|\pdfstartlink|.
+\end{quote}
+This happens when pdf\LaTeX{} is used and a citation splits across a page boundary. The best way to fix this is to upgrade \LaTeX{} to 2018-12-01 or later.
+
+\subsection{Citations}
+
+
+
+Table~\ref{citation-guide} shows the syntax supported by the style files.
+We encourage you to use the natbib styles.
+You can use the command \verb|\citet| (cite in text) to get ``author (year)'' citations, like this citation to a paper by \citet{Gusfield:97}.
+You can use the command \verb|\citep| (cite in parentheses) to get ``(author, year)'' citations \citep{Gusfield:97}.
+You can use the command \verb|\citealp| (alternative cite without parentheses) to get ``author, year'' citations, which is useful for using citations within parentheses (e.g. \citealp{Gusfield:97}).
+
+\subsection{References}
+
+\nocite{Ando2005,augenstein-etal-2016-stance,andrew2007scalable,rasooli-tetrault-2015,goodman-etal-2016-noise,harper-2014-learning}
+
+The \LaTeX{} and Bib\TeX{} style files provided roughly follow the American Psychological Association format.
+If your own bib file is named \texttt{custom.bib}, then placing the following before any appendices in your \LaTeX{} file will generate the references section for you:
+\begin{quote}
+\begin{verbatim}
+\bibliographystyle{acl_natbib}
+\bibliography{custom}
+\end{verbatim}
+\end{quote}
+You can obtain the complete ACL Anthology as a Bib\TeX{} file from \url{https://aclweb.org/anthology/anthology.bib.gz}.
+To include both the Anthology and your own .bib file, use the following instead of the above.
+\begin{quote}
+\begin{verbatim}
+\bibliographystyle{acl_natbib}
+\bibliography{anthology,custom}
+\end{verbatim}
+\end{quote}
+Please see Section~\ref{sec:bibtex} for information on preparing Bib\TeX{} files.
+
+\subsection{Appendices}
+
+Use \verb|\appendix| before any appendix section to switch the section numbering over to letters. See Appendix~\ref{sec:appendix} for an example.
+
+\section{Bib\TeX{} Files}
+\label{sec:bibtex}
+
+Unicode cannot be used in Bib\TeX{} entries, and some ways of typing special characters can disrupt Bib\TeX's alphabetization. The recommended way of typing special characters is shown in Table~\ref{tab:accents}.
+
+Please ensure that Bib\TeX{} records contain DOIs or URLs when possible, and for all the ACL materials that you reference.
+Use the \verb|doi| field for DOIs and the \verb|url| field for URLs.
+If a Bib\TeX{} entry has a URL or DOI field, the paper title in the references section will appear as a hyperlink to the paper, using the hyperref \LaTeX{} package.
+
+\section*{Limitations}
+ACL 2023 requires all submissions to have a section titled ``Limitations'', for discussing the limitations of the paper as a complement to the discussion of strengths in the main text. This section should occur after the conclusion, but before the references. It will not count towards the page limit.
+The discussion of limitations is mandatory. Papers without a limitation section will be desk-rejected without review.
+
+While we are open to different types of limitations, just mentioning that a set of results have been shown for English only probably does not reflect what we expect. 
+Mentioning that the method works mostly for languages with limited morphology, like English, is a much better alternative.
+In addition, limitations such as low scalability to long text, the requirement of large GPU resources, or other things that inspire crucial further investigation are welcome.
+
+\section*{Ethics Statement}
+Scientific work published at ACL 2023 must comply with the ACL Ethics Policy.\footnote{\url{https://www.aclweb.org/portal/content/acl-code-ethics}} We encourage all authors to include an explicit ethics statement on the broader impact of the work, or other ethical considerations after the conclusion but before the references. The ethics statement will not count toward the page limit (8 pages for long, 4 pages for short papers).
+
+\section*{Acknowledgements}
+This research is supported by research funding from Faculty of Information Technology, University of Science, Vietnam National University - Ho Chi Minh City.
+
+% Entries for the entire Anthology, followed by custom entries
+\bibliography{anthology,custom}
+\bibliographystyle{acl_natbib}
+
+\appendix
+
+\section{Example Appendix}
+\label{sec:appendix}
+
+This is a section in the appendix.
+
+\end{document}

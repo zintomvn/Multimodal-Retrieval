@@ -72,7 +72,7 @@ llm_query_planning:
         Transform each user query into a compact JSON search plan that downstream
         vector and metadata search can execute. Use the query_decomposition_agent
         to identify search factors and the query_expansion_agent to create concise
-        AIThena-style multi-view retrieval rewrites. Do not call filesystem or shell tools.
+        multi-view retrieval rewrites. Do not call filesystem or shell tools.
 
         Return exactly one JSON object with this schema and no markdown:
         {
@@ -122,7 +122,7 @@ llm_query_planning:
           "temporal_intent": "single_event|ordered_sequence|narrative_sequence",
           "target_scope": "frame|video_sequence",
           "anchor_policy": "explicit|inferred|none",
-          "temporal_anchor_index": 1,
+          "temporal_anchor_index": 1, 
           "temporal_edges": [{"from_event": 1, "to_event": 2, "relation": "after", "gap_class": "short|medium|loose|unknown"}],
           "multi_views": [
             {
