@@ -24,6 +24,7 @@ from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
 from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
 from app.modules.temporal.ats import Candidate, adaptive_temporal_search
+from app.modules.temporal.diversification import diversify_temporal_sequences, nms_event_candidates
 from app.modules.temporal.dev_first import (
     DevFirstCandidate,
     build_dev_first_vortex_ats_sequences,
@@ -254,6 +255,7 @@ class RetrievalService:
             raise ValueError("No READY dataset found. Create or ingest a dataset first.")
         return dataset
 
+    # Get request and return a normalized query dict with multi-view variants, temporal events, and retrieval weights.
     def _normalize_query(self, request: SearchRequest) -> dict[str, Any]:
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
         expansion_profile = profile.get("query_expansion", {})
@@ -938,7 +940,6 @@ class RetrievalService:
         return items
 
     # 2. Search temporal
-
     def _search_dev_first_kis(
         self,
         run: QueryRun,
@@ -1180,6 +1181,8 @@ class RetrievalService:
             return self._search_dev_first_kis(run, dataset, request, normalized)
         events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
         event_plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
+        profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
+        temporal_cfg = profile.get("temporal", {}) if isinstance(profile.get("temporal"), dict) else {}
 
         candidate_sets: list[list[Candidate]] = []
         event_summaries: list[dict[str, Any]] = []
@@ -1222,9 +1225,19 @@ class RetrievalService:
                     visual_score=item.semantic_score,
                     text_score=item.text_score,
                     rrf_score=item.rrf_score,
+                    timestamp_ms=item.frame.timestamp_ms if item.frame.timestamp_ms is not None else None,
                 )
                 for item in ranked
             ]
+            # _rank_frames_multiperspective fuses independent views after its
+            # frame-level diversification, so run temporal NMS here on the
+            # fused pool. The pool is intentionally still deep for recall.
+            candidates = nms_event_candidates(
+                candidates,
+                min_gap_ms=max(0, int(temporal_cfg.get("event_nms_window_ms", 1500))),
+                per_video_limit=max(1, int(temporal_cfg.get("event_nms_per_video_limit", temporal_cfg.get("per_query_video_limit", 24)))),
+                min_gap_frames=max(1, int(temporal_cfg.get("event_nms_window_frames", 1))),
+            )
             candidate_sets.append(candidates)
             event_summaries.append(
                 {
@@ -1243,15 +1256,16 @@ class RetrievalService:
             )
 
         anchor_index = int(normalized.get("temporal_anchor_index") or 1)
-        delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
+        # frame_idx remains only as a compatibility fallback for legacy frames
+        # with no timestamp. Timestamp-aware temporal methods receive the
+        # request's millisecond window directly.
+        fallback_delta_frames = max(1, int(request.options.delta_t_max_ms / 1000 * 30))
         event_weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in event_plans[: len(events)]]
         if len(event_weights) != len(events) or sum(event_weights) <= 0:
             event_weights = [1.0 for _ in events]
         else:
             scale = len(events) / sum(event_weights)
             event_weights = [value * scale for value in event_weights]
-        profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
-        temporal_cfg = profile.get("temporal", {}) if isinstance(profile.get("temporal"), dict) else {}
         compactness_weight = max(0.0, min(1.0, float(temporal_cfg.get("compactness_weight", 0.0))))
         gap_penalty = max(0.0, min(1.0, float(temporal_cfg.get("gap_penalty", 0.0))))
         strategy = request.options.temporal_strategy
@@ -1265,13 +1279,16 @@ class RetrievalService:
             sequences = adaptive_temporal_search(
                 candidate_sets=candidate_sets,
                 weights=event_weights,
-                delta_frame_max=delta_frames,
+                delta_frame_max=fallback_delta_frames,
+                delta_t_max_ms=request.options.delta_t_max_ms,
                 min_match=min_match,
                 limit=max(request.top_k * 4, request.top_k),
                 per_query_video_limit=max(1, int(temporal_cfg.get("per_query_video_limit", 24))),
                 prefer_full_sequences=bool(temporal_cfg.get("prefer_full_sequences", True)),
                 compactness_weight=compactness_weight,
                 per_video_sequence_limit=max(0, int(temporal_cfg.get("per_video_sequence_limit", 4))),
+                sequence_nms_window_ms=max(0, int(temporal_cfg.get("sequence_nms_window_ms", 3000))),
+                sequence_nms_window_frames=max(1, int(temporal_cfg.get("sequence_nms_window_frames", 1))),
             )
             reranker = "aithena_weighted_ats"
         else:
@@ -1279,11 +1296,14 @@ class RetrievalService:
                 candidate_sets=candidate_sets,
                 weights=event_weights,
                 anchor_index=anchor_index,
-                delta_frame_max=delta_frames,
+                delta_frame_max=fallback_delta_frames,
                 limit=max(request.top_k * 4, request.top_k),
                 per_query_video_limit=max(1, int(temporal_cfg.get("per_query_video_limit", 24))),
                 compactness_weight=compactness_weight,
                 gap_penalty=gap_penalty,
+                delta_t_max_ms=request.options.delta_t_max_ms,
+                anchor_nms_window_ms=max(0, int(temporal_cfg.get("anchor_nms_window_ms", temporal_cfg.get("event_nms_window_ms", 1500)))),
+                anchor_nms_window_frames=max(1, int(temporal_cfg.get("anchor_nms_window_frames", temporal_cfg.get("event_nms_window_frames", 1)))),
             )
             min_match = 1
             reranker = "vortex_k_context"
@@ -1292,7 +1312,16 @@ class RetrievalService:
             sequence
             for sequence in sequences
             if any(candidate.event_index == anchor_index for candidate in sequence.candidates)
-        ][: request.top_k]
+        ]
+        anchored_sequences = diversify_temporal_sequences(
+            anchored_sequences,
+            max_sequences_per_video=max(1, int(temporal_cfg.get("max_sequences_per_video", 1))),
+            representative_event_index=anchor_index,
+            min_representative_gap_ms=max(0, int(temporal_cfg.get("min_representative_gap_ms", 10000))),
+            min_representative_gap_frames=max(1, int(temporal_cfg.get("min_representative_gap_frames", 1))),
+            sequence_nms_window_ms=max(0, int(temporal_cfg.get("sequence_nms_window_ms", 3000))),
+            sequence_nms_window_frames=max(1, int(temporal_cfg.get("sequence_nms_window_frames", 1))),
+        )[: request.top_k]
         frame_ids = {
             candidate.frame_id
             for sequence in anchored_sequences
@@ -1315,7 +1344,9 @@ class RetrievalService:
             if anchor_frame is None:
                 continue
             frame_indices = [item.frame_idx for item in sequence.candidates]
-            delta_frames_seq = [frame_indices[index] - frame_indices[index - 1] for index in range(1, len(frame_indices))]
+            timestamps = [item.timestamp_ms for item in sequence.candidates]
+            temporal_coordinates = [timestamp if timestamp is not None else frame_idx for timestamp, frame_idx in zip(timestamps, frame_indices)]
+            temporal_deltas = [temporal_coordinates[index] - temporal_coordinates[index - 1] for index in range(1, len(temporal_coordinates))]
             sequence_frames = [
                 {
                     "frame_id": item.frame_id,
@@ -1329,7 +1360,7 @@ class RetrievalService:
                     "order_index": index + 1,
                     "event_index": item.event_index,
                     "event_query": item.event_query,
-                    "delta_from_previous": None if index == 0 else item.frame_idx - sequence.candidates[index - 1].frame_idx,
+                    "delta_from_previous": None if index == 0 else temporal_coordinates[index] - temporal_coordinates[index - 1],
                     "thumbnail_url": f"/api/media/frames/{item.frame_id}/thumbnail" if item.frame_id else None,
                     "image_url": self._browser_image_url(frames_by_id.get(item.frame_id)),
                     "image_uri": frames_by_id.get(item.frame_id).image_uri if frames_by_id.get(item.frame_id) else None,
@@ -1363,9 +1394,11 @@ class RetrievalService:
                     "compactness_weight": compactness_weight,
                     "gap_penalty": gap_penalty,
                     "ordering": {
-                        "is_strictly_increasing": all(delta > 0 for delta in delta_frames_seq) if delta_frames_seq else True,
+                        "coordinate": "timestamp_ms" if all(timestamp is not None for timestamp in timestamps) else "frame_idx_fallback",
+                        "is_strictly_increasing": all(delta > 0 for delta in temporal_deltas) if temporal_deltas else True,
                         "frame_indices": frame_indices,
-                        "delta_frames": delta_frames_seq,
+                        "timestamps_ms": timestamps,
+                        "delta_t": temporal_deltas,
                     },
                 },
                 sequence_frames=sequence_frames,

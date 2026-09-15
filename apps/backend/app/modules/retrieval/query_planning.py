@@ -166,7 +166,7 @@ class AgentQueryPlanner:
         max_variants = max(1, int(max_variants or self._max_variants_default()))
         if not query:
             return self._fallback_plan(query, query_type, max_variants, error="blank query")
-
+        # Cache plans 
         cache_key = (self._active_profile_name(), query_type, query, max_variants, temporal_kis)
         cached = self._get_cached_plan(cache_key)
         if cached is not None:
@@ -267,6 +267,8 @@ class AgentQueryPlanner:
         _ = result
         return temporal_kis and bool(TEMPORAL_CUE_RE.search(query))
 
+
+    # Repair temporal 
     def _repair_temporal_plan(
         self,
         query: str,
