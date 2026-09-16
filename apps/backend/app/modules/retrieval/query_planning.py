@@ -136,7 +136,7 @@ class AgentQueryPlanner:
     plan and can continue with the existing search path.
     """
 
-    _plan_cache: dict[tuple[str, str, str, int, bool], tuple[float, QueryPlanningResult]] = {}
+    _plan_cache: dict[tuple[str, str, str, str, int, bool], tuple[float, QueryPlanningResult]] = {}
     _plan_cache_lock = threading.Lock()
     _openai_gate_lock = threading.Lock()
     _openai_next_allowed_at: dict[str, float] = {}
@@ -167,7 +167,14 @@ class AgentQueryPlanner:
         if not query:
             return self._fallback_plan(query, query_type, max_variants, error="blank query")
         # Cache plans 
-        cache_key = (self._active_profile_name(), query_type, query, max_variants, temporal_kis)
+        cache_key = (
+            self._active_profile_name(),
+            self._active_prompt_version(),
+            query_type,
+            query,
+            max_variants,
+            temporal_kis,
+        )
         cached = self._get_cached_plan(cache_key)
         if cached is not None:
             return cached
@@ -323,7 +330,7 @@ class AgentQueryPlanner:
             logger.warning("Temporal KIS plan repair failed; keeping the original plan.", exc_info=True)
             return None
 
-    def _get_cached_plan(self, cache_key: tuple[str, str, str, int, bool]) -> QueryPlanningResult | None:
+    def _get_cached_plan(self, cache_key: tuple[str, str, str, str, int, bool]) -> QueryPlanningResult | None:
         ttl_s = max(0, int(self._profile_value("cache_ttl_s", 600)))
         if ttl_s <= 0:
             return None
@@ -338,7 +345,7 @@ class AgentQueryPlanner:
                 return None
             return deepcopy(result)
 
-    def _cache_plan(self, cache_key: tuple[str, str, str, int, bool], result: QueryPlanningResult) -> None:
+    def _cache_plan(self, cache_key: tuple[str, str, str, str, int, bool], result: QueryPlanningResult) -> None:
         if result.source == "fallback" or not (result.multi_views or result.variants):
             return
         with self._plan_cache_lock:
@@ -368,7 +375,6 @@ class AgentQueryPlanner:
 
         llm = self._get_model()
         agents = self.agent_config.get("agents", {}) if isinstance(self.agent_config.get("agents"), dict) else {}
-        planner_cfg = agents.get("planner", {}) if isinstance(agents.get("planner"), dict) else {}
         subagents = []
         for key in ("query_decomposition", "query_expansion"):
             sub_cfg = agents.get(key, {}) if isinstance(agents.get(key), dict) else {}
@@ -387,7 +393,7 @@ class AgentQueryPlanner:
         self._agents[active_profile] = create_deep_agent(
             model=llm,
             tools=[],
-            system_prompt=str(planner_cfg.get("system_prompt", "")).strip(),
+            system_prompt=self._planner_system_prompt(),
             subagents=subagents,
         )
         return self._agents[active_profile]
@@ -401,7 +407,40 @@ class AgentQueryPlanner:
     def _planner_system_prompt(self) -> str:
         agents = self.agent_config.get("agents", {})
         planner_cfg = agents.get("planner", {}) if isinstance(agents, dict) and isinstance(agents.get("planner"), dict) else {}
-        return str(planner_cfg.get("system_prompt", "")).strip()
+        base_prompt = str(planner_cfg.get("system_prompt", "")).strip()
+        versions = self._prompt_versions()
+        selected = versions.get(self._active_prompt_version(), {})
+        if not isinstance(selected, dict):
+            return base_prompt
+        prompt_file = str(selected.get("planner_prompt_file", "")).strip()
+        if prompt_file:
+            if self.config_path is None:
+                raise ValueError("planner_prompt_file requires AgentQueryPlanner.config_path")
+            config_directory = self.config_path.resolve().parent
+            resolved_prompt_file = (config_directory / prompt_file).resolve()
+            if not resolved_prompt_file.is_relative_to(config_directory):
+                raise ValueError(f"planner_prompt_file must stay under the config directory: {prompt_file!r}")
+            if not resolved_prompt_file.is_file():
+                raise ValueError(f"planner prompt file does not exist: {resolved_prompt_file}")
+            return resolved_prompt_file.read_text(encoding="utf-8").strip()
+        override = str(selected.get("planner_system_prompt", "")).strip()
+        append = str(selected.get("planner_append", "")).strip()
+        prompt = override or base_prompt
+        return "\n\n".join(part for part in (prompt, append) if part)
+
+    def _prompt_versions(self) -> dict[str, dict[str, Any]]:
+        raw = self.agent_config.get("prompt_versions", {})
+        versions = raw.get("versions", {}) if isinstance(raw, dict) else {}
+        return {
+            str(name): config
+            for name, config in versions.items()
+            if isinstance(config, dict)
+        } if isinstance(versions, dict) else {}
+
+    def _active_prompt_version(self) -> str:
+        raw = self.agent_config.get("prompt_versions", {})
+        configured = str(raw.get("active_version", "")).strip() if isinstance(raw, dict) else ""
+        return configured if configured in self._prompt_versions() else "legacy"
 
     def _create_chat_model(self) -> Any:
         provider = self._provider()
@@ -1227,6 +1266,7 @@ class AgentQueryPlanner:
         return {
             "enabled": bool(self.agent_config.get("enabled", False)),
             "active_profile": self._active_profile_name(),
+            "active_prompt_version": self._active_prompt_version(),
             "provider": provider,
             "model": self._model_name(),
             "api_key_env": api_key_env,

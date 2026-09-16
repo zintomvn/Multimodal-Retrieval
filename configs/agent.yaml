@@ -63,11 +63,25 @@ llm_query_planning:
     project: multimodal-retrieval-query-agents
     endpoint_env: LANGSMITH_ENDPOINT
     endpoint: https://api.smith.langchain.com
+  # Each version owns a complete prompt file under configs/agent prompt/.
+  # Add a new file and version entry for a new experiment; do not edit another
+  # version's file when comparing runs.
+  prompt_versions:
+    active_version: agent_v1
+    versions:
+      agent_v1:
+        description: English semantic views for CLIP/Milvus (control).
+        planner_prompt_file: "agent prompt/agent_v1.md"
+      agent_v2:
+        description: Vietnamese semantic views for CLIP/Milvus experiment.
+        planner_prompt_file: "agent prompt/agent_v2.md"
   agents:
     planner:
       name: query_planner_agent
       description: Orchestrates query decomposition and expansion for multimodal video retrieval.
-      system_prompt: |
+      # Deprecated migration archive; the planner loads only the versioned
+      # files declared in `prompt_versions` above.
+      legacy_system_prompt_archive: |
         You are the root query-planning agent for a multimodal video retrieval backend.
         Transform each user query into a compact JSON search plan that downstream
         vector and metadata search can execute. Use the query_decomposition_agent
