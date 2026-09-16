@@ -480,9 +480,123 @@ Future works:
 - Study more about the fundamental (data, cloud, agent, web)
 
 
+# Idea:
+- Multi-views:
++ Search semantic view and text view: Sigma of (w_text * text_embedding + w_semantic * semantic_embedding)
 
-Agent cải tiến
+
+
+semantic_views = [
+    "chef cooking shrimp",
+    "orange sauce poured into pan",
+    "finished shrimp dish"
+]
+text_views = [
+    "Đầu bếp nấu tôm",
+    "Đầu bếp vắt chanh vào chảo",
+    "Trình bày tôm lên dĩa"
+]
+    + Search theo từng view
+    + Merge theo frame ID -> group by frame_id
+    + Save best result -> view nào điểm cao nhất thì lấy: best_score
+    + Save average score: avg_score
+    + RRF giữa các perspectives (ưu tiên frame có nhiều perspectives hơn -> cái này hơi xàm): view_rrf = Sigma of ( 1 / r_view) 
+    + Tính Coverage (Frame được nhiều cách diễn đạt khác nhau cùng retrieve có khả năng relevant cao hơn): coverage = # views retrieving f / # total views
+    => Tổng kết score: final_score = (
+        0.58 * best.final_score
+        + 0.24 * avg_score
+        + 0.13 * view_rrf
+        + 0.05 * coverage
+    )
+Note: Score evidence and Consensus evidence (này thì bias)
+
+# DEV-First
+0. LLM planning
+- event: 
+"query": "chef putting vegetables into a pot",
+"importance": 0.6, -> event quan trọng bao nhiêu đối với final sequence.
+"diagnostic_prior": 0.3 -> event có khả năng nhận diện đúng video tốt đến đâu.
+
+1. Probe tất cả events
+- retrieve(): gọi multi-views retrieval
+
+2. Calibration
+score_calibration:
+    relative_weight: 0.60
+    absolute_weight: 0.20
+    hybrid_weight: 0.20
+- Relative score
+- hybrid score: score từ retrieval -> fincal_score
+- absolute semantic score: 
+=> chả liên quan gì
+
+C(f) = relative_weight * relative_score + absolute_weight * absolute_score + hybrid_weight * 
+
+3. Event Probe
+Selectivity: selectivity = 1 - # videos / k 
+Margin: margin = S1 - mean(S2, ... , S6) 
+
+4. Diagnostic Event -> bug
+Di = 0.55 Li + 0.45 * Pi
+
+5. Deep Search diagnostic event
+
+6. Temporal NMS
+
+
+7. Video-first scoring
+
+V(v)=wb​Sbest​+wm​StopM​+wa​Agreement
+
+8. Narrative Probe
+9. Deep search từng event
+
+10. Candidate NMS lần nữa
+
+
+12. Vortex
+
+13. ATS
+
+14. 
+
+
+Problem:
+1. Thiếu frame miêu tả đúng trong video --> autoshot ngưỡng hơi tèo
+2. Trong stage filter - lúc lọc video thì search ra chưa đủ video -> visualize này ra nè
+    + Cần sampling lượng video cần thiết  (do autoshot không đủ cover hết frames from videos)
+3. Câu của ban tổ chức đánh đố 
+
+Improving: 
 - Chỉnh lại câu prompt phân tích ý nghĩa nguyên câu và tách thành những event tương ứng chứ không phải tách câu theo rule-based
 - Ưu tiên những candidate nằm trên sequence hơn thay vì lệch quá nhiều vào frame cao điểm
 - chỉnh lại logic search bằng temporal thì khi đưa vào giải thuật thì xét mỗi video thỏa, trọng số chỉnh lại ưu tiên những candidate có đủ frame trên sequence hơn thay vì candidate có điểm lệch quá nhiều vào frame cao nhất dẫn đến lệch
+- Tích hợp object detection vào để filter
+- event weights bias 
+- Thêm qwen3-embedding
+- hiện tại thì planner phụ thuộc vào weights khá nhiều
+- Kiểm tra tiếng việt của text chưa?
+- Frequent item set trong searching -> TID set thì sao ._. -> áp dụng cho video / perspectives
+- Chỉnh lại final score của searching bằng multi-views (RFF và coverage) - đang bị gán cứng
+- Thêm embedding Qwen3-VL, WeMM-Embedding để cho câu dài hơn đc không? https://arxiv.org/pdf/2608.24053
+    + WeMM-Embedding-9B
+    + WeMM-Embedding-4B
+    + Qwen3-VL-Embedding-8B
+    + Qwen3-VL-Embedding-2B
+- Hypothesis: long search or short sentence will get back  
+- UI: kết quả trả về khoảng frame (ex: 5148 - 5573 thay vì chỉ 5148)
+- Thêm cơ chế knowledge base: video nào search rồi thì loại bỏ, thêm hướng dẫn, 
 
+Lỗi giải thuật DEV-First
+- Xem chỉnh lại calibrate_candidates -> liên quan không?
+    + Chỉnh lại công thức search (làm gì có semantic và text !??!?)
+- Chỉnh lại lỗi giải thuật của Chọn Diagnostic Event - select_diagnostic_event()
+    + không copy diagnostic_prior trong LLM planner
+- NMS dùng được
+
+- Data:
+    + Chạy insert data OCR, Caption, ASR vào elasticsearch
+
+Những kiến thức có thể áp dụng:
+- Clustering
+- 
