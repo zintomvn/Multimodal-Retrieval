@@ -22,10 +22,8 @@ from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
 from app.modules.retrieval.query_planning import AgentQueryPlanner
 from app.modules.retrieval.schemas import ResultItem, SearchOptions, SearchRequest, SearchResponse
-from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
-from app.modules.temporal.ats import Candidate, adaptive_temporal_search
-from app.modules.temporal.diversification import diversify_temporal_sequences, nms_event_candidates
-from app.modules.temporal.dev_first import (
+from app.modules.retrieval.temporal.ats import adaptive_temporal_search
+from app.modules.retrieval.temporal.dev_first import (
     DevFirstCandidate,
     build_dev_first_vortex_ats_sequences,
     calibrate_candidates,
@@ -35,7 +33,10 @@ from app.modules.temporal.dev_first import (
     select_diagnostic_event,
     temporal_nms,
 )
-from app.modules.temporal.vortex import vortex_k_context_rerank
+from app.modules.retrieval.temporal.diversification import diversify_temporal_sequences, nms_event_candidates
+from app.modules.retrieval.temporal.types import Candidate
+from app.modules.retrieval.temporal.vortex import vortex_k_context_rerank
+from app.modules.retrieval.temporal_query import TemporalEventParse, parse_temporal_events
 
 
 logger = logging.getLogger(__name__)
@@ -589,6 +590,7 @@ class RetrievalService:
         use_agent_retrieval_weights: bool = False,
         text_source_weights: dict[str, float] | None = None,
     ) -> list[FrameScore]:
+        # Deduplicate the views
         semantic_views = self._dedupe_query_variants(semantic_views or [query_text], max_variants=8)
         text_views = self._dedupe_query_variants(text_views or [query_text], max_variants=8)
         if len(semantic_views) <= 1 and len(text_views) <= 1:
@@ -614,6 +616,8 @@ class RetrievalService:
             for index, semantic_view in enumerate(semantic_views)
         ]
         merged: dict[str, dict[str, Any]] = {}
+
+        
         for view in view_queries:
             ranked = self._rank_frames(
                 dataset=dataset,
@@ -627,6 +631,8 @@ class RetrievalService:
                 use_agent_retrieval_weights=use_agent_retrieval_weights,
                 text_source_weights=text_source_weights,
             )
+
+            # 
             for rank, item in enumerate(ranked, start=1):
                 frame_id = item.frame.keyframe_id
                 entry = merged.setdefault(
@@ -642,6 +648,8 @@ class RetrievalService:
                         "views": [],
                     },
                 )
+
+            
                 if item.final_score > entry["best"].final_score:
                     entry["best"] = item
                 entry["score_sum"] += item.final_score
@@ -1016,6 +1024,8 @@ class RetrievalService:
         video_ranking = score_candidate_videos_across_events(seed_candidate_sets, diagnostic_index, config)
         if not video_ranking:
             video_ranking = score_candidate_videos(diagnostic, config)
+
+        # If no videos are found, we can't proceed with the narrative
         candidate_limit = max(1, int(config.get("candidate_video_limit", 40)))
         candidate_video_ids = {video_id for video_id, _score in video_ranking[:candidate_limit]}
         narrative_cfg = config.get("narrative_probe", {}) if isinstance(config.get("narrative_probe"), dict) else {}
@@ -1191,15 +1201,23 @@ class RetrievalService:
         for event_index, event_query in enumerate(events, start=1):
             event_plan = event_plans[event_index - 1] if event_index - 1 < len(event_plans) else {}
             event_plan = event_plan if isinstance(event_plan, dict) else {}
+
+            # event weights 
             event_weights = self._normalize_retrieval_weights(event_plan.get("retrieval_weights"))
             if not event_weights:
                 event_weights = normalized.get("retrieval_weights")
             event_weight_source = str(event_plan.get("retrieval_weight_source") or normalized.get("retrieval_weight_source") or "profile")
+
+            # text weights: asr, ocr, caption
             event_text_source_weights = self._normalize_text_source_weights(event_plan.get("text_source_weights"))
             if not event_text_source_weights:
                 event_text_source_weights = self._normalize_text_source_weights(normalized.get("text_source_weights"))
+
+            # multi-views of events
             event_semantic_views = self._event_semantic_views(event_plan, event_query, max_views=8)
             event_text_views = self._event_text_views(event_plan, str(event_plan.get("text_query") or event_query), max_views=8)
+
+
             ranked = self._rank_frames_multiperspective(
                 dataset=dataset,
                 semantic_views=event_semantic_views,

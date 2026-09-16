@@ -7,12 +7,13 @@ edge validation remain timestamp-aware and backend-independent.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import log
 from typing import Any
 
-from app.modules.temporal.ats import Candidate, adaptive_temporal_search
-from app.modules.temporal.vortex import vortex_k_context_rerank
+from .ats import adaptive_temporal_search
+from .types import Candidate
+from .vortex import vortex_k_context_rerank
 
 
 def _clamp(value: float) -> float:
@@ -57,10 +58,10 @@ def calibrate_candidates(candidates: list[DevFirstCandidate], config: dict[str, 
     """Combine ranking and hybrid evidence without max-score normalization."""
     weights = _weights(config, ("relative_weight", "absolute_weight", "hybrid_weight"))
     calibrated: list[DevFirstCandidate] = []
-    total = max(1, len(candidates))
     for rank, candidate in enumerate(sorted(candidates, key=lambda item: item.final_retrieval_score, reverse=True), start=1):
         # Log rank is stable even when an event's absolute candidate pool is weak.
         relative = _clamp((1.0 / (1.0 + log(1.0 + rank))) / (1.0 / (1.0 + log(2.0))))
+
         hybrid = _clamp(candidate.final_retrieval_score)
         absolute_available = candidate.semantic_raw_score is not None
         absolute = _clamp(float(candidate.semantic_raw_score or 0.0))
@@ -69,17 +70,18 @@ def calibrate_candidates(candidates: list[DevFirstCandidate], config: dict[str, 
             active["absolute_weight"] = 0.0
             active = _weights(active, tuple(active))
         score = active["relative_weight"] * relative + active["absolute_weight"] * absolute + active["hybrid_weight"] * hybrid
-        calibrated.append(
-            DevFirstCandidate(
-                **{**candidate.__dict__, "semantic_relative_score": relative, "calibrated_event_score": _clamp(score)}
-            )
-        )
+        calibrated.append(replace(
+            candidate,
+            semantic_relative_score=relative,
+            calibrated_event_score=_clamp(score),
+        ))
     return calibrated
 
 
 def temporal_nms(candidates: list[DevFirstCandidate], window_ms: int, limit_per_group: int | None = None) -> list[DevFirstCandidate]:
     """Suppress only same-video, same-event near duplicates; timestamps win."""
     grouped: dict[tuple[str, int], list[DevFirstCandidate]] = {}
+    # Group for each video
     for candidate in candidates:
         grouped.setdefault((candidate.video_id, candidate.event_index), []).append(candidate)
     selected: list[DevFirstCandidate] = []
@@ -104,7 +106,8 @@ def event_probe(candidates: list[DevFirstCandidate], top_k: int) -> dict[str, fl
     if not sample:
         return {"selectivity": 0.0, "margin": 0.0, "top_confidence": 0.0, "score": 0.0}
     unique_videos = len({item.video_id for item in sample})
-    top = sample[0].calibrated_event_score
+    top = sample[0].calibrated_event_score # top 1 - best score
+
     mean_tail = sum(item.calibrated_event_score for item in sample[1: min(6, len(sample))]) / max(1, min(5, len(sample) - 1))
     return {
         "selectivity": _clamp(1 - unique_videos / max(1, len(sample))),

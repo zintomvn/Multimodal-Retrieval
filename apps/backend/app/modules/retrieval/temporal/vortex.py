@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.modules.temporal.ats import Candidate, TemporalSequence
+from .types import Candidate, TemporalSequence
 
 
 def vortex_k_context_rerank(

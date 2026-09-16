@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.modules.temporal.dev_first import (
+from app.modules.retrieval.temporal.dev_first import (
     DevFirstCandidate,
     build_dev_first_sequences,
     build_dev_first_vortex_ats_sequences,

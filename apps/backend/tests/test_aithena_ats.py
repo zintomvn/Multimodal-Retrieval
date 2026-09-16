@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.modules.temporal.ats import Candidate, TemporalSequence, adaptive_temporal_search
-from app.modules.temporal.diversification import diversify_temporal_sequences
-from app.modules.temporal.vortex import vortex_k_context_rerank
+from app.modules.retrieval.temporal.ats import adaptive_temporal_search
+from app.modules.retrieval.temporal.diversification import diversify_temporal_sequences
+from app.modules.retrieval.temporal.types import Candidate, TemporalSequence
+from app.modules.retrieval.temporal.vortex import vortex_k_context_rerank
 
 
 def test_aithena_ats_reranks_temporally_valid_sequences_by_event_importance() -> None:

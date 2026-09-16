@@ -1,32 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Candidate:
-    frame_id: str
-    video_id: str
-    video_code: str
-    frame_idx: int
-    score: float
-    text: str
-    event_index: int = 0
-    event_query: str = ""
-    visual_score: float = 0.0
-    text_score: float = 0.0
-    rrf_score: float = 0.0
-    # This is deliberately optional: older callers can still use frame_idx,
-    # but normal KIS retrieval should provide the source-media timestamp.
-    timestamp_ms: int | None = None
-
-
-@dataclass(frozen=True)
-class TemporalSequence:
-    video_id: str
-    video_code: str
-    candidates: list[Candidate]
-    score: float
+from .types import Candidate, TemporalSequence
 
 
 def adaptive_temporal_search(
