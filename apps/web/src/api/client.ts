@@ -54,9 +54,12 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   headers.set("Content-Type", "application/json");
   // Prevent ngrok's browser warning page from being returned to API fetches.
   headers.set("ngrok-skip-browser-warning", "true");
+  const timeout = AbortSignal.timeout(120_000);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers,
+    signal,
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -111,14 +114,15 @@ function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> 
   };
 }
 
-export async function planSearch(input: RetrievalSearchInput): Promise<QueryPlanResponse> {
+export async function planSearch(input: RetrievalSearchInput, signal?: AbortSignal): Promise<QueryPlanResponse> {
   return requestJson<QueryPlanResponse>("/api/retrieval/plan", {
     method: "POST",
+    signal,
     body: JSON.stringify(retrievalPayload(input)),
   });
 }
 
-export async function runSearch(input: RetrievalSearchInput): Promise<SearchResponse> {
+export async function runSearch(input: RetrievalSearchInput, signal?: AbortSignal): Promise<SearchResponse> {
   const path =
     input.queryType === "QA"
       ? "/api/retrieval/qa"
@@ -126,13 +130,14 @@ export async function runSearch(input: RetrievalSearchInput): Promise<SearchResp
         ? "/api/retrieval/trake"
         : "/api/retrieval/search";
   return requestJson<SearchResponse>(path, {
+    signal,
     method: "POST",
     body: JSON.stringify(retrievalPayload(input)),
   });
 }
 
-export async function getFrameContext(frameId: string): Promise<FrameContext> {
-  return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`);
+export async function getFrameContext(frameId: string, signal?: AbortSignal): Promise<FrameContext> {
+  return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`, { signal });
 }
 
 export async function getVideoPreviewUrl(
@@ -182,7 +187,7 @@ export async function listFrames(input: {
   limit?: number;
   offset?: number;
   presentOnly?: boolean;
-}): Promise<FrameListResponse> {
+}, signal?: AbortSignal): Promise<FrameListResponse> {
   const params = new URLSearchParams();
   if (input.datasetId) params.set("dataset_id", input.datasetId);
   if (input.videoId) params.set("video_id", input.videoId);
@@ -193,6 +198,7 @@ export async function listFrames(input: {
   params.set("present_only", String(input.presentOnly ?? true));
   return requestJson<FrameListResponse>(
     `/api/media/frames?${params.toString()}`,
+    { signal },
   );
 }
 

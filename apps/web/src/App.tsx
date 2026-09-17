@@ -1,3 +1,4 @@
+import { LatestRequest } from "./api/latestRequest";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
@@ -1579,6 +1580,25 @@ export function App() {
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
+  const searchRequests = useRef(new LatestRequest());
+  const contextRequests = useRef(new LatestRequest());
+
+  function cancelSearch() {
+    searchRequests.current.cancel();
+    contextRequests.current.cancel();
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    cancelSearch();
+    return () => {
+      searchRequests.current.cancel();
+      contextRequests.current.cancel();
+    };
+  }, [datasetId, queryType, mode]);
   const [selected, setSelected] = useState<SubmissionRow[]>([]);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
@@ -1722,21 +1742,23 @@ export function App() {
     listDatasets()
       .then((items) => {
         if (cancelled) return;
-        const next = items.length > 0 ? items : mockDatasets;
+        const next = items;
+        setDataError(null);
         setDatasets(next);
         setDatasetId((current) => current || next[0]?.id || "");
-        if (items.length === 0) setStatus("Mock dataset ready");
+        if (items.length === 0) setStatus("No datasets available");
       })
       .catch(() => {
         if (cancelled) return;
-        setDatasets(mockDatasets);
-        setDatasetId(mockDatasets[0].id);
-        setStatus("Mock mode");
+        setDatasets([]);
+        setDatasetId("");
+        setGalleryFrames([]);
+        setDataError("Cannot load datasets. Check the API connection and retry.");
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bootstrapAttempt]);
 
   useEffect(() => {
     if (!datasetId) return;
@@ -1745,14 +1767,13 @@ export function App() {
     listFrames({ datasetId, limit: 48, offset: 0, presentOnly: true })
       .then((payload) => {
         if (cancelled) return;
-        setGalleryFrames(
-          payload.frames.length > 0 ? payload.frames : makeMockFrames(),
-        );
+        setGalleryFrames(payload.frames);
+        setDataError(null);
       })
       .catch(() => {
         if (cancelled) return;
-        const mock = makeMockFrames();
-        setGalleryFrames(mock);
+        setGalleryFrames([]);
+        setDataError("Cannot load frames. Check the API connection and retry.");
       })
       .finally(() => {
         if (!cancelled) setGalleryLoading(false);
@@ -1760,7 +1781,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [datasetId]);
+  }, [datasetId, bootstrapAttempt]);
 
   useEffect(() => {
     const element = composerRef.current;
@@ -1844,6 +1865,8 @@ export function App() {
   }
 
   function changeType(type: SearchTask) {
+    cancelSearch();
+    setSearchError(null);
     setQueryType(type);
     setQueryName(queryNameByType[type]);
     setExportFileName(queryNameByType[type]);
@@ -1857,6 +1880,8 @@ export function App() {
   }
 
   function switchMode(nextMode: AppMode) {
+    cancelSearch();
+    setSearchError(null);
     setMode(nextMode);
     setIntelligenceOpen(false);
     if (
@@ -1896,11 +1921,17 @@ export function App() {
 
   async function openFrameContext(result: SearchResult) {
     if (!result.frame_id) return;
+    contextRequests.current.cancel();
+    const request = contextRequests.current.begin()!;
     setActiveResultId(result.id);
+    setContext(null);
     try {
-      setContext(await getFrameContext(result.frame_id));
+      const next = await getFrameContext(result.frame_id, request.signal);
+      if (contextRequests.current.isCurrent(request)) setContext(next);
     } catch {
-      setContext(mockContextForResult(result));
+      if (contextRequests.current.isCurrent(request)) setStatus("Cannot load frame context. Try opening the frame again.");
+    } finally {
+      contextRequests.current.finish(request);
     }
   }
 
@@ -2024,7 +2055,11 @@ export function App() {
       return;
     }
     if (!datasetId || !queryText.trim()) return;
-
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    contextRequests.current.cancel();
+    setContext(null);
+    setSearchError(null);
     setLoading(true);
     setHasSearched(true);
     if (queryType === "TRAKE") setTrakeFrameChoices([]);
@@ -2059,7 +2094,8 @@ export function App() {
         (queryType === "KIS" && kisTemporalMode);
       if (shouldShowPlanEarly) {
         try {
-          const planned = await planSearch(searchInput);
+          const planned = await planSearch(searchInput, request.signal);
+          if (!searchRequests.current.isCurrent(request)) return;
           const planningTrace = makeTraceFromResponse(
             mode,
             queryType,
@@ -2082,6 +2118,7 @@ export function App() {
           );
           setAutoTrace(planningTrace);
         } catch {
+          if (!searchRequests.current.isCurrent(request)) return;
           setAutoTrace((current) =>
             current.map((step) =>
               step.title === "Parse query"
@@ -2097,7 +2134,8 @@ export function App() {
         }
       }
 
-      const response = await runSearch(searchInput);
+      const response = await runSearch(searchInput, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(
         response.results,
         queryType,
@@ -2123,6 +2161,8 @@ export function App() {
       rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
+      setSearchError(error instanceof Error ? error.message : "Search failed");
       const nextResults: SearchResult[] = [];
       const trace = makeAgentTrace(mode, queryType, 0).map((step, index) =>
         index === 0
@@ -2146,7 +2186,7 @@ export function App() {
       rememberSearch(nextResults, trace);
       setContext(null);
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
@@ -2164,6 +2204,10 @@ export function App() {
       return;
     }
 
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    contextRequests.current.cancel();
+    setSearchError(null);
     setLoading(true);
     setHasSearched(true);
     setResults([]);
@@ -2188,7 +2232,8 @@ export function App() {
             : Math.min(Math.max(topK, 12), 200),
         offset: 0,
         presentOnly: true,
-      });
+      }, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = response.frames.map((frame, index) =>
         frameToResult(frame, index + 1),
       );
@@ -2208,6 +2253,8 @@ export function App() {
       rememberSearch(nextResults, trace, videoCode);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
+      setSearchError(error instanceof Error ? error.message : "Video lookup failed");
       const detail =
         error instanceof Error
           ? error.message.slice(0, 64)
@@ -2220,13 +2267,17 @@ export function App() {
       setStatus(`Video lookup failed: ${detail}`);
       rememberSearch([], trace, videoCode);
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
   async function submitChat() {
     const prompt = queryText.trim();
     if (!prompt && attachedFiles.length === 0) return;
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    setSearchError(null);
+    contextRequests.current.cancel();
     const fileNames = attachedFiles.map((file) => file.name);
     const fallbackTrace = makeAgentTrace(
       "Chat",
@@ -2256,6 +2307,7 @@ export function App() {
           trace: fallbackTrace,
         },
       ]);
+      searchRequests.current.finish(request);
       setStatus("Chat model selected");
       return;
     }
@@ -2276,7 +2328,8 @@ export function App() {
         temporalMode: false,
         temporalStrategy,
         visualSearchMode,
-      });
+      }, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(response.results, "QA");
       setResults(nextResults);
       setHasSearched(true);
@@ -2303,6 +2356,8 @@ export function App() {
         answer ? "QA answer ready" : `${nextResults.length} evidence frames`,
       );
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
+      setSearchError(error instanceof Error ? error.message : "QA request failed");
       const detail =
         error instanceof Error
           ? error.message.slice(0, 96)
@@ -2320,11 +2375,13 @@ export function App() {
       ]);
       setStatus("Chat request failed");
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
   function restoreHistory(item: SearchHistoryItem) {
+    cancelSearch();
+    setSearchError(null);
     setMode(item.mode);
     setQueryType(item.queryType);
     setQueryName(item.queryName);
@@ -2609,6 +2666,8 @@ export function App() {
   }
 
   function newSession() {
+    cancelSearch();
+    setSearchError(null);
     setQueryText(sampleQueries[queryType]);
     setResults([]);
     setHasSearched(false);
@@ -2759,6 +2818,10 @@ export function App() {
         </header>
 
         <div className="content-scroll">
+          <div className="request-status" role="status" aria-live="polite">{status}</div>
+          {dataError && <div className="request-error" role="alert">{dataError} <button type="button" onClick={() => setBootstrapAttempt((n) => n + 1)}>Retry data</button></div>}
+          {searchError && <div className="request-error" role="alert">Request failed: {searchError} <button type="button" onClick={() => void submitSearch()}>Retry search</button></div>}
+          {loading && <button type="button" className="cancel-search" onClick={() => { cancelSearch(); setHasSearched(false); setStatus("Search cancelled"); }}>Cancel search</button>}
           <div className="workspace-toolbar">
             <div className="workspace-context">
               <strong>{queryLabels[queryType].title}</strong>
@@ -2849,7 +2912,7 @@ export function App() {
                 </div>
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {queryType === "TRAKE"
+                  {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -2902,7 +2965,7 @@ export function App() {
                     <SearchLoadingStage frameColumns={frameColumns} />
                   ) : hasSearched && visibleResults.length === 0 ? (
                     <p className="empty-note search-empty-note">
-                      {queryType === "TRAKE"
+                      {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
                         ? "No complete ordered sequence matches this query."
                         : "No frames match this query."}
                     </p>
@@ -2948,7 +3011,7 @@ export function App() {
                 <SearchLoadingStage frameColumns={frameColumns} />
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {queryType === "TRAKE"
+                  {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -3246,7 +3309,7 @@ export function App() {
                   type="button"
                   className="send-button"
                   onClick={() => void submitSearch()}
-                  disabled={loading}
+                  disabled={loading || !datasetId}
                   aria-label={mode === "Chat" ? "Send message" : "Run search"}
                 >
                   {loading ? (

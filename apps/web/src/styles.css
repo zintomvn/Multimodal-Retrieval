@@ -334,6 +334,10 @@ button:disabled {
   background: var(--bg-panel);
 }
 
+.request-status { padding: 8px 0; color: var(--text-2); font-size: 13px; }
+.request-error { padding: 12px 0; color: #b3271e; overflow-wrap: anywhere; }
+.request-error button, .cancel-search { margin: 4px 8px; padding: 6px 10px; }
+
 .topbar {
   display: flex;
   align-items: center;
