@@ -4,6 +4,21 @@ Branch: `feat/ui-search-optimization`.
 Base: local `main` / `origin/main` at `5f49c493b9cc9db2bdb7dfb6ff7da864731b4f2f`.
 Plan: `output/ui-search-optimization-plan.md` (local review artifact).
 
+## Reviewed completion count (17/09)
+
+See [remaining work and main-test root causes](optimization-backlog.md).
+Of 22 original items, A02 is complete within its client-side scope; six are partial
+(A01/A03/A04/A06/A17/A20), fifteen are not started. Thus 21 remain open.
+Two baseline failures are tracked as child tasks B01 (A09/A16/A20) and B02 (A06),
+not extra top-level optimization items. Both Markdown/HTML local plans include
+the updated count, remaining acceptance work and proposed fixes.
+
+B01 probe on base main confirms all four-event sequence assertions pass when
+expected sources are ASR/Caption, as dictated by OCR gating. B02 originates in
+commit 5b81741 switching ZIP export to CSV without updating tests/docs; proposal
+preserves single-query CSV and restores an explicit multi-query ZIP contract.
+Neither baseline failure has been fixed in production code in this update.
+
 ## G0 / A20: request diagnostics foundation
 
 Implemented request-scoped trace ID, HTTP Server-Timing, content-free logging,
