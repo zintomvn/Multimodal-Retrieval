@@ -5,7 +5,7 @@ import { mediaCache } from "./api/mediaCache";
 import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft, type SourceMode } from "./workspace";
 import { LatestRequest } from "./api/latestRequest";
 import { useDialogFocus } from "./useDialogFocus";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Profiler, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -1232,10 +1232,15 @@ const ResultGrid = memo(function ResultGrid({results,columns,selectedKeys,keyFor
   onOpen:(r:SearchResult)=>void;onPick:(r:SearchResult)=>void;onPreview:(r:SearchResult)=>void;
 }) {
   if(import.meta.env.DEV) performance.mark('result-grid-render');
-  return <div className="frame-grid" style={{gridTemplateColumns:`repeat(${columns}, minmax(0, 1fr))`}}>
+  return <Profiler id="result-grid" onRender={(_id,_phase,duration,_base,start)=>{
+    if(import.meta.env.DEV){
+      if(performance.getEntriesByName('result-grid-commit').length>=100)performance.clearMeasures('result-grid-commit');
+      performance.measure('result-grid-commit',{start,duration});
+    }
+  }}><div className="frame-grid" style={{gridTemplateColumns:`repeat(${columns}, minmax(0, 1fr))`}}>
     {results.map((r,i)=><FrameCard key={r.id} result={r} eager={i<columns} selected={selectedKeys.has(keyFor(r))}
       onOpen={()=>onOpen(r)} onSelect={()=>onPick(r)} onPreview={()=>onPreview(r)}/>)}
-  </div>;
+  </div></Profiler>;
 });
 
 function TrakeRows({
