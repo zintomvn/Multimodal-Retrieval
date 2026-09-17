@@ -1,4 +1,5 @@
 import { requireValidExport } from "./submissionValidation";
+import { mediaCache } from "./mediaCache";
 import type {
   Dataset,
   FrameListResponse,
@@ -143,7 +144,9 @@ export async function runSearch(input: RetrievalSearchInput, signal?: AbortSigna
 }
 
 export async function getFrameContext(frameId: string, signal?: AbortSignal): Promise<FrameContext> {
-  return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`, { signal });
+  // Aborting one consumer must not abort another consumer's cached promise.
+  if (signal) return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`, { signal });
+  return mediaCache.get(`context:${frameId}`, () => requestJson<FrameContext>(`/api/media/frames/${frameId}/context`));
 }
 
 export async function getVideoPreviewUrl(
@@ -165,9 +168,9 @@ export async function getVideoEvidence(
   if (focus?.seconds !== undefined && Number.isFinite(focus.seconds)) params.set("seconds", String(focus.seconds));
   if (focus?.frameId) params.set("frame_id", focus.frameId);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return requestJson<VideoEvidence>(
+  return mediaCache.get(`evidence:${videoId}${suffix}`, () => requestJson<VideoEvidence>(
     `/api/media/videos/${encodeURIComponent(videoId)}/evidence${suffix}`,
-  );
+  ));
 }
 
 export async function seekVideoFrame(input: {

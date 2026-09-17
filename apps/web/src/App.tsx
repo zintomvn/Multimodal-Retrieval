@@ -1,7 +1,9 @@
+import { useStableEvent } from "./useStableEvent";
+import { mediaCache } from "./api/mediaCache";
 import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft, type SourceMode } from "./workspace";
 import { LatestRequest } from "./api/latestRequest";
 import { useDialogFocus } from "./useDialogFocus";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -101,6 +103,7 @@ interface VideoPreview {
   trakeEventIndex: number | null;
   evidence: VideoEvidence | null;
   evidenceLoading: boolean;
+  evidenceError?: string;
 }
 
 type TrakeSequenceFrame = SearchResult["sequence_frames"][number];
@@ -1187,7 +1190,8 @@ function FrameCard({
           <span>{formatScore(result.score)}</span>
         </div>
         <p>Frame {frameText}</p>
-        <ScoreBreakdown result={result} compact />
+        {Boolean(result.score_breakdown.text_hit) && <p className="match-snippet">{String((result.score_breakdown.text_hit as Record<string,unknown>).source_type ?? "Text")}: {String((result.score_breakdown.text_hit as Record<string,unknown>).snippet ?? "")}</p>}
+        <details><summary>Match details</summary><ScoreBreakdown result={result} compact /></details>
         <div className="frame-actions">
           <button
             type="button"
@@ -1214,6 +1218,16 @@ function FrameCard({
     </article>
   );
 }
+
+const ResultGrid = memo(function ResultGrid({results,columns,selectedKeys,keyFor,onOpen,onPick,onPreview}:{
+  results:SearchResult[];columns:number;selectedKeys:Set<string>;keyFor:(r:SearchResult)=>string;
+  onOpen:(r:SearchResult)=>void;onPick:(r:SearchResult)=>void;onPreview:(r:SearchResult)=>void;
+}) {
+  return <div className="frame-grid" style={{gridTemplateColumns:`repeat(${columns}, minmax(0, 1fr))`}}>
+    {results.map((r,i)=><FrameCard key={r.id} result={r} eager={i<columns} selected={selectedKeys.has(keyFor(r))}
+      onOpen={()=>onOpen(r)} onSelect={()=>onPick(r)} onPreview={()=>onPreview(r)}/>)}
+  </div>;
+});
 
 function TrakeRows({
   results,
@@ -1579,6 +1593,13 @@ export function App() {
     temporal: 0.1,
   });
   const [frameColumns, setFrameColumns] = useState(5);
+  const [maxColumns, setMaxColumns] = useState(8);
+  const effectiveColumns = Math.min(frameColumns, maxColumns);
+  useEffect(() => {
+    const area=document.querySelector(".content-scroll"); if(!area) return;
+    const observer=new ResizeObserver(entries=>setMaxColumns(Math.max(1,Math.floor(entries[0].contentRect.width/180))));
+    observer.observe(area);return ()=>observer.disconnect();
+  },[]);
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [trakeEventCount, setTrakeEventCount] = useState(4);
@@ -1640,6 +1661,7 @@ export function App() {
   ]);
   const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
   const [videoEvidenceOpen, setVideoEvidenceOpen] = useState(false);
+  const [evidenceAttempt, setEvidenceAttempt] = useState(0);
   const [videoPlaybackSeconds, setVideoPlaybackSeconds] = useState<
     number | null
   >(null);
@@ -1753,11 +1775,11 @@ export function App() {
   useEffect(() => {
     const preview = videoPreview;
     const frame = preview?.frames[preview.frameIndex];
-    if (!preview || !frame) return;
+    if (!preview || !frame || !videoEvidenceOpen) return;
     let cancelled = false;
     setVideoPreview((current) =>
       current && current.result.id === preview.result.id
-        ? { ...current, evidence: null, evidenceLoading: true }
+        ? { ...current, evidence: null, evidenceLoading: true, evidenceError: undefined }
         : current,
     );
     void getVideoEvidence(preview.result.video_id, {
@@ -1780,7 +1802,7 @@ export function App() {
           current &&
           current.result.id === preview.result.id &&
           current.selectedFrameIdx === frame.frame_idx
-            ? { ...current, evidenceLoading: false }
+            ? { ...current, evidenceLoading: false, evidenceError: "Cannot load evidence. This is not an empty transcript." }
             : current,
         );
       });
@@ -1791,7 +1813,7 @@ export function App() {
     videoPreview?.result.id,
     videoPreview?.frameIndex,
     videoPreview?.selectedFrameIdx,
-    videoPreview?.selectedTimestampMs,
+    videoPreview?.selectedTimestampMs, videoEvidenceOpen, evidenceAttempt,
   ]);
 
   useEffect(() => {
@@ -2146,10 +2168,7 @@ export function App() {
     try {
       const response = await runSearch(searchInput, request.signal);
       if (!searchRequests.current.isCurrent(request)) return;
-      const nextResults = diversifyResultsForDisplay(
-        response.results,
-        queryType,
-      );
+      const nextResults = response.results;
       if (queryType === "TRAKE") {
         setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
       }
@@ -2342,7 +2361,7 @@ export function App() {
         visualSearchMode,
       }, request.signal);
       if (!searchRequests.current.isCurrent(request)) return;
-      const nextResults = diversifyResultsForDisplay(response.results, "QA");
+      const nextResults = response.results;
       setResults(nextResults);
       setHasSearched(true);
       const trace = makeTraceFromResponse(
@@ -2417,12 +2436,6 @@ export function App() {
       `/api/media/videos/${result.video_id}/preview`,
     );
     setStatus("Opening video");
-    try {
-      const preview = await getVideoPreviewUrl(result.video_id);
-      videoUrl = mediaUrl(preview.url) ?? preview.url;
-    } catch {
-      // Fall back to the legacy preview redirect below.
-    }
     if (!videoUrl) {
       setStatus("Video preview unavailable");
       return;
@@ -2452,9 +2465,12 @@ export function App() {
       evidenceLoading: true,
     });
     setStatus("Video ready");
+    void getVideoPreviewUrl(result.video_id).then(preview => {
+      setVideoPreview(current => current?.result.id === result.id ? {...current,url:mediaUrl(preview.url) ?? preview.url} : current);
+    }).catch(() => setStatus("Using video redirect; retry preview if playback fails."));
     if (!result.frame_id) return;
     try {
-      const nextContext = await getFrameContext(result.frame_id);
+      const nextContext = context?.target_frame_id === result.frame_id ? context : await getFrameContext(result.frame_id);
       const targetIndex = Math.max(
         0,
         nextContext.frames.findIndex(
@@ -2702,6 +2718,11 @@ export function App() {
     videoPreview && videoPreviewFrame && !videoPreview.loadingFrames,
   );
 
+  const stableOpen = useStableEvent((r:SearchResult)=>void openFrameContext(r));
+  const stablePick = useStableEvent((r:SearchResult)=>addResult(r));
+  const stablePreview = useStableEvent((r:SearchResult)=>void openVideoPreview(r));
+  const resultKey = useCallback((r:SearchResult)=>selectionKeyForResult(r),[queryName,queryType]);
+
   const modeCaption =
     mode === "Search" && hasSearched && !loading
       ? `${visibleResults.length} frames`
@@ -2823,6 +2844,7 @@ export function App() {
 
         <div className="content-scroll">
           {storageError && <p role="alert">{storageError}</p>}
+          <label>Filter displayed results <input aria-label="Filter displayed results" value={resultFilter} onChange={e=>setResultFilter(e.target.value)} placeholder="Video, frame, answer" /></label>
           <label className="source-control">Search source <select aria-label="Search source" value={sourceMode} onChange={e=>setSourceMode(e.target.value as SourceMode)}>
             <option value="auto">Auto sources</option><option value="ocr">Visible text (OCR)</option>
             <option value="asr">Speech (ASR)</option><option value="scene">Scene (visual + caption)</option>
@@ -2830,6 +2852,7 @@ export function App() {
           <div className="request-status" role="status" aria-live="polite">{status}</div>
           {dataError && <div className="request-error" role="alert">{dataError} <button type="button" onClick={() => setBootstrapAttempt((n) => n + 1)}>Retry data</button></div>}
           {searchError && <div className="request-error" role="alert">Request failed: {searchError} <button type="button" onClick={() => void submitSearch()}>Retry search</button></div>}
+          {loading && results.length > 0 && <p role="status">Updating search. Displayed results belong to the previous request.</p>}
           {loading && <button type="button" className="cancel-search" onClick={() => { cancelSearch(); setHasSearched(false); setStatus("Search cancelled"); }}>Cancel search</button>}
           <div className="workspace-toolbar">
             <div className="workspace-context">
@@ -2911,8 +2934,8 @@ export function App() {
               {(loading || hasSearched) && (
                 <ReasoningDisclosure steps={autoTrace} />
               )}
-              {loading ? (
-                <SearchLoadingStage frameColumns={frameColumns} />
+              {loading && results.length === 0 ? (
+                <SearchLoadingStage frameColumns={effectiveColumns} />
               ) : galleryLoading && !hasSearched ? (
                 <div className="skeleton-grid">
                   {Array.from({ length: 12 }).map((_, index) => (
@@ -2943,24 +2966,8 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <div
-                  className="frame-grid"
-                  style={{
-                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {visibleResults.map((result, index) => (
-                    <FrameCard
-                      key={result.id}
-                      result={result}
-                      eager={index < frameColumns}
-                      selected={selectedKeys.has(selectionKeyForResult(result))}
-                      onOpen={() => void openFrameContext(result)}
-                      onSelect={() => addResult(result)}
-                      onPreview={() => void openVideoPreview(result)}
-                    />
-                  ))}
-                </div>
+                <ResultGrid results={visibleResults} columns={effectiveColumns} selectedKeys={selectedKeys} keyFor={resultKey}
+                  onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
               )}
             </section>
           )}
@@ -2971,7 +2978,7 @@ export function App() {
                 <>
                   <ReasoningDisclosure steps={autoTrace} />
                   {loading ? (
-                    <SearchLoadingStage frameColumns={frameColumns} />
+                    <SearchLoadingStage frameColumns={effectiveColumns} />
                   ) : hasSearched && visibleResults.length === 0 ? (
                     <p className="empty-note search-empty-note">
                       {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
@@ -2999,7 +3006,7 @@ export function App() {
                     <div
                       className="frame-grid auto-grid"
                       style={{
-                        gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                        gridTemplateColumns: `repeat(${effectiveColumns}, minmax(0, 1fr))`,
                       }}
                     >
                       {visibleResults.map((result, index) => (
@@ -3017,7 +3024,7 @@ export function App() {
                   )}
                 </>
               ) : loading ? (
-                <SearchLoadingStage frameColumns={frameColumns} />
+                <SearchLoadingStage frameColumns={effectiveColumns} />
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
                   {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
@@ -3042,24 +3049,8 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <div
-                  className="frame-grid"
-                  style={{
-                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {visibleResults.map((result, index) => (
-                    <FrameCard
-                      key={result.id}
-                      result={result}
-                      eager={index < frameColumns}
-                      selected={false}
-                      onOpen={() => void openFrameContext(result)}
-                      onSelect={() => addResult(result)}
-                      onPreview={() => void openVideoPreview(result)}
-                    />
-                  ))}
-                </div>
+                <ResultGrid results={visibleResults} columns={effectiveColumns} selectedKeys={selectedKeys} keyFor={resultKey}
+                  onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
               )}
             </section>
           )}
@@ -3180,7 +3171,7 @@ export function App() {
                   {intelligenceOpen && (
                     <div className="intelligence-popover">
                       <label>
-                        Frames per row
+                        Frames per row ({effectiveColumns} shown)
                         <input
                           type="number"
                           min={1}
@@ -3549,6 +3540,7 @@ export function App() {
                 </button>
               </div>
             </div>
+            {videoPreview.evidenceError && <div role="alert" className="request-error">{videoPreview.evidenceError}<button type="button" onClick={()=>{mediaCache.clear();setEvidenceAttempt(n=>n+1);}}>Retry evidence</button></div>}
             <div className="video-modal-layout">
               {videoEvidenceOpen && (
                 <VideoEvidenceSidebar
