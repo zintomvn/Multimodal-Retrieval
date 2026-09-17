@@ -10,6 +10,28 @@ logger = logging.getLogger(__name__)
 
 class ElasticsearchTextSearchClient:
     """Optional adapter. Import elasticsearch only when this adapter is enabled."""
+    supports_video_filter = True
+
+    def search_many(self, index: str, requests: list[dict], video_ids: list[str]) -> list:
+        searches = []
+        for request in requests:
+            filters = [{"terms": {"video_id": video_ids}}, {"terms": {"source_type": request["source_types"]}}]
+            searches.extend([{"index": index}, {"size": request["top_k"], "query": {"bool": {
+                "filter": filters, "must": [{"multi_match": {"query": request["query"],
+                    "fields": [f"{key}^{value}" for key,value in request["boosts"].items()],
+                    "type": "best_fields", "operator": "or", "minimum_should_match": self._minimum_should_match(request["query"])}}]}}}])
+        if not searches:
+            return []
+        response = self.client.msearch(searches=searches, request_timeout=3)
+        results = []
+        for item in response.get("responses", []):
+            if item.get("error") or item.get("timed_out") or item.get("_shards", {}).get("failed",0):
+                results.append(RuntimeError("Text source query failed"))
+            else:
+                results.append([TextHit(id=h['_id'],score=float(h['_score']),metadata=h.get('_source',{})) for h in item.get('hits',{}).get('hits',[])])
+        if len(results) != len(requests):
+            raise RuntimeError("Text batch returned incomplete results")
+        return results
 
     def __init__(self, url: str) -> None:
         from elasticsearch import Elasticsearch

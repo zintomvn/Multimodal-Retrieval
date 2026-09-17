@@ -18,6 +18,7 @@ from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import REPO_ROOT, get_settings
 from app.core.telemetry import stage, timed
+from app.core.budget import bounded_call, search_budget, remaining
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video, new_id
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
@@ -131,6 +132,7 @@ class RetrievalService:
         self._source_status: dict[str, str] = {}
 
     @timed("search")
+    @search_budget
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
             raise ValueError("query_text must not be empty")
@@ -138,7 +140,7 @@ class RetrievalService:
         self._source_status = {}
         started_at = perf_counter()
         dataset = self._resolve_dataset(request.dataset_id)
-        normalized = self._normalize_query(request)
+        normalized = bounded_call(self._normalize_query, request, max_seconds=15)
         run_id = new_id()
 
         # Init run data
@@ -913,7 +915,7 @@ class RetrievalService:
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
                 try:
-                    raw_answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                    raw_answer = bounded_call(self.model_registry.visual_qa.answer, request.query_text, evidence, answer_hint)
                 except Exception:
                     raw_answer = answer_hint
                 answer = self._postprocess_qa_answer(raw_answer)
@@ -1825,7 +1827,8 @@ class RetrievalService:
                 try:
                     embedder = self.model_registry.embedder_for(target.model_key)
                     batch_embed = getattr(embedder, "embed_texts", None)
-                    vectors = batch_embed(variants) if callable(batch_embed) else [embedder.embed_text(value) for value in variants]
+                    with stage("embedding"):
+                        vectors = bounded_call(batch_embed, variants) if callable(batch_embed) else [bounded_call(embedder.embed_text, value) for value in variants]
                     if len(vectors) != len(variants):
                         raise ValueError(f"Embedding batch returned {len(vectors)} vectors for {len(variants)} queries.")
                     query_vectors_by_model[model_id] = vectors
@@ -1833,11 +1836,26 @@ class RetrievalService:
                     # Keep retrieval available even when one embedder runtime is misconfigured.
                     backend_error = True
                     query_vectors_by_model[model_id] = [[] for _ in variants]
-            for variant, query_vector in zip(variants, query_vectors_by_model[model_id], strict=True):
+            vector_batch = getattr(self.vector_client, "search_many", None)
+            valid_vectors = [(i,v) for i,v in enumerate(query_vectors_by_model[model_id]) if v]
+            batches = None
+            if callable(vector_batch) and valid_vectors:
+                try:
+                    with stage("vector_batch"):
+                        found = bounded_call(vector_batch, target.collection, [v for _,v in valid_vectors],
+                            top_k, filters={"video_id": sorted(dataset_video_ids)})
+                    if len(found) != len(valid_vectors):
+                        raise RuntimeError("Vector batch returned incomplete results")
+                    batches = {i:hits for (i,_),hits in zip(valid_vectors,found)}
+                except Exception:
+                    backend_error = True
+                    continue
+            for variant_index, (variant, query_vector) in enumerate(zip(variants, query_vectors_by_model[model_id], strict=True)):
                 if not query_vector:
                     continue
                 try:
-                    hits = self.vector_client.search(target.collection, query_vector, top_k=top_k)
+                    with stage("vector"):
+                        hits = batches[variant_index] if batches is not None else bounded_call(self.vector_client.search, target.collection, query_vector, top_k=top_k, filters={"video_id": sorted(dataset_video_ids)})
                 except Exception:
                     backend_error = True
                     continue
@@ -2093,41 +2111,37 @@ class RetrievalService:
             ("ocr", lexical_variants, {"ocr_texts": ocr_boost}),
             ("caption", caption_variants, {"caption": caption_boost}),
         )
+        jobs = [(source,variant,boosts) for source,variants,boosts in source_searches
+                if any(boost>0 for boost in boosts.values()) for variant in variants]
+        batch = getattr(self.text_client, "search_many", None)
+        batch_results = None
+        if callable(batch):
+            try:
+                batch_results = bounded_call(batch, "keyframe_annotations", [
+                    {"query":variant,"top_k":top_k,"boosts":boosts,"source_types":[source]}
+                    for source,variant,boosts in jobs], sorted(dataset_video_ids))
+            except Exception:
+                return {}, True
         scores: dict[str, float] = {}
         backend_error = False
-        for expected_source, variants, boosts in source_searches:
-            if not variants or not any(boost > 0 for boost in boosts.values()):
+        for index,(expected_source,variant,boosts) in enumerate(jobs):
+            try:
+                hits = batch_results[index] if batch_results is not None else bounded_call(self.text_client.search,
+                    "keyframe_annotations", query=variant, top_k=top_k, boosts=boosts, source_types=[expected_source])
+                if isinstance(hits, Exception):
+                    raise hits
+            except Exception:
+                backend_error = True
                 continue
-            for variant in variants:
-                try:
-                    hits = self.text_client.search(
-                        "keyframe_annotations",
-                        query=variant,
-                        top_k=top_k,
-                        boosts=boosts,
-                        source_types=[expected_source],
-                    )
-                except Exception:
-                    backend_error = True
+            for hit in hits:
+                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                if not frame_id or self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
                     continue
-                for hit in hits:
-                    frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
-                    if not frame_id:
-                        continue
-                    if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
-                        continue
-                    score = max(0.0, float(hit.score))
-                    existing = scores.get(frame_id, 0.0)
-                    if score > existing:
-                        scores[frame_id] = score
-                        self._text_hit_sources[frame_id] = self._text_source_hit(
-                            metadata=hit.metadata,
-                            score=score,
-                            resolved_frame_id=frame_id,
-                            variant=variant,
-                            expected_source=expected_source,
-                            source_weights=source_weights,
-                        )
+                score = max(0.0,float(hit.score))
+                if score > scores.get(frame_id,0.0):
+                    scores[frame_id]=score
+                    self._text_hit_sources[frame_id]=self._text_source_hit(metadata=hit.metadata,score=score,
+                        resolved_frame_id=frame_id,variant=variant,expected_source=expected_source,source_weights=source_weights)
         return scores, backend_error
 
     def _text_source_hit(
@@ -2196,7 +2210,7 @@ class RetrievalService:
         top_items = scored[:top_k]
         passages = [self._frame_text(item.frame) or item.frame.video.video_code for item in top_items]
         try:
-            cross_scores = reranker.rerank(query_text, passages)
+            cross_scores = bounded_call(reranker.rerank, query_text, passages)
         except Exception:
             cross_scores = [0.0 for _ in top_items]
         cross_scores = self._normalize_signal(cross_scores)
@@ -2207,7 +2221,7 @@ class RetrievalService:
                 evidence = passages[index]
                 answer_hint = self._answer_hint(item.frame)
                 try:
-                    answer = self.model_registry.visual_qa.answer(query_text, evidence, answer_hint)
+                    answer = bounded_call(self.model_registry.visual_qa.answer, query_text, evidence, answer_hint)
                 except Exception:
                     answer = ""
                 mllm_scores[index] = self._alignment_score(query_text, answer or evidence, evidence)

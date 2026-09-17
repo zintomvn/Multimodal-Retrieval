@@ -24,6 +24,8 @@ def search(
 ) -> SearchResponse:
     try:
         return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Retrieval time budget exceeded") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -39,6 +41,8 @@ def qa_search(
     request.query_type = "QA"
     try:
         return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Retrieval time budget exceeded") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -54,6 +58,8 @@ def trake_search(
     request.query_type = "TRAKE"
     try:
         return RetrievalService(db, model_registry, vector_client=vector_client, text_client=text_client).search(request)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Retrieval time budget exceeded") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -66,6 +72,8 @@ def plan_query(
 ) -> QueryPlanResponse:
     try:
         normalized = RetrievalService(db, model_registry).plan_query(request)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Retrieval time budget exceeded") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return QueryPlanResponse(normalized_query=normalized)
