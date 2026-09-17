@@ -67,7 +67,7 @@ llm_query_planning:
   # Add a new file and version entry for a new experiment; do not edit another
   # version's file when comparing runs.
   prompt_versions:
-    active_version: agent_v1
+    active_version: agent_v6_dev_evidence_adaptive
     versions:
       agent_v1:
         description: English semantic views for CLIP/Milvus (control).
@@ -75,6 +75,18 @@ llm_query_planning:
       agent_v2:
         description: Vietnamese semantic views for CLIP/Milvus experiment.
         planner_prompt_file: "agent prompt/agent_v2.md"
+      agent_v3_dev_bilingual:
+        description: "DEV coarse-to-fine bilingual event plan: English CLIP views plus grounded Vietnamese SigLIP2 views."
+        planner_prompt_file: "agent prompt/agent_v3_dev_bilingual.md"
+      agent_v4_dev_hard_visual_states:
+        description: "DEV hard-sample prompt retaining visual state, shape, colour, count and layout in bilingual event views."
+        planner_prompt_file: "agent prompt/agent_v4_dev_hard_visual_states.md"
+      agent_v5_dev_compact_contract:
+        description: "Compact DEV contract for reliable bilingual visual-event output and hard appearance-state retrieval."
+        planner_prompt_file: "agent prompt/agent_v5_dev_compact_contract.md"
+      agent_v6_dev_evidence_adaptive:
+        description: "DEV visual-first evidence-adaptive contract; reserves OCR/ASR weight for explicitly textual KIS evidence."
+        planner_prompt_file: "agent prompt/agent_v6_dev_evidence_adaptive.md"
   agents:
     planner:
       name: query_planner_agent
