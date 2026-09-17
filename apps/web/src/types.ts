@@ -1,4 +1,5 @@
 export type QueryType = "KIS" | "QA" | "TRAKE";
+export type SubmissionFormat = "csv" | "zip";
 // Additive HTTP diagnostics; durations are milliseconds and stages may overlap.
 export interface ApiDiagnostics {
   requestId: string | null;

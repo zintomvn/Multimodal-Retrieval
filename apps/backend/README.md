@@ -404,6 +404,15 @@ select count(*) from events;
 | Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
 # Request diagnostics (A20)
 
+## Submission format contract (B02/A06)
+
+`POST /api/submissions/{id}/export?format=csv|zip` defaults to CSV for one query.
+Multiple queries require ZIP, containing `submission/<query_name>.csv` files.
+`GET /api/submissions/{id}/download?format=csv|zip` serves only validated exports.
+Response `csv_uri` and `zip_uri` refer only to the corresponding artifact type.
+New CSV paths live in validation_report.artifacts; legacy CSV-in-zip_uri records
+remain readable without a schema migration. Editing rows invalidates old exports.
+
 ## Indexed retrieval status (A03)
 
 Search `normalized_query` adds `retrieval_mode` (`indexed` or `degraded`) and
