@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.index_catalog import annotation_index
+
 import csv
 import json
 import logging
@@ -417,6 +419,13 @@ class RetrievalService:
         }
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
+        if request.options.source_mode != "auto":
+            source = "caption" if request.options.source_mode == "scene" else request.options.source_mode
+            normalized["text_source_weights"] = {name: float(name == source) for name in ("ocr", "asr", "caption")}
+            normalized["text_source_weight_source"] = "user"
+            if source != "caption":
+                normalized["retrieval_weights"] = {"visual": 0.0, "text": 1.0}
+                normalized["retrieval_weight_source"] = "user"
         return normalized
 
     def _planner_for_request(self, request: SearchRequest) -> AgentQueryPlanner:
@@ -898,7 +907,7 @@ class RetrievalService:
             text_source_weights=normalized.get("text_source_weights"),
         )
         qa_frames_by_id: dict[str, Frame] = {}
-        if request.query_type == "QA" and candidates:
+        if request.query_type == "QA" and not request.options.defer_qa and candidates:
             top_frame_ids = [candidate.frame.id for candidate in candidates[: request.top_k]]
             qa_frames_by_id = {
                 frame.id: frame
@@ -911,7 +920,7 @@ class RetrievalService:
         for rank, candidate in enumerate(candidates[: request.top_k], start=1):
             frame = qa_frames_by_id.get(candidate.frame.id, candidate.frame)
             answer = None
-            if request.query_type == "QA":
+            if request.query_type == "QA" and not request.options.defer_qa and rank <= request.options.qa_candidate_limit:
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
                 try:
@@ -1662,6 +1671,11 @@ class RetrievalService:
         )
 
         dataset_video_ids = self._dataset_video_ids(dataset)
+        if options.video_codes:
+            dataset_video_ids &= {row[0] for row in self.db.query(Video.video_id).filter(
+                Video.dataset_id == dataset.id, Video.video_code.in_(options.video_codes)).all()}
+        if not dataset_video_ids:
+            return []
         semantic_scores, semantic_backend_error = ({}, False) if options.source_mode in {"ocr", "asr"} else self._semantic_scores(
             semantic_variants,
             ann_top_k,
@@ -2117,7 +2131,7 @@ class RetrievalService:
         batch_results = None
         if callable(batch):
             try:
-                batch_results = bounded_call(batch, "keyframe_annotations", [
+                batch_results = bounded_call(batch, annotation_index(), [
                     {"query":variant,"top_k":top_k,"boosts":boosts,"source_types":[source]}
                     for source,variant,boosts in jobs], sorted(dataset_video_ids))
             except Exception:
@@ -2127,7 +2141,7 @@ class RetrievalService:
         for index,(expected_source,variant,boosts) in enumerate(jobs):
             try:
                 hits = batch_results[index] if batch_results is not None else bounded_call(self.text_client.search,
-                    "keyframe_annotations", query=variant, top_k=top_k, boosts=boosts, source_types=[expected_source])
+                    annotation_index(), query=variant, top_k=top_k, boosts=boosts, source_types=[expected_source])
                 if isinstance(hits, Exception):
                     raise hits
             except Exception:
@@ -2632,7 +2646,8 @@ class RetrievalService:
                 return str(hint)
         return None
 
-    def _postprocess_qa_answer(self, answer: str | None) -> str | None:
+    @staticmethod
+    def _postprocess_qa_answer(answer: str | None) -> str | None:
         if answer is None:
             return None
         normalized = " ".join(str(answer).split())

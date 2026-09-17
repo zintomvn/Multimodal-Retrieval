@@ -1,3 +1,5 @@
+import { Readiness } from "./Readiness";
+import { generateAnswer } from "./api/client";
 import { useStableEvent } from "./useStableEvent";
 import { mediaCache } from "./api/mediaCache";
 import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft, type SourceMode } from "./workspace";
@@ -1175,6 +1177,9 @@ function FrameCard({
     <article
       className={`frame-card ${selected ? "selected" : ""}`}
       onClick={onOpen}
+      tabIndex={0}
+      onKeyDown={e=>{if(e.target===e.currentTarget && (e.key==="Enter" || e.key===" ")){e.preventDefault();onOpen();}}}
+      aria-label={`Open context for ${result.video_code}, frame ${frameText}`}
     >
       <div className="frame-thumb">
         <CloudFrameImage
@@ -1190,6 +1195,7 @@ function FrameCard({
           <span>{formatScore(result.score)}</span>
         </div>
         <p>Frame {frameText}</p>
+        {result.answer && <p>Answer: {result.answer}</p>}
         {Boolean(result.score_breakdown.text_hit) && <p className="match-snippet">{String((result.score_breakdown.text_hit as Record<string,unknown>).source_type ?? "Text")}: {String((result.score_breakdown.text_hit as Record<string,unknown>).snippet ?? "")}</p>}
         <details><summary>Match details</summary><ScoreBreakdown result={result} compact /></details>
         <div className="frame-actions">
@@ -1206,6 +1212,7 @@ function FrameCard({
           <button
             type="button"
             className="select-button"
+            aria-pressed={selected}
             onClick={(event) => {
               event.stopPropagation();
               onSelect();
@@ -1560,10 +1567,14 @@ function SearchLoadingStage({ frameColumns }: { frameColumns: number }) {
 // Functions in App
 
 export function App() {
-  const initialWorkspace = useRef(readWorkspace()).current;
+  const [initialWorkspace] = useState(()=>readWorkspace());
+  const [initialQueryName] = useState(()=>newQueryName("KIS"));
   const saved = initialWorkspace.value;
   const drafts = useRef<Partial<Record<SearchTask, SearchDraft>>>(saved?.drafts ?? {});
   const [storageError, setStorageError] = useState(initialWorkspace.error);
+  const [videoFilter,setVideoFilter] = useState(saved?.active.videoFilter ?? "");
+  const [timeStart,setTimeStart] = useState(saved?.active.timeStart ?? "");
+  const [timeEnd,setTimeEnd] = useState(saved?.active.timeEnd ?? "");
   const [sourceMode, setSourceMode] = useState<SourceMode>(saved?.active.sourceMode ?? "auto");
   const [temporalEvents, setTemporalEvents] = useState<string[]>(saved?.active.temporalEvents ?? []);
   // Attibutes
@@ -1571,8 +1582,8 @@ export function App() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetId, setDatasetId] = useState(saved?.datasetId ?? "");
   const [queryType, setQueryType] = useState<SearchTask>(saved?.active.queryType ?? "KIS");
-  const [queryName, setQueryName] = useState(saved?.active.queryName ?? queryNameByType.KIS);
-  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? queryNameByType.KIS);
+  const [queryName, setQueryName] = useState(saved?.active.queryName ?? initialQueryName);
+  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? initialQueryName);
   const [queryText, setQueryText] = useState(saved?.active.queryText ?? sampleQueries.KIS);
   const [videoCodeQuery, setVideoCodeQuery] = useState(saved?.active.videoCodeQuery ?? sampleQueries.VIDEO);
   const [videoFrameQuery, setVideoFrameQuery] = useState(saved?.active.videoFrameQuery ?? "");
@@ -1600,12 +1611,29 @@ export function App() {
     const observer=new ResizeObserver(entries=>setMaxColumns(Math.max(1,Math.floor(entries[0].contentRect.width/180))));
     observer.observe(area);return ()=>observer.disconnect();
   },[]);
+  const [answerError, setAnswerError] = useState("");
+  const [answerLoading, setAnswerLoading] = useState(false);
+  const answerRequest = useRef(new LatestRequest());
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [trakeEventCount, setTrakeEventCount] = useState(4);
   const [trakeFrameChoices, setTrakeFrameChoices] = useState<
     TrakeFrameChoice[]
-  >([]);
+  >(saved?.trakeChoices ?? []);
+  function updateAnswer(id:string,answer:string) {
+    setResults(items=>items.map(r=>r.id===id ? {...r,answer} : r));
+    const result = results.find(r=>r.id===id);
+    if(result) setSelected(rows=>rows.map(row=>row.query_name===queryName && row.video_code===result.video_code && row.frame_indices[0]===result.frame_idx ? {...row,answer} : row));
+  }
+  async function answerActive() {
+    if(!activeQa) return;
+    const request = answerRequest.current.begin(); if(!request)return;
+    setAnswerLoading(true);setAnswerError("");
+    try { const value=await generateAnswer(activeQa.id,request.signal);
+      if(answerRequest.current.isCurrent(request)) updateAnswer(activeQa.id,value.answer);
+    } catch(e) {if(answerRequest.current.isCurrent(request))setAnswerError(String(e));}
+    finally {if(answerRequest.current.isCurrent(request)){answerRequest.current.finish(request);setAnswerLoading(false);}}
+  }
   const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -1618,6 +1646,7 @@ export function App() {
   const contextRequests = useRef(new LatestRequest());
 
   function cancelSearch() {
+    answerRequest.current.cancel(); setAnswerLoading(false); setAnswerError("");
     searchRequests.current.cancel();
     contextRequests.current.cancel();
     setLoading(false);
@@ -1635,6 +1664,7 @@ export function App() {
   const [selected, setSelected] = useState<SubmissionRow[]>(saved?.selected ?? []);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
+  const activeQa = queryType === "QA" ? results.find(r=>r.id===activeResultId) : undefined;
   const [history, setHistory] = useState<SearchHistoryItem[]>(saved?.history ?? []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
@@ -1705,7 +1735,7 @@ export function App() {
   function currentDraft(): SearchDraft {
     return { queryType, queryName, queryText, exportFileName, videoCodeQuery, videoFrameQuery,
       topK, useExpansion, useAgentPlanning, useMetadata, kisTemporalMode, temporalStrategy,
-      visualSearchMode, reasoningModel, sourceMode, temporalEvents };
+      visualSearchMode, reasoningModel, sourceMode, temporalEvents, videoFilter, timeStart, timeEnd };
   }
   function applyDraft(d: SearchDraft) {
     setQueryType(d.queryType); setQueryName(d.queryName); setQueryText(d.queryText);
@@ -1713,17 +1743,21 @@ export function App() {
     setTopK(d.topK); setUseExpansion(d.useExpansion); setUseAgentPlanning(d.useAgentPlanning);
     setUseMetadata(d.useMetadata); setKisTemporalMode(d.kisTemporalMode); setTemporalStrategy(d.temporalStrategy);
     setVisualSearchMode(d.visualSearchMode); setReasoningModel(d.reasoningModel); setSourceMode(d.sourceMode);
-    setTemporalEvents(d.temporalEvents);
+    setTemporalEvents(d.temporalEvents); setVideoFilter(d.videoFilter ?? ""); setTimeStart(d.timeStart ?? ""); setTimeEnd(d.timeEnd ?? "");
   }
-  const workspaceSnapshot = JSON.stringify({version:1, datasetId, active:currentDraft(), drafts:drafts.current, selected, history});
+  const workspaceSnapshot = useMemo(()=>({version:1 as const, datasetId, active:currentDraft(), drafts:drafts.current, selected, history, trakeChoices:trakeFrameChoices}),
+    [datasetId,queryType,queryName,queryText,exportFileName,videoCodeQuery,videoFrameQuery,topK,useExpansion,useAgentPlanning,useMetadata,kisTemporalMode,temporalStrategy,visualSearchMode,reasoningModel,sourceMode,temporalEvents,videoFilter,timeStart,timeEnd,selected,history,trakeFrameChoices]);
   useEffect(() => {
     if (initialWorkspace.error) return; // Do not overwrite a corrupt/version-mismatched save.
-    const save = () => { const error=saveWorkspace(JSON.parse(workspaceSnapshot)); if(error) setStorageError(error); };
+    const save = () => { const error=saveWorkspace({...workspaceSnapshot,scrollTop:document.querySelector(".content-scroll")?.scrollTop ?? 0}); if(error) setStorageError(error); };
     const timer=window.setTimeout(save,250);
     window.addEventListener("pagehide",save);
     return ()=>{window.clearTimeout(timer); window.removeEventListener("pagehide",save);};
   },[workspaceSnapshot]);
 
+  useEffect(()=>{
+    if(saved?.scrollTop && galleryFrames.length) document.querySelector('.content-scroll')?.scrollTo(0,saved.scrollTop);
+  },[galleryFrames.length>0]);
   // Effects
   useEffect(() => {
     const apply = () => {
@@ -2133,6 +2167,12 @@ export function App() {
       return;
     }
     if (!datasetId || !queryText.trim()) return;
+    if ([timeStart,timeEnd].some(v=>v.trim() && (!Number.isFinite(Number(v)) || Number(v)<0)) || (timeStart.trim() && timeEnd.trim() && Number(timeStart)>Number(timeEnd))) {
+      setSearchError("Time filters must be nonnegative seconds, with start before end.");return;
+    }
+    if(temporalEvents.some(v=>v.trim()) && temporalEvents.filter(v=>v.trim()).length<2) {
+      setSearchError("Enter at least two ordered events, or clear the event editor for automatic planning.");return;
+    }
     const request = searchRequests.current.begin();
     if (!request) return;
     contextRequests.current.cancel();
@@ -2140,7 +2180,7 @@ export function App() {
     setSearchError(null);
     setLoading(true);
     setHasSearched(true);
-    if (queryType === "TRAKE") setTrakeFrameChoices([]);
+    answerRequest.current.cancel(); setAnswerLoading(false); setAnswerError("");
     setStatus(mode === "Auto" && autoEnabled ? "Auto running" : "Searching");
     const runningTrace = makeAgentTrace(mode, queryType, 0).map(
       (step, index) => ({
@@ -2162,7 +2202,7 @@ export function App() {
       useMetadata,
       temporalMode: queryType === "KIS" && kisTemporalMode,
       temporalStrategy,
-      visualSearchMode, sourceMode, temporalEvents,
+      visualSearchMode, sourceMode, temporalEvents, videoFilter, timeStart, timeEnd,
     };
 
     try {
@@ -2668,12 +2708,12 @@ export function App() {
     if (!datasetId || rows.length === 0 || exportInFlight.current) return;
     exportInFlight.current = true;
     setExporting(true);
-    setStatus("Validating and exporting current query");
+    setStatus(allQueries ? "Validating and exporting all queries" : "Validating and exporting current query");
     try {
       const csvName = allQueries ? "submission.zip" : csvDownloadName(exportFileName || queryName);
       const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.(csv|zip)$/i, ""), rows, allQueries ? "zip" : "csv");
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
-      setStatus(`CSV downloaded for ${queryName}`);
+      setStatus(allQueries ? "ZIP downloaded for all selected queries" : `CSV downloaded for ${queryName}`);
     } catch (error) {
       setStatus(error instanceof Error ? `Export failed: ${error.message}` : "Export failed. Please retry.");
     } finally {
@@ -2684,7 +2724,7 @@ export function App() {
 
   function newSession() {
     const name=newQueryName(queryType);
-    setQueryName(name); setExportFileName(name); setTemporalEvents([]);
+    setQueryName(name); setExportFileName(name); setTemporalEvents([]); setTrakeFrameChoices([]);
     cancelSearch();
     setSearchError(null);
     setQueryText(sampleQueries[queryType]);
@@ -2843,12 +2883,34 @@ export function App() {
         </header>
 
         <div className="content-scroll">
+          <Readiness />
           {storageError && <p role="alert">{storageError}</p>}
+          <details className="search-filters"><summary>Video and time filters</summary>
+            <label>Video codes (comma separated)<input aria-label="Filter video codes" value={videoFilter} onChange={e=>setVideoFilter(e.target.value)}/></label>
+            <label>From second<input aria-label="From second" type="number" min="0" value={timeStart} onChange={e=>setTimeStart(e.target.value)}/></label>
+            <label>To second<input aria-label="To second" type="number" min="0" value={timeEnd} onChange={e=>setTimeEnd(e.target.value)}/></label>
+          </details>
           <label>Filter displayed results <input aria-label="Filter displayed results" value={resultFilter} onChange={e=>setResultFilter(e.target.value)} placeholder="Video, frame, answer" /></label>
           <label className="source-control">Search source <select aria-label="Search source" value={sourceMode} onChange={e=>setSourceMode(e.target.value as SourceMode)}>
             <option value="auto">Auto sources</option><option value="ocr">Visible text (OCR)</option>
             <option value="asr">Speech (ASR)</option><option value="scene">Scene (visual + caption)</option>
           </select></label>
+          {activeQa && <section className="qa-answer-panel" aria-label="Answer for selected evidence">
+            <strong>Answer · {activeQa.video_code} / frame {activeQa.frame_idx}</strong>
+            <p>Review the frame or generate an answer from the same OCR, speech and caption evidence shown in Video. Text evidence is not direct image understanding.</p>
+            <label>Answer <input aria-label="QA answer" maxLength={100} value={activeQa.answer ?? ""} onChange={e=>{answerRequest.current.cancel();setAnswerLoading(false);updateAnswer(activeQa.id,e.target.value);}} /></label>
+            <button type="button" disabled={answerLoading} onClick={()=>void answerActive()}>{answerLoading ? 'Generating answer…' : 'Generate from evidence'}</button>
+            {answerError && <p role="alert">{answerError}</p>}
+          </section>}
+          {(queryType==="TRAKE" || (queryType==="KIS" && kisTemporalMode)) && <section className="temporal-editor" aria-label="Ordered events">
+            <label>Ordered events (one per line, 2–8; blank uses query planning)
+              <textarea aria-label="Ordered events" rows={3} value={temporalEvents.join('\n')} onChange={e=>{
+                const next=e.target.value.split('\n').slice(0,8);
+                setTrakeFrameChoices(choices=>choices.filter(choice=>next[choice.eventIndex-1]===temporalEvents[choice.eventIndex-1]));
+                setTemporalEvents(next);setTrakeEventCount(next.filter(v=>v.trim()).length || 4);
+              }}/>
+            </label><p>Picked events stay locked when rerunning the same event list. Editing an event clears its pick; Clear selection unlocks all.</p>
+          </section>}
           <div className="request-status" role="status" aria-live="polite">{status}</div>
           {dataError && <div className="request-error" role="alert">{dataError} <button type="button" onClick={() => setBootstrapAttempt((n) => n + 1)}>Retry data</button></div>}
           {searchError && <div className="request-error" role="alert">Request failed: {searchError} <button type="button" onClick={() => void submitSearch()}>Retry search</button></div>}
@@ -3162,6 +3224,7 @@ export function App() {
                   <button
                     type="button"
                     className="intelligence-button"
+                    aria-expanded={intelligenceOpen}
                     onClick={() => setIntelligenceOpen((open) => !open)}
                   >
                     <SlidersHorizontal size={16} />

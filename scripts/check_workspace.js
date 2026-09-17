@@ -1,7 +1,10 @@
 async(page)=>{
+  await page.addInitScript(token=>{
+    if(sessionStorage.getItem('workspace-test-reset')!==token){
+      localStorage.removeItem('multimodal-workspace-v1');sessionStorage.setItem('workspace-test-reset',token);
+    }
+  },String(Date.now()));
   await page.goto('http://127.0.0.1:5173');
-  await page.evaluate(()=>localStorage.removeItem('multimodal-workspace-v1'));
-  await page.reload();
   await page.locator('article').first().waitFor();
   const query=page.getByRole('textbox',{name:'Search query'});
   await query.fill('my retained KIS');

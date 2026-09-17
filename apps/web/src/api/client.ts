@@ -94,6 +94,7 @@ export interface RetrievalSearchInput {
   visualSearchMode: VisualSearchMode;
   sourceMode?: "auto" | "ocr" | "asr" | "scene";
   temporalEvents?: string[];
+  videoFilter?:string; timeStart?:string; timeEnd?:string;
 }
 
 function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> {
@@ -113,6 +114,10 @@ function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> 
       strict_hybrid: false,
       visual_search_mode: input.visualSearchMode,
       source_mode: input.sourceMode ?? "auto",
+      defer_qa: true,
+      video_codes: input.videoFilter?.split(',').map(v=>v.trim()).filter(Boolean) ?? [],
+      time_range_start_seconds: input.timeStart?.trim() ? Number(input.timeStart) : null,
+      time_range_end_seconds: input.timeEnd?.trim() ? Number(input.timeEnd) : null,
       temporal_events: input.temporalEvents?.filter(value => value.trim()) ?? [],
       delta_t_max_ms: 180000,
       temporal_mode: input.temporalMode,
@@ -357,4 +362,11 @@ export async function uploadFileToMilvus(
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<IngestJobStartResponse>;
+}
+
+export function getReadiness(signal?: AbortSignal) {
+  return requestJson<{status:string; checks:Record<string,{status:string;reason?:string}>}>('/api/readyz',{signal});
+}
+export function generateAnswer(resultId:string,signal?:AbortSignal) {
+  return requestJson<{answer:string;evidence:unknown[];mode:string}>(`/api/retrieval/results/${encodeURIComponent(resultId)}/answer`,{method:'POST',signal});
 }

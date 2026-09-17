@@ -2417,3 +2417,12 @@ button:disabled {
     animation: none;
   }
 }
+
+.readiness, .search-filters, .qa-answer-panel, .temporal-editor { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-2); font-size: 13px; }
+.readiness summary, .search-filters summary { cursor: pointer; }
+.search-filters label, .qa-answer-panel label, .temporal-editor label { display: block; margin: 8px 0; }
+.search-filters input, .qa-answer-panel input, .temporal-editor textarea, .content-scroll > label input, .source-control select { color: var(--text-1); background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 8px; max-width: 100%; }
+.temporal-editor textarea { width: 100%; display: block; resize: vertical; }
+.qa-answer-panel p, .temporal-editor p { margin: 6px 0; }
+.frame-card:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.frame-card details { position: relative; z-index: 1; }

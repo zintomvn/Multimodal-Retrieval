@@ -16,6 +16,7 @@ from app.modules.media.router import router as media_router
 from app.modules.models.router import router as models_router
 from app.modules.pipeline.router import router as pipeline_router
 from app.modules.retrieval.router import router as retrieval_router
+from app.modules.retrieval.answers import router as answers_router
 from app.modules.submissions.router import router as submissions_router
 
 
@@ -45,6 +46,7 @@ app.include_router(models_router)
 app.include_router(ingest_router)
 app.include_router(jobs_router)
 app.include_router(retrieval_router)
+app.include_router(answers_router)
 app.include_router(media_router)
 app.include_router(pipeline_router)
 app.include_router(submissions_router)
@@ -61,5 +63,7 @@ def healthz() -> dict:
 
 
 @app.get("/readyz")
+@app.get("/api/readyz")
 def readyz() -> dict:
-    return {"status": "ready"}
+    from app.core.readiness import readiness
+    return readiness()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.index_catalog import annotation_index
+
 from mimetypes import guess_type
 from pathlib import Path
 from collections.abc import Iterator
@@ -411,7 +413,7 @@ def _video_evidence_payload(
     client = get_text_client()
     es_client = getattr(client, "client", None)
     if es_client is None:
-        return {"video_id": video_id, "evidence": empty}
+        raise HTTPException(status_code=503, detail="Aligned evidence is unavailable for this source")
 
     should: list[dict] = []
     if anchor_frame_id:
@@ -435,7 +437,7 @@ def _video_evidence_payload(
 
     try:
         response = es_client.search(
-            index="keyframe_annotations",
+            index=annotation_index(),
             size=120 if should else 0,
             request_timeout=5,
             query=query,
@@ -445,8 +447,8 @@ def _video_evidence_payload(
                 {"keyframe_id": {"order": "asc"}},
             ],
         )
-    except Exception:  # noqa: BLE001 - evidence must not block video playback.
-        return {"video_id": video_id, "evidence": empty}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Evidence source unavailable; retry later") from exc
 
     buckets: dict[str, list[dict]] = {"asr": [], "ocr": [], "captions": []}
     seen: set[tuple[str, float | None, float | None, str]] = set()
@@ -552,8 +554,16 @@ def list_frames(
     if video_id:
         query = query.filter(Frame.video_id == video_id)
     if video_code and video_code.strip():
-        pattern = f"%{video_code.strip()}%"
-        query = query.filter(or_(Video.video_code.ilike(pattern), Video.video_name.ilike(pattern)))
+        # Resolve exact codes on the small video table before touching keyframes.
+        videos = db.query(Video.video_id).filter(Video.video_code == video_code.strip())
+        if dataset_id:
+            videos = videos.filter(Video.dataset_id == dataset_id)
+        exact_ids = [row[0] for row in videos.all()]
+        if exact_ids:
+            query = query.filter(Frame.video_id.in_(exact_ids))
+        else:
+            pattern = f"%{video_code.strip()}%"
+            query = query.filter(or_(Video.video_code.ilike(pattern), Video.video_name.ilike(pattern)))
     if present_only:
         query = query.filter(Frame.is_media_present.is_(True))
 

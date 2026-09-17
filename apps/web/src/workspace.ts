@@ -19,6 +19,9 @@ export interface SearchDraft {
   reasoningModel: 'gpt-4o' | 'gpt-5-nano' | 'gpt-5.6-luna';
   sourceMode: SourceMode;
   temporalEvents: string[];
+  videoFilter?: string;
+  timeStart?: string;
+  timeEnd?: string;
 }
 export interface StoredWorkspace {
   version: 1;
@@ -27,6 +30,8 @@ export interface StoredWorkspace {
   drafts: Partial<Record<SearchTask, SearchDraft>>;
   selected: SubmissionRow[];
   history?: StoredHistory[];
+  trakeChoices?: Array<{eventIndex:number;result:SearchResult;frame:SearchResult['sequence_frames'][number]}>;
+  scrollTop?: number;
 }
 export interface StoredHistory {
   id: string; mode: 'Search' | 'Auto' | 'Chat'; queryType: SearchTask;
@@ -56,6 +61,7 @@ export function readWorkspace(storage: Pick<Storage,'getItem'> = localStorage): 
     if (!raw) return {value:null,error:null};
     const value=JSON.parse(raw) as StoredWorkspace;
     if (value.version!==1 || typeof value.datasetId!=='string' || !validDraft(value.active)
+      || (value.trakeChoices !== undefined && (!Array.isArray(value.trakeChoices) || !value.trakeChoices.every(c=>c && Number.isInteger(c.eventIndex) && c.eventIndex>=1 && c.eventIndex<=8 && c.frame && Number.isInteger(c.frame.frame_idx) && c.result && typeof c.result.id==='string' && Array.isArray(c.result.sequence_frames))))
       || (value.history !== undefined && (!Array.isArray(value.history) || !value.history.every(h=>h && typeof h.id==='string'
         && typeof h.queryText==='string' && typeof h.queryName==='string' && typeof h.createdAt==='string'
         && ['Search','Auto','Chat'].includes(h.mode) && ['KIS','QA','TRAKE','VIDEO'].includes(h.queryType)
