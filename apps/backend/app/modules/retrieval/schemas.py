@@ -11,6 +11,7 @@ AgentModel = Literal["gpt-4o", "gpt-5-nano", "gpt-5.6-luna"]
 
 
 class SearchOptions(BaseModel):
+    source_mode: Literal["auto", "ocr", "asr", "scene"] = "auto"
     use_query_expansion: bool = True
     use_agent_query_planning: bool = True
     agent_model: AgentModel | None = None

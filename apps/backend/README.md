@@ -404,6 +404,14 @@ select count(*) from events;
 | Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
 # Request diagnostics (A20)
 
+## Explicit retrieval sources (A09/A11)
+
+Search options accept `source_mode`: auto (default), ocr, asr, scene. OCR/ASR
+skip visual embedding and override heuristic text routing, even when use_metadata
+was disabled. Scene searches visual/caption evidence. The web submits search once;
+normalized planning remains in the response rather than running a separate plan
+request before search. Explicit temporal_events are sent when edited in the UI.
+
 ## Submission format contract (B02/A06)
 
 `POST /api/submissions/{id}/export?format=csv|zip` defaults to CSV for one query.

@@ -16,6 +16,7 @@ import type {
   SearchResponse,
   SubmissionRow,
   VisualSearchMode,
+  SubmissionFormat,
   VideoFrameSeekResponse,
   VideoEvidence,
   VideoPreviewUrl,
@@ -90,6 +91,8 @@ export interface RetrievalSearchInput {
     | "aithena_weighted_ats"
     | "dev_first_search";
   visualSearchMode: VisualSearchMode;
+  sourceMode?: "auto" | "ocr" | "asr" | "scene";
+  temporalEvents?: string[];
 }
 
 function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> {
@@ -108,6 +111,8 @@ function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> 
       use_reranker: true,
       strict_hybrid: false,
       visual_search_mode: input.visualSearchMode,
+      source_mode: input.sourceMode ?? "auto",
+      temporal_events: input.temporalEvents?.filter(value => value.trim()) ?? [],
       delta_t_max_ms: 180000,
       temporal_mode: input.temporalMode,
       temporal_strategy: input.temporalStrategy,
@@ -207,6 +212,7 @@ export async function createAndExportSubmission(
   datasetId: string,
   name: string,
   rows: SubmissionRow[],
+  format: SubmissionFormat = "csv",
 ) {
   const submission = await requestJson<{ id: string; status: string }>(
     "/api/submissions",
@@ -225,13 +231,13 @@ export async function createAndExportSubmission(
     csv_uri: string | null;
     zip_uri: string | null;
     validation_report: { valid: boolean; errors: string[]; warnings: string[] };
-  }>(`/api/submissions/${submission.id}/export`, {
+  }>(`/api/submissions/${submission.id}/export${format === "zip" ? "?format=zip" : ""}`, {
     method: "POST",
   });
-  requireValidExport(exported.validation_report, exported.csv_uri);
+  requireValidExport(exported.validation_report, format === "zip" ? exported.zip_uri : exported.csv_uri);
   return {
     ...exported,
-    downloadUrl: `${API_BASE}/api/submissions/${submission.id}/download`,
+    downloadUrl: `${API_BASE}/api/submissions/${submission.id}/download${format === "zip" ? "?format=zip" : ""}`,
   };
 }
 

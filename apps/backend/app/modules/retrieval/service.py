@@ -1627,6 +1627,11 @@ class RetrievalService:
         text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
         quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
         modality_weights = self._normalize_retrieval_weights(retrieval_weights)
+        if options.source_mode != "auto":
+            text_source_weights = {"ocr": 0.0, "asr": 0.0, "caption": 0.0}
+            text_source_weights["caption" if options.source_mode == "scene" else options.source_mode] = 1.0
+            if options.source_mode in {"ocr", "asr"}:
+                modality_weights = {"visual": 0.0, "text": 1.0}
         if modality_weights:
             modality_total = semantic_weight + text_weight
             semantic_weight = modality_total * modality_weights["visual"]
@@ -1655,14 +1660,14 @@ class RetrievalService:
         )
 
         dataset_video_ids = self._dataset_video_ids(dataset)
-        semantic_scores, semantic_backend_error = self._semantic_scores(
+        semantic_scores, semantic_backend_error = ({}, False) if options.source_mode in {"ocr", "asr"} else self._semantic_scores(
             semantic_variants,
             ann_top_k,
             dataset_video_ids,
             profile,
             request_visual_search_mode=options.visual_search_mode,
         )
-        if options.use_metadata:
+        if options.use_metadata or options.source_mode != "auto":
             text_scores, text_backend_error = self._text_scores(
                 text_variants,
                 semantic_variants,
@@ -1676,8 +1681,8 @@ class RetrievalService:
 
         # Aggregate across perspectives/events; never erase an earlier failure.
         for name, error, scores, enabled in (
-            ("semantic", semantic_backend_error, semantic_scores, True),
-            ("text", text_backend_error, text_scores, options.use_metadata),
+            ("semantic", semantic_backend_error, semantic_scores, options.source_mode not in {"ocr", "asr"}),
+            ("text", text_backend_error, text_scores, options.use_metadata or options.source_mode != "auto"),
         ):
             state = "disabled" if not enabled else ("degraded" if scores else "unavailable") if error else "ok"
             if self._source_status.get(name) not in {"degraded", "unavailable"}:

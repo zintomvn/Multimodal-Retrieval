@@ -1,3 +1,4 @@
+import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft, type SourceMode } from "./workspace";
 import { LatestRequest } from "./api/latestRequest";
 import { useDialogFocus } from "./useDialogFocus";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -57,6 +58,8 @@ const reasoningModelLabels: Record<ReasoningModel, string> = {
 
 // Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
+  datasetId?: string;
+  draft?: SearchDraft;
   id: string;
   mode: AppMode;
   queryType: SearchTask;
@@ -1543,26 +1546,32 @@ function SearchLoadingStage({ frameColumns }: { frameColumns: number }) {
 // Functions in App
 
 export function App() {
+  const initialWorkspace = useRef(readWorkspace()).current;
+  const saved = initialWorkspace.value;
+  const drafts = useRef<Partial<Record<SearchTask, SearchDraft>>>(saved?.drafts ?? {});
+  const [storageError, setStorageError] = useState(initialWorkspace.error);
+  const [sourceMode, setSourceMode] = useState<SourceMode>(saved?.active.sourceMode ?? "auto");
+  const [temporalEvents, setTemporalEvents] = useState<string[]>(saved?.active.temporalEvents ?? []);
   // Attibutes
   const [mode, setMode] = useState<AppMode>("Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [datasetId, setDatasetId] = useState("");
-  const [queryType, setQueryType] = useState<SearchTask>("KIS");
-  const [queryName, setQueryName] = useState(queryNameByType.KIS);
-  const [exportFileName, setExportFileName] = useState(queryNameByType.KIS);
-  const [queryText, setQueryText] = useState(sampleQueries.KIS);
-  const [videoCodeQuery, setVideoCodeQuery] = useState(sampleQueries.VIDEO);
-  const [videoFrameQuery, setVideoFrameQuery] = useState("");
-  const [topK, setTopK] = useState(50);
-  const [useExpansion, setUseExpansion] = useState(true);
-  const [useAgentPlanning, setUseAgentPlanning] = useState(true);
-  const [useMetadata, setUseMetadata] = useState(true);
-  const [kisTemporalMode, setKisTemporalMode] = useState(false);
+  const [datasetId, setDatasetId] = useState(saved?.datasetId ?? "");
+  const [queryType, setQueryType] = useState<SearchTask>(saved?.active.queryType ?? "KIS");
+  const [queryName, setQueryName] = useState(saved?.active.queryName ?? queryNameByType.KIS);
+  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? queryNameByType.KIS);
+  const [queryText, setQueryText] = useState(saved?.active.queryText ?? sampleQueries.KIS);
+  const [videoCodeQuery, setVideoCodeQuery] = useState(saved?.active.videoCodeQuery ?? sampleQueries.VIDEO);
+  const [videoFrameQuery, setVideoFrameQuery] = useState(saved?.active.videoFrameQuery ?? "");
+  const [topK, setTopK] = useState(saved?.active.topK ?? 50);
+  const [useExpansion, setUseExpansion] = useState(saved?.active.useExpansion ?? true);
+  const [useAgentPlanning, setUseAgentPlanning] = useState(saved?.active.useAgentPlanning ?? true);
+  const [useMetadata, setUseMetadata] = useState(saved?.active.useMetadata ?? true);
+  const [kisTemporalMode, setKisTemporalMode] = useState(saved?.active.kisTemporalMode ?? false);
   const [temporalStrategy, setTemporalStrategy] = useState<
     "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
-  >("vortex_k_context");
+  >(saved?.active.temporalStrategy ?? "vortex_k_context");
   const [visualSearchMode, setVisualSearchMode] =
-    useState<VisualSearchMode>("openclip");
+    useState<VisualSearchMode>(saved?.active.visualSearchMode ?? "openclip");
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1602,10 +1611,10 @@ export function App() {
   }, [datasetId, queryType, mode]);
   const exportInFlight = useRef(false);
   const [exporting, setExporting] = useState(false);
-  const [selected, setSelected] = useState<SubmissionRow[]>([]);
+  const [selected, setSelected] = useState<SubmissionRow[]>(saved?.selected ?? []);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
-  const [history, setHistory] = useState<SearchHistoryItem[]>([]);
+  const [history, setHistory] = useState<SearchHistoryItem[]>(saved?.history ?? []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
   const [autoEnabled, setAutoEnabled] = useState(true);
@@ -1620,12 +1629,12 @@ export function App() {
   );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [reasoningModel, setReasoningModel] =
-    useState<ReasoningModel>("gpt-4o");
+    useState<ReasoningModel>(saved?.active.reasoningModel ?? "gpt-4o");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
       role: "assistant",
-      text: "Upload a video or ask a QA query. I will keep the trace visible and prepare CSV rows.",
+      text: "QA searches the indexed dataset. File upload and conversation history are not connected to retrieval.",
       trace: makeAgentTrace("Chat", "QA", 0),
     },
   ]);
@@ -1670,6 +1679,28 @@ export function App() {
     document.addEventListener("keydown", closeDrawers);
     return () => document.removeEventListener("keydown", closeDrawers);
   }, [videoPreview]);
+
+  function currentDraft(): SearchDraft {
+    return { queryType, queryName, queryText, exportFileName, videoCodeQuery, videoFrameQuery,
+      topK, useExpansion, useAgentPlanning, useMetadata, kisTemporalMode, temporalStrategy,
+      visualSearchMode, reasoningModel, sourceMode, temporalEvents };
+  }
+  function applyDraft(d: SearchDraft) {
+    setQueryType(d.queryType); setQueryName(d.queryName); setQueryText(d.queryText);
+    setExportFileName(d.exportFileName); setVideoCodeQuery(d.videoCodeQuery); setVideoFrameQuery(d.videoFrameQuery);
+    setTopK(d.topK); setUseExpansion(d.useExpansion); setUseAgentPlanning(d.useAgentPlanning);
+    setUseMetadata(d.useMetadata); setKisTemporalMode(d.kisTemporalMode); setTemporalStrategy(d.temporalStrategy);
+    setVisualSearchMode(d.visualSearchMode); setReasoningModel(d.reasoningModel); setSourceMode(d.sourceMode);
+    setTemporalEvents(d.temporalEvents);
+  }
+  const workspaceSnapshot = JSON.stringify({version:1, datasetId, active:currentDraft(), drafts:drafts.current, selected, history});
+  useEffect(() => {
+    if (initialWorkspace.error) return; // Do not overwrite a corrupt/version-mismatched save.
+    const save = () => { const error=saveWorkspace(JSON.parse(workspaceSnapshot)); if(error) setStorageError(error); };
+    const timer=window.setTimeout(save,250);
+    window.addEventListener("pagehide",save);
+    return ()=>{window.clearTimeout(timer); window.removeEventListener("pagehide",save);};
+  },[workspaceSnapshot]);
 
   // Effects
   useEffect(() => {
@@ -1891,18 +1922,14 @@ export function App() {
   }
 
   function changeType(type: SearchTask) {
-    cancelSearch();
-    setSearchError(null);
-    setQueryType(type);
-    setQueryName(queryNameByType[type]);
-    setExportFileName(queryNameByType[type]);
-    setQueryText(sampleQueries[type]);
-    setResults([]);
-    setHasSearched(false);
-    setContext(null);
-    setTrakeFrameChoices([]);
-    setActiveResultId(null);
-    setAutoTrace(makeAgentTrace(mode, type, 0));
+    cancelSearch(); setSearchError(null);
+    drafts.current[queryType]=currentDraft();
+    const next=drafts.current[type];
+    const name=newQueryName(type);
+    applyDraft(next ?? {...currentDraft(),queryType:type,queryName:name,exportFileName:name,
+      queryText:sampleQueries[type],temporalEvents:[]});
+    setResults([]); setHasSearched(false); setContext(null); setTrakeFrameChoices([]); setActiveResultId(null);
+    setAutoTrace(makeAgentTrace(mode,type,0));
   }
 
   function switchMode(nextMode: AppMode) {
@@ -1932,6 +1959,7 @@ export function App() {
       minute: "2-digit",
     });
     const item: SearchHistoryItem = {
+      datasetId, draft: currentDraft(),
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       mode,
       queryType,
@@ -2112,56 +2140,10 @@ export function App() {
       useMetadata,
       temporalMode: queryType === "KIS" && kisTemporalMode,
       temporalStrategy,
-      visualSearchMode,
+      visualSearchMode, sourceMode, temporalEvents,
     };
 
     try {
-      const shouldShowPlanEarly =
-        useAgentPlanning ||
-        queryType === "TRAKE" ||
-        (queryType === "KIS" && kisTemporalMode);
-      if (shouldShowPlanEarly) {
-        try {
-          const planned = await planSearch(searchInput, request.signal);
-          if (!searchRequests.current.isCurrent(request)) return;
-          const planningTrace = makeTraceFromResponse(
-            mode,
-            queryType,
-            {
-              query_run_id: "planning",
-              query_type: queryType,
-              query_name: queryName,
-              normalized_query: planned.normalized_query,
-              results: [],
-            },
-            0,
-          ).map((step) =>
-            step.title === "Retrieve candidates"
-              ? {
-                  ...step,
-                  detail: "LLM reasoning is ready. Retrieving matching frames.",
-                  status: "running" as const,
-                }
-              : step,
-          );
-          setAutoTrace(planningTrace);
-        } catch {
-          if (!searchRequests.current.isCurrent(request)) return;
-          setAutoTrace((current) =>
-            current.map((step) =>
-              step.title === "Parse query"
-                ? {
-                    ...step,
-                    detail:
-                      "Planning is unavailable. Continuing with retrieval.",
-                    status: "warning" as const,
-                  }
-                : step,
-            ),
-          );
-        }
-      }
-
       const response = await runSearch(searchInput, request.signal);
       if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(
@@ -2412,7 +2394,10 @@ export function App() {
   function restoreHistory(item: SearchHistoryItem) {
     cancelSearch();
     setSearchError(null);
-    setMode(item.mode);
+    drafts.current[queryType]=currentDraft();
+    if (item.draft) applyDraft(item.draft);
+    if (item.datasetId) setDatasetId(item.datasetId);
+    setMode("Search");
     setQueryType(item.queryType);
     setQueryName(item.queryName);
     setQueryText(item.queryText);
@@ -2662,15 +2647,15 @@ export function App() {
     );
   }
 
-  async function exportSubmission() {
-    const rows = selected.filter((row) => row.query_name === queryName);
+  async function exportSubmission(allQueries = false) {
+    const rows = allQueries ? selected : selected.filter((row) => row.query_name === queryName);
     if (!datasetId || rows.length === 0 || exportInFlight.current) return;
     exportInFlight.current = true;
     setExporting(true);
     setStatus("Validating and exporting current query");
     try {
-      const csvName = csvDownloadName(exportFileName || queryName);
-      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.csv$/i, ""), rows);
+      const csvName = allQueries ? "submission.zip" : csvDownloadName(exportFileName || queryName);
+      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.(csv|zip)$/i, ""), rows, allQueries ? "zip" : "csv");
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
       setStatus(`CSV downloaded for ${queryName}`);
     } catch (error) {
@@ -2682,6 +2667,8 @@ export function App() {
   }
 
   function newSession() {
+    const name=newQueryName(queryType);
+    setQueryName(name); setExportFileName(name); setTemporalEvents([]);
     cancelSearch();
     setSearchError(null);
     setQueryText(sampleQueries[queryType]);
@@ -2801,7 +2788,7 @@ export function App() {
             <PanelLeft size={18} />
           </button>
           <div className="mode-switch" role="tablist" aria-label="Mode">
-            {(["Search", "Auto", "Chat"] as AppMode[]).map((item) => (
+            {(["Search"] as AppMode[]).map((item) => (
               <button
                 type="button"
                 role="tab"
@@ -2835,6 +2822,11 @@ export function App() {
         </header>
 
         <div className="content-scroll">
+          {storageError && <p role="alert">{storageError}</p>}
+          <label className="source-control">Search source <select aria-label="Search source" value={sourceMode} onChange={e=>setSourceMode(e.target.value as SourceMode)}>
+            <option value="auto">Auto sources</option><option value="ocr">Visible text (OCR)</option>
+            <option value="asr">Speech (ASR)</option><option value="scene">Scene (visual + caption)</option>
+          </select></label>
           <div className="request-status" role="status" aria-live="polite">{status}</div>
           {dataError && <div className="request-error" role="alert">{dataError} <button type="button" onClick={() => setBootstrapAttempt((n) => n + 1)}>Retry data</button></div>}
           {searchError && <div className="request-error" role="alert">Request failed: {searchError} <button type="button" onClick={() => void submitSearch()}>Retry search</button></div>}
@@ -3171,7 +3163,7 @@ export function App() {
                   type="button"
                   className="icon-button"
                   onClick={() => fileInputRef.current?.click()}
-                  aria-label="Attach file"
+                  aria-label="Attach file (not available)" disabled title="Attachments are not connected to search yet"
                 >
                   <Paperclip size={17} />
                 </button>
@@ -3422,6 +3414,7 @@ export function App() {
           >
             {exporting ? "Exporting..." : "Export current query CSV"}
           </button>
+          <button type="button" className="export-button" disabled={exporting || selected.length === 0} onClick={() => void exportSubmission(true)}>Export all queries ZIP</button>
         </section>
       </aside>
 

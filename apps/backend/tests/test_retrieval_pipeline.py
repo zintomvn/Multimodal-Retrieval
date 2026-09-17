@@ -1176,6 +1176,23 @@ def test_m3_blank_query_returns_http_400(tmp_path: Path) -> None:
     db.close()
 
 
+@pytest.mark.parametrize('source', ['ocr','asr'])
+def test_explicit_text_source_never_calls_semantic_and_overrides_heuristic(tmp_path, monkeypatch, source):
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
+    def semantic(*a, **k):
+        pytest.fail('Explicit text request must not call visual models')
+    seen=[]
+    def text_scores(*args):
+        seen.append(args[-1]); return {}, False
+    monkeypatch.setattr(service,'_semantic_scores',semantic)
+    monkeypatch.setattr(service,'_text_scores',text_scores)
+    result=service.search(SearchRequest(dataset_id=dataset.id,query_text='plain scene without cue',options=SearchOptions(
+        source_mode=source,use_agent_query_planning=False,use_query_expansion=False,use_metadata=False)))
+    assert seen and all(w[source]==1 and sum(w.values())==1 for w in seen)
+    assert result.normalized_query['source_status']=={'semantic':'disabled','text':'ok'}
+    db.close()
+
+
 @pytest.mark.parametrize('unavailable', [False, True])
 def test_empty_indexes_never_scan_metadata_or_invent_hits(tmp_path, monkeypatch, unavailable):
     from sqlalchemy import event
