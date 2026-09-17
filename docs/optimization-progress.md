@@ -67,3 +67,21 @@ Validation: 4 web unit tests; Playwright invalid report and 503 produced zero
 downloads. Real local gallery selection/export downloaded a CSV through the API
 (`output/playwright/optimization-live-export.csv`). QA/TRAKE export fixtures and
 query-scoped session restoration still require follow-up.
+
+## G1 / A04, A17: accessible preview and nonblocking drawers
+
+On narrow screens drawers and their dismiss backdrop stop above the measured
+composer, keeping Search clickable. Escape/backdrop dismiss drawers. Video modal
+acquires focus, traps Tab/Shift+Tab, closes on Escape and restores opener focus.
+Muted text tokens darken in light mode and brighten in dark mode.
+
+Validation: production web build; Playwright checks Search hit target at
+390/1024/1180/1440px and modal focus/Tab/Escape/restore on a real media preview.
+Zoom 125%, broader toggle semantics and complete contrast audit remain outstanding.
+
+## Next work
+
+Finish G0 labelled retrieval/QA/TRAKE baselines, G1 A08 actual source readiness,
+server deadlines and outstanding accessibility/export contract checks. Then G2
+query persistence/identity and truthful controls, followed by G3 performance.
+G4/G5 have not started. Changes are local commits, not pushed/deployed.

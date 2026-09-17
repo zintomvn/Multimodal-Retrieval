@@ -15,7 +15,7 @@
   --border-strong: #d0d0d0;
   --text-1: #0d0d0d;
   --text-2: #5f5f5f;
-  --text-3: #8a8a8a;
+  --text-3: #686868;
   --accent: #087f5b;
   --accent-strong: #065f46;
   --accent-ring: rgba(8, 127, 91, 0.2);
@@ -40,7 +40,7 @@
   --border-strong: #555555;
   --text-1: #f5f5f5;
   --text-2: #c7c7c7;
-  --text-3: #8f8f8f;
+  --text-3: #b3b3b3;
   --accent: #12a873;
   --accent-strong: #24d18c;
   --accent-ring: rgba(18, 168, 115, 0.28);
@@ -332,6 +332,14 @@ button:disabled {
   display: grid;
   grid-template-rows: 58px minmax(0, 1fr) auto;
   background: var(--bg-panel);
+}
+
+.drawer-backdrop { display: none; }
+@media (max-width: 1180px) {
+  .drawer-backdrop.right-open { display: block; position: fixed; inset: 58px 0 var(--composer-height, 180px); z-index: 65; border: 0; background: rgb(0 0 0 / 16%); }
+}
+@media (max-width: 900px) {
+  .drawer-backdrop.left-open, .drawer-backdrop.right-open { display: block; position: fixed; inset: 54px 0 var(--composer-height, 180px); z-index: 65; border: 0; background: rgb(0 0 0 / 16%); }
 }
 
 .request-status { padding: 8px 0; color: var(--text-2); font-size: 13px; }
@@ -2228,7 +2236,7 @@ button:disabled {
     position: fixed;
     top: 58px;
     right: 0;
-    bottom: 0;
+    bottom: var(--composer-height, 180px);
     z-index: 70;
     width: min(360px, 88vw);
     box-shadow: var(--shadow);
@@ -2257,7 +2265,7 @@ button:disabled {
     position: fixed;
     top: 54px;
     left: 0;
-    bottom: 0;
+    bottom: var(--composer-height, 180px);
     z-index: 70;
     width: min(284px, 86vw);
     box-shadow: var(--shadow);

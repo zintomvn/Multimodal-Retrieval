@@ -1,4 +1,5 @@
 import { LatestRequest } from "./api/latestRequest";
+import { useDialogFocus } from "./useDialogFocus";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
@@ -1646,6 +1647,29 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const videoDialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(videoDialogRef, Boolean(videoPreview), () => setVideoPreview(null));
+
+  useEffect(() => {
+    const footer = document.querySelector<HTMLElement>(".composer-wrap");
+    if (!footer) return;
+    const update = () => document.documentElement.style.setProperty("--composer-height", `${window.innerHeight - footer.getBoundingClientRect().top}px`);
+    const observer = new ResizeObserver(update);
+    observer.observe(footer);
+    window.addEventListener("resize", update);
+    update();
+    return () => { observer.disconnect(); window.removeEventListener("resize", update); };
+  }, []);
+
+  useEffect(() => {
+    const closeDrawers = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || videoPreview) return;
+      if (window.innerWidth <= 1180) setRightSidebarOpen(false);
+      if (window.innerWidth <= 900) setLeftSidebarOpen(false);
+    };
+    document.addEventListener("keydown", closeDrawers);
+    return () => document.removeEventListener("keydown", closeDrawers);
+  }, [videoPreview]);
 
   // Effects
   useEffect(() => {
@@ -2700,6 +2724,7 @@ export function App() {
     <main
       className={`chat-shell ${leftSidebarOpen ? "" : "left-collapsed"} ${rightSidebarOpen ? "" : "right-collapsed"}`}
     >
+      {(leftSidebarOpen || rightSidebarOpen) && <button type="button" className={`drawer-backdrop ${rightSidebarOpen ? "right-open" : ""} ${leftSidebarOpen ? "left-open" : ""}`} aria-label="Close sidebars" onClick={() => { if (window.innerWidth <= 900) setLeftSidebarOpen(false); setRightSidebarOpen(false); }} />}
       <aside className="left-sidebar">
         <div className="brand-row">
           <div className="brand-mark">CS</div>
@@ -3490,6 +3515,8 @@ export function App() {
           }}
         >
           <div
+            ref={videoDialogRef}
+            tabIndex={-1}
             className={`video-modal ${videoEvidenceOpen ? "evidence-open" : ""}`}
             role="dialog"
             aria-modal="true"
