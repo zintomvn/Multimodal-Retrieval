@@ -90,7 +90,10 @@ class InMemoryVectorSearchClient:
         items = self._collections.get(collection, {})
         hits: list[VectorHit] = []
         for item_id, (stored_vector, metadata) in items.items():
-            if any(metadata.get(key) != value for key, value in filters.items()):
+            if any(
+                metadata.get(key) not in value if isinstance(value, (list, tuple, set)) else metadata.get(key) != value
+                for key, value in filters.items()
+            ):
                 continue
             score = sum(a * b for a, b in zip(vector, stored_vector))
             hits.append(VectorHit(id=item_id, score=score, metadata=metadata))

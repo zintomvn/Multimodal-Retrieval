@@ -107,6 +107,10 @@ class MilvusVectorSearchClient:
         for key, value in filters.items():
             if isinstance(value, str):
                 parts.append(f'{key} == "{value}"')
+            elif isinstance(value, (list, tuple, set)):
+                values = [f'"{item}"' if isinstance(item, str) else str(item) for item in value]
+                if values:
+                    parts.append(f"{key} in [{', '.join(values)}]")
             else:
                 parts.append(f"{key} == {value}")
         return " and ".join(parts)

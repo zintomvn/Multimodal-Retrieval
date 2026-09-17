@@ -28,8 +28,10 @@ from app.modules.retrieval.temporal.dev_first import (
     build_dev_first_vortex_ats_sequences,
     calibrate_candidates,
     event_probe,
+    resolve_edge_constraints,
     score_candidate_videos,
     score_candidate_videos_across_events,
+    select_diverse_candidate_videos,
     select_diagnostic_event,
     temporal_nms,
 )
@@ -519,6 +521,10 @@ class RetrievalService:
                 importance = float(raw_plan.get("importance", 1.0))
             except (TypeError, ValueError):
                 importance = 1.0
+            try:
+                diagnostic_prior = float(raw_plan.get("diagnostic_prior", 0.5))
+            except (TypeError, ValueError):
+                diagnostic_prior = 0.5
             text_query = str(
                 raw_plan.get("text_query")
                 or (text_events[index - 1] if index - 1 < len(text_events) else event_query)
@@ -533,7 +539,12 @@ class RetrievalService:
                     "multi_views": semantic_views,
                     "semantic_views": semantic_views,
                     "text_views": text_views,
+                    # Keep the model-specific visual view through normalization.
+                    # DEV consumes it in the local SigLIP2 pass; dropping it here
+                    # silently made the bilingual prompt a no-op.
+                    "siglip2_views": self._extract_plan_text_values(raw_plan, ("siglip2_views", "vietnamese_semantic_views")),
                     "importance": max(0.0, importance),
+                    "diagnostic_prior": max(0.0, min(1.0, diagnostic_prior)),
                     "retrieval_weights": weights,
                     "retrieval_weight_source": str(raw_plan.get("retrieval_weight_source") or "heuristic"),
                     "text_source_weights": text_source_weights,
@@ -589,6 +600,7 @@ class RetrievalService:
         retrieval_weights: dict[str, float] | None = None,
         use_agent_retrieval_weights: bool = False,
         text_source_weights: dict[str, float] | None = None,
+        allowed_video_ids: set[str] | None = None,
     ) -> list[FrameScore]:
         # Deduplicate the views
         semantic_views = self._dedupe_query_variants(semantic_views or [query_text], max_variants=8)
@@ -605,6 +617,7 @@ class RetrievalService:
                 retrieval_weights=retrieval_weights,
                 use_agent_retrieval_weights=use_agent_retrieval_weights,
                 text_source_weights=text_source_weights,
+                allowed_video_ids=allowed_video_ids,
             )
 
         view_queries = [
@@ -630,6 +643,7 @@ class RetrievalService:
                 retrieval_weights=retrieval_weights,
                 use_agent_retrieval_weights=use_agent_retrieval_weights,
                 text_source_weights=text_source_weights,
+                allowed_video_ids=allowed_video_ids,
             )
 
             # 
@@ -948,6 +962,50 @@ class RetrievalService:
         return items
 
     # 2. Search temporal
+    @staticmethod
+    def _refine_dev_event_plans(
+        events: list[str], plans: list[dict[str, Any]], max_events: int = 8,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Atomize overlong fallback events without changing non-DEV planners.
+
+        A failed/unavailable plan agent can leave a whole multi-action sentence
+        in one event.  That is a poor visual query and makes a diagnostic
+        video pool collapse around generic frames.  Split only long events on
+        sentence/time boundaries, clone its retrieval directives, and divide
+        its importance across children so the original LLM/planner weight is
+        fully conserved.
+        """
+        refined_events: list[str] = []
+        refined_plans: list[dict[str, Any]] = []
+        boundary = re.compile(
+            r"(?<=[.!?])\s+|\b(?:then|after\s+that|afterwards|next|finally|"
+            r"sau\s+\u0111[oó]|ti[eế]p\s+theo|cu[oố]i\s+c[uù]ng|r[oồ]i)\b",
+            flags=re.IGNORECASE,
+        )
+        for index, event in enumerate(events):
+            source_plan = dict(plans[index]) if index < len(plans) else {}
+            pieces = [piece.strip(" ,;:-") for piece in boundary.split(event) if piece.strip(" ,;:-")]
+            # Existing LLM events are normally already atomic.  Only refine a
+            # long compound query; this is deliberately DEV-local.
+            if len(event) <= 120 or len(pieces) <= 1:
+                pieces = [event]
+            remaining = max_events - len(refined_events)
+            if remaining <= 0:
+                break
+            pieces = pieces[:remaining]
+            parent_importance = float(source_plan.get("importance", 1.0))
+            for piece in pieces:
+                child = dict(source_plan)
+                child["query"] = piece
+                child["text_query"] = piece
+                child["multi_views"] = [piece]
+                child["semantic_views"] = [piece]
+                child["text_views"] = [piece]
+                child["importance"] = parent_importance / len(pieces)
+                refined_events.append(piece)
+                refined_plans.append(child)
+        return refined_events or events, refined_plans or plans
+
     def _search_dev_first_kis(
         self,
         run: QueryRun,
@@ -961,27 +1019,64 @@ class RetrievalService:
         plans = [plan if isinstance(plan, dict) else {} for plan in plans]
         while len(plans) < len(events):
             plans.append({"query": events[len(plans)], "importance": 1.0, "diagnostic_prior": 0.5})
+        events, plans = self._refine_dev_event_plans(events, plans)
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
         config = profile.get("dev_first", {}) if isinstance(profile.get("dev_first"), dict) else {}
         probe_cfg = config.get("diagnostic_probe", {}) if isinstance(config.get("diagnostic_probe"), dict) else {}
-        probe_top_k = max(1, int(probe_cfg.get("top_k_per_event", 40)))
+        # A retrieval result ultimately has at most one representative sequence
+        # per video.  Make the global evidence pool large enough for the caller
+        # to receive more than ``top_k`` candidates, without adding any extra
+        # model/Milvus request: this only changes the requested result window.
+        output_buffer = max(1, int(config.get("output_video_buffer", 10)))
+        required_video_pool = request.top_k + output_buffer
+        probe_top_k = max(
+            1,
+            int(probe_cfg.get("top_k_per_event", 40)),
+            required_video_pool,
+        )
         calibration = config.get("score_calibration", {}) if isinstance(config.get("score_calibration"), dict) else {}
+        semantic_view_limit = max(1, int(config.get("max_semantic_views_per_event", 2)))
+        text_view_limit = max(1, int(config.get("max_text_views_per_event", 2)))
 
-        def retrieve(event_index: int, top_k: int) -> list[DevFirstCandidate]:
+        def retrieve(
+            event_index: int,
+            top_k: int,
+            allowed_video_ids: set[str] | None = None,
+            semantic_view_cap: int | None = None,
+            include_siglip2: bool = False,
+            include_root_summary: bool = False,
+        ) -> list[DevFirstCandidate]:
             plan = plans[event_index - 1]
             query = events[event_index - 1]
-            semantic_views = self._event_semantic_views(plan, query, max_views=8)
+            active_view_limit = max(1, semantic_view_cap or semantic_view_limit)
+            semantic_views = self._event_semantic_views(plan, query, max_views=active_view_limit)
+            # Prompt v3 supplies a full Vietnamese visual description for
+            # SigLIP2.  Keep it as a semantic view (rather than reducing it to
+            # ASR/OCR keywords) whenever SigLIP2 participates in the visual
+            # ensemble.  Older plans have no such field and retain identical
+            # behaviour.
+            # Global probes intentionally use one English primary view per
+            # event.  Vietnamese SigLIP2 views are valuable only after video
+            # filtering; adding them globally doubles model/Milvus work and
+            # violates the configured coarse-pass budget.
+            if include_siglip2 and request.options.visual_search_mode in {"siglip2", "both"}:
+                semantic_views = self._dedupe_query_variants(
+                    [*semantic_views, *self._extract_plan_text_values(plan, ("siglip2_views",))],
+                    max_variants=active_view_limit + 1,
+                )
             # The final event often describes the sought product/state while
             # the root plan carries a more precise semantic rewrite of the
             # whole Vietnamese narrative.  Inject it as an auxiliary view so
             # event retrieval retains that information instead of embedding a
             # vague phrase such as "stick-like product" by itself.
-            if event_index == len(events):
+            if include_root_summary and event_index == len(events):
                 semantic_views = self._dedupe_query_variants(
                     [*semantic_views, *list(normalized.get("semantic_variants") or [])],
-                    max_variants=8,
+                    max_variants=active_view_limit + 1,
                 )
-            text_views = self._event_text_views(plan, str(plan.get("text_query") or query), max_views=8)
+            text_views = self._event_text_views(
+                plan, str(plan.get("text_query") or query), max_views=text_view_limit,
+            )
             weights = self._normalize_retrieval_weights(plan.get("retrieval_weights")) or normalized.get("retrieval_weights")
             text_weights = self._normalize_text_source_weights(plan.get("text_source_weights")) or self._normalize_text_source_weights(normalized.get("text_source_weights"))
             ranked = self._rank_frames_multiperspective(
@@ -990,29 +1085,55 @@ class RetrievalService:
                 options=request.options, top_k=top_k, retrieval_weights=weights,
                 use_agent_retrieval_weights=str(plan.get("retrieval_weight_source") or "") == "agent",
                 text_source_weights=text_weights,
+                allowed_video_ids=allowed_video_ids,
             )
             raw = [
                 DevFirstCandidate(
                     frame_id=item.frame.id, video_id=item.frame.video_id, video_code=item.frame.video.video_code,
                     frame_idx=item.frame.frame_idx, event_index=event_index, event_query=query,
                     timestamp_ms=item.frame.timestamp_ms if item.frame.timestamp_ms is not None else None,
-                    final_retrieval_score=item.final_score, semantic_raw_score=None,
-                    text_raw_score=None, rrf_score=item.rrf_score,
+                    final_retrieval_score=item.final_score, semantic_raw_score=item.semantic_score,
+                    text_raw_score=item.text_score, rrf_score=item.rrf_score,
                 )
                 for item in ranked
             ]
             return calibrate_candidates(raw, calibration)
 
-        probes = [retrieve(index, probe_top_k) for index in range(1, len(events) + 1)]
+        # Coarse global recall uses the planner's primary visual view only.
+        # The second, video-constrained pass below is where extra English and
+        # Vietnamese fine-grained views are worth their cost.
+        probes = [
+            retrieve(index, probe_top_k, semantic_view_cap=1)
+            for index in range(1, len(events) + 1)
+        ]
         diagnostic_index, diagnostics = select_diagnostic_event(
             plans,
             [event_probe(candidates, probe_top_k) for candidates in probes],
             config,
         )
+        # The diagnostic event is already part of the independent global
+        # probes. Reusing it avoids a duplicate global embedding + Milvus pass
+        # (previously a deep top-500 search) while retaining enough diverse
+        # candidates for local retrieval.
         diagnostic = temporal_nms(
-            retrieve(diagnostic_index, max(probe_top_k, int(config.get("diagnostic_candidate_frames", 500)))),
+            probes[diagnostic_index - 1],
             int(config.get("event_nms_window_ms", 2500)),
         )
+        # Keep the coarse pass cheap (one English view per event), then spend
+        # one bounded bilingual re-probe only on the event that the diagnostic
+        # stage selected. This lets a grounded Vietnamese SigLIP2 view recover
+        # a hard visual state without multiplying every global Milvus request.
+        if bool(config.get("bilingual_diagnostic_reprobe", True)) and request.options.visual_search_mode in {"siglip2", "both"}:
+            diagnostic = temporal_nms(
+                retrieve(
+                    diagnostic_index,
+                    probe_top_k,
+                    semantic_view_cap=1,
+                    include_siglip2=True,
+                    include_root_summary=diagnostic_index == len(events),
+                ),
+                int(config.get("event_nms_window_ms", 2500)),
+            )
         # Preserve the diagnostic event's role, but seed candidate videos with
         # every event probe so a broad diagnostic event cannot remove the true
         # video before the later frame-level sequence search starts.
@@ -1021,55 +1142,29 @@ class RetrievalService:
         # pool. Keep that recall in video seeding; the lightweight probes from
         # other events only add corroborating evidence.
         seed_candidate_sets[diagnostic_index - 1] = diagnostic
-        video_ranking = score_candidate_videos_across_events(seed_candidate_sets, diagnostic_index, config)
+        event_weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in plans[:len(events)]]
+        if not event_weights or sum(event_weights) <= 0:
+            event_weights = [1.0] * len(events)
+        video_ranking = score_candidate_videos_across_events(
+            seed_candidate_sets,
+            diagnostic_index,
+            config,
+            event_weights,
+        )
         if not video_ranking:
             video_ranking = score_candidate_videos(diagnostic, config)
 
-        # If no videos are found, we can't proceed with the narrative
-        candidate_limit = max(1, int(config.get("candidate_video_limit", 40)))
-        candidate_video_ids = {video_id for video_id, _score in video_ranking[:candidate_limit]}
-        narrative_cfg = config.get("narrative_probe", {}) if isinstance(config.get("narrative_probe"), dict) else {}
-        if len(events) > 1 and bool(narrative_cfg.get("enabled", True)):
-            narrative_views = self._dedupe_query_variants(
-                list(normalized.get("semantic_variants") or []) + [request.query_text],
-                max_variants=8,
-            )
-            narrative_text = self._dedupe_query_variants(
-                list(normalized.get("text_variants") or []) + [request.query_text],
-                max_variants=8,
-            )
-            narrative_ranked = self._rank_frames_multiperspective(
-                dataset=dataset,
-                semantic_views=narrative_views,
-                text_views=narrative_text,
-                query_text=request.query_text,
-                profile_name=request.profile,
-                options=request.options,
-                top_k=max(1, int(narrative_cfg.get("top_k", 200))),
-                retrieval_weights=normalized.get("retrieval_weights"),
-                use_agent_retrieval_weights=normalized.get("retrieval_weight_source") == "agent",
-                text_source_weights=self._normalize_text_source_weights(normalized.get("text_source_weights")),
-            )
-            narrative_candidates = calibrate_candidates(
-                [
-                    DevFirstCandidate(
-                        frame_id=item.frame.id,
-                        video_id=item.frame.video_id,
-                        video_code=item.frame.video.video_code,
-                        frame_idx=item.frame.frame_idx,
-                        event_index=0,
-                        event_query=request.query_text,
-                        timestamp_ms=item.frame.timestamp_ms if item.frame.timestamp_ms is not None else None,
-                        final_retrieval_score=item.final_score,
-                        rrf_score=item.rrf_score,
-                    )
-                    for item in narrative_ranked
-                ],
-                calibration,
-            )
-            narrative_videos = score_candidate_videos(narrative_candidates, config)
-            narrative_limit = max(0, int(narrative_cfg.get("candidate_video_limit", 20)))
-            candidate_video_ids.update(video_id for video_id, _score in narrative_videos[:narrative_limit])
+        configured_limit = max(1, int(config.get("candidate_video_limit", 18)))
+        maximum_limit = max(configured_limit, int(config.get("max_candidate_video_limit", 100)))
+        candidate_limit = min(maximum_limit, max(configured_limit, required_video_pool))
+        candidate_video_order = select_diverse_candidate_videos(
+            seed_candidate_sets,
+            video_ranking,
+            event_weights,
+            candidate_limit,
+            config,
+        )
+        candidate_video_ids = set(candidate_video_order)
         fallback_stages: list[str] = []
         if len(candidate_video_ids) < int(config.get("min_candidate_videos", 8)):
             fallback_stages.append("global_event_retrieval")
@@ -1077,28 +1172,26 @@ class RetrievalService:
         event_cfg = config.get("event_retrieval", {}) if isinstance(config.get("event_retrieval"), dict) else {}
         initial_top_k = max(1, int(event_cfg.get("initial_top_k", 200)))
         max_top_k = max(initial_top_k, int(event_cfg.get("max_top_k", 1000)))
-        widening = max(2, int(event_cfg.get("widening_factor", 2)))
         minimum = max(1, int(event_cfg.get("min_candidates_per_event", 20)))
         candidate_sets: list[list[DevFirstCandidate]] = []
         event_summaries: list[dict[str, Any]] = []
         for event_index, query in enumerate(events, start=1):
-            if event_index == diagnostic_index:
-                candidates = diagnostic
-            else:
-                current_top_k = initial_top_k
-                candidates = []
-                while True:
-                    found = retrieve(event_index, current_top_k)
-                    filtered = [item for item in found if not candidate_video_ids or item.video_id in candidate_video_ids]
-                    candidates = filtered if filtered or candidate_video_ids else found
-                    if len(candidates) >= minimum or current_top_k >= max_top_k:
-                        break
-                    current_top_k = min(max_top_k, current_top_k * widening)
-                if not candidates and candidate_video_ids:
-                    # Recover the event globally.  The later Vortex--ATS stage
-                    # still performs all temporal construction and DEV scoring.
-                    candidates = retrieve(event_index, max_top_k)
-                    fallback_stages.append(f"global_recovery_event_{event_index}")
+            # A second, filtered retrieval is required for every event,
+            # including the diagnostic one.  This is a local Milvus search, not
+            # a post-filter over global hits, so frames compete only with their
+            # selected-video peers.
+            candidates = retrieve(
+                event_index, initial_top_k, candidate_video_ids or None,
+                include_siglip2=True, include_root_summary=event_index == len(events),
+            )
+            if len(candidates) < minimum and initial_top_k < max_top_k:
+                candidates = retrieve(
+                    event_index, max_top_k, candidate_video_ids or None,
+                    include_siglip2=True, include_root_summary=event_index == len(events),
+                )
+                fallback_stages.append(f"local_widening_event_{event_index}")
+            if not candidates:
+                fallback_stages.append(f"local_empty_event_{event_index}")
             candidates = temporal_nms(
                 candidates,
                 int(config.get("per_video_candidate_min_gap_ms", 1500)),
@@ -1108,29 +1201,67 @@ class RetrievalService:
             plan = plans[event_index - 1]
             event_summaries.append({
                 "event_index": event_index, "query": query,
-                "multi_views": self._event_semantic_views(plan, query, max_views=8),
+                "multi_views": self._event_semantic_views(plan, query, max_views=semantic_view_limit),
+                "siglip2_views": list(plan.get("siglip2_views") or []),
                 "candidate_count": len(candidates), "importance": round(float(plan.get("importance", 1.0)), 4),
                 "diagnostic_prior": round(float(plan.get("diagnostic_prior", 0.5)), 4),
+                "retrieval_weights": self._normalize_retrieval_weights(plan.get("retrieval_weights")),
+                "text_source_weights": self._normalize_text_source_weights(plan.get("text_source_weights")),
             })
 
-        weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in plans[:len(events)]]
-        if not weights or sum(weights) <= 0:
-            weights = [1.0] * len(events)
+        weights = event_weights
         ratio = max(0.0, min(1.0, float(config.get("min_match_ratio", 0.5))))
-        min_match = request.options.min_match or max(1, math.ceil(len(events) * ratio))
-        if len(events) > 1:
-            min_match = max(2, min_match)
+        explicit_min_match = request.options.min_match
+        min_match = explicit_min_match or max(1, math.ceil(len(events) * ratio))
+        # The default keeps a multi-event noise guard.  An explicit one-event
+        # request is useful for a sparse AutoShot trace: it preserves a strong,
+        # diagnostic final-state hit instead of silently deleting that video.
+        if len(events) > 1 and explicit_min_match is None:
+            default_maximum = max(2, int(config.get("max_default_min_match", 2)))
+            min_match = max(2, min(min_match, default_maximum))
+        sequence_limit = max(request.top_k * 2, candidate_limit)
         sequences = build_dev_first_vortex_ats_sequences(
             candidate_sets, weights, diagnostic_index,
             normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
-            config, min_match, max(request.top_k * 4, request.top_k),
+            config, min_match, sequence_limit,
             request.options.delta_t_max_ms,
         )
+        # Keep the high-confidence ordered chains first.  When they do not
+        # supply more candidates than the requested top-k, append only unseen
+        # videos with one-event evidence.  Their missing-event penalty keeps
+        # them below complete chains, while preserving recall for an AutoShot
+        # gap or a weakly visual event instead of returning too few frames.
+        if len(sequences) <= request.top_k and min_match > 1:
+            partial_sequences = build_dev_first_vortex_ats_sequences(
+                candidate_sets, weights, diagnostic_index,
+                normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
+                config, 1, sequence_limit,
+                request.options.delta_t_max_ms,
+            )
+            existing_videos = {sequence.video_id for sequence in sequences}
+            sequences = sorted(
+                [*sequences, *(sequence for sequence in partial_sequences if sequence.video_id not in existing_videos)],
+                key=lambda sequence: sequence.score,
+                reverse=True,
+            )[:sequence_limit]
+            fallback_stages.append("partial_temporal_completion")
         target_scope = str(normalized.get("target_scope") or "frame")
         anchor_index = normalized.get("temporal_anchor_index")
         if target_scope == "frame" and anchor_index:
             sequences = [sequence for sequence in sequences if any(item.event_index == anchor_index for item in sequence.candidates)]
+        sequence_pool_count = len(sequences)
         sequences = sequences[:request.top_k]
+        # Dynamic samples are contextual only: they neither change sequence
+        # score nor candidate-video selection. Sampling discarded sequences
+        # previously caused O(sequence_pool * event_count) SQLite lookups with
+        # no user-visible benefit. Restrict it to the final returned top-k.
+        sequences = self._add_dev_dynamic_samples(
+            sequences=sequences,
+            event_count=len(events),
+            edges=normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
+            config=config,
+            default_max_gap_ms=request.options.delta_t_max_ms,
+        )
         ids = {candidate.frame_id for sequence in sequences for candidate in sequence.candidates}
         frames = {frame.id: frame for frame in self.db.query(Frame).options(joinedload(Frame.video)).filter(Frame.id.in_(ids)).all()} if ids else {}
         coordinate = "timestamp_ms" if all(candidate.timestamp_ms is not None for candidates in candidate_sets for candidate in candidates) else "frame_idx_fallback"
@@ -1156,6 +1287,7 @@ class RetrievalService:
                 "frame_id": item.frame_id, "frame_idx": item.frame_idx, "video_code": item.video_code,
                 "timestamp_ms": item.timestamp_ms, "score": round(item.calibrated_event_score, 4),
                 "event_index": item.event_index, "event_query": item.event_query,
+                "is_dynamic_sample": item.is_dynamic_sample,
                 "thumbnail_url": f"/api/media/frames/{item.frame_id}/thumbnail",
                 "image_url": self._browser_image_url(frames.get(item.frame_id)),
             } for item in sequence.candidates]
@@ -1164,12 +1296,20 @@ class RetrievalService:
                 frame_id=representative.frame_id, score=sequence.score,
                 score_breakdown={
                     "temporal_score": round(sequence.score, 6), "final_score": round(sequence.score, 6),
-                    "temporal_reranker": "dev_first_vortex_ats", "temporal_strategy": "dev_first_search",
-                    "temporal_components": ["vortex_hard_anchor", "aithena_ats_recovery", "dev_sequence_score"],
+                    "temporal_reranker": "dev_first_vortex_local", "temporal_strategy": "dev_first_search",
+                    "temporal_components": [
+                        "global_diverse_video_selection",
+                        "local_video_retrieval",
+                        "vortex_temporal_rescore",
+                        "dev_noise_filter",
+                    ],
                     "target_scope": target_scope, "representative_frame_policy": representative_policy,
                     "representative_event_index": representative.event_index, "diagnostic_event_index": diagnostic_index,
                     "diagnostic_events": diagnostics, "candidate_video_count": len(candidate_video_ids),
-                    "fallback_stages": fallback_stages, "matched_events": len(sequence.candidates),
+                    "fallback_stages": fallback_stages,
+                    "sequence_pool_count": sequence_pool_count,
+                    "matched_events": sum(not item.is_dynamic_sample for item in sequence.candidates),
+                    "dynamic_sampled_events": sequence.details.get("dynamic_sampled_events", []),
                     "expected_events": len(events), "min_match": min_match, "event_queries": event_summaries,
                     "event_weights": [round(weight, 6) for weight in weights], "temporal_coordinate": coordinate,
                     "sequence_evidence": sequence.details,
@@ -1179,6 +1319,87 @@ class RetrievalService:
             self.db.add(result)
             items.append(self._result_to_item(result))
         return items
+
+    def _add_dev_dynamic_samples(
+        self,
+        sequences,
+        event_count: int,
+        edges: list[dict[str, Any]],
+        config: dict[str, Any],
+        default_max_gap_ms: int,
+    ):
+        """Expose one local frame for an uncovered event interval, if available.
+
+        AutoShot can leave a long interval without a semantic hit.  Sampling is
+        intentionally bounded to the planner/request temporal window and is
+        never scored as an event match; it provides inspectable local context
+        without issuing any extra Milvus query or promoting a noisy video.
+        """
+        if not bool(config.get("dynamic_sampling", {}).get("enabled", True)):
+            return sequences
+        constraints = resolve_edge_constraints(event_count, edges, config)
+        default_gap = max(1, int(default_max_gap_ms))
+        enriched = []
+        for sequence in sequences:
+            by_event = {item.event_index: item for item in sequence.candidates}
+            samples: list[DevFirstCandidate] = []
+            for event_index in range(1, event_count + 1):
+                if event_index in by_event:
+                    continue
+                before = next((by_event[index] for index in range(event_index - 1, 0, -1) if index in by_event), None)
+                after = next((by_event[index] for index in range(event_index + 1, event_count + 1) if index in by_event), None)
+                if before is None and after is None or before is not None and before.timestamp_ms is None or after is not None and after.timestamp_ms is None:
+                    continue
+                start = (before.timestamp_ms + 1) if before is not None else max(0, int(after.timestamp_ms) - default_gap)
+                end = (after.timestamp_ms - 1) if after is not None else start + default_gap
+                if before is not None:
+                    start = max(start, int(before.timestamp_ms) + 1)
+                    end = min(end, int(before.timestamp_ms) + int(constraints.get((before.event_index, event_index), default_gap) or default_gap))
+                if after is not None:
+                    start = max(start, int(after.timestamp_ms) - int(constraints.get((event_index, after.event_index), default_gap) or default_gap))
+                    end = min(end, int(after.timestamp_ms) - 1)
+                if start > end:
+                    continue
+                existing = {item.frame_id for item in sequence.candidates}
+                frames = (
+                    self.db.query(Frame)
+                    .options(joinedload(Frame.video))
+                    .filter(
+                        Frame.video_id == sequence.video_id,
+                        Frame.timestamp_ms >= start,
+                        Frame.timestamp_ms <= end,
+                    )
+                    .all()
+                )
+                frames = [frame for frame in frames if frame.keyframe_id not in existing]
+                if not frames:
+                    continue
+                midpoint = (start + end) // 2
+                frame = min(frames, key=lambda item: (abs(int(item.timestamp_ms) - midpoint), item.frame_idx))
+                samples.append(DevFirstCandidate(
+                    frame_id=frame.keyframe_id,
+                    video_id=frame.video_id,
+                    video_code=frame.video.video_code,
+                    frame_idx=frame.frame_idx,
+                    event_index=event_index,
+                    event_query="dynamic temporal sample",
+                    timestamp_ms=frame.timestamp_ms,
+                    final_retrieval_score=0.0,
+                    calibrated_event_score=0.0,
+                    is_dynamic_sample=True,
+                ))
+            if samples:
+                candidates = sorted([*sequence.candidates, *samples], key=lambda item: item.event_index)
+                enriched.append(type(sequence)(
+                    video_id=sequence.video_id,
+                    video_code=sequence.video_code,
+                    candidates=candidates,
+                    score=sequence.score,
+                    details={**sequence.details, "dynamic_sampled_events": [item.event_index for item in samples]},
+                ))
+            else:
+                enriched.append(sequence)
+        return enriched
 
     def _search_temporal_kis(
         self,
@@ -1627,6 +1848,7 @@ class RetrievalService:
         retrieval_weights: dict[str, float] | None = None,
         use_agent_retrieval_weights: bool = False,
         text_source_weights: dict[str, float] | None = None,
+        allowed_video_ids: set[str] | None = None,
     ) -> list[FrameScore]:
         profile = self.profiles.get(profile_name, self.profiles.get("competition_default", {}))
         semantic_weight = float(profile.get("semantic_weight", 0.6))
@@ -1667,6 +1889,7 @@ class RetrievalService:
             dataset_video_ids,
             profile,
             request_visual_search_mode=options.visual_search_mode,
+            allowed_video_ids=allowed_video_ids,
         )
         if options.use_metadata:
             text_scores, text_backend_error = self._text_scores(
@@ -1676,6 +1899,7 @@ class RetrievalService:
                 dataset_video_ids,
                 profile,
                 text_source_weights,
+                allowed_video_ids,
             )
         else:
             text_scores, text_backend_error = {}, False
@@ -1712,6 +1936,7 @@ class RetrievalService:
                 rrf_semantic_weight=rrf_semantic_weight,
                 rrf_text_weight=rrf_text_weight,
                 options=options,
+                allowed_video_ids=allowed_video_ids,
             )
 
         load_options = [joinedload(Frame.video)]
@@ -1721,8 +1946,10 @@ class RetrievalService:
             self.db.query(Frame)
             .options(*load_options)
             .filter(Frame.keyframe_id.in_(candidate_ids))
-            .all()
         )
+        if allowed_video_ids:
+            frames = frames.filter(Frame.video_id.in_(allowed_video_ids))
+        frames = frames.all()
         if not frames:
             return []
 
@@ -1803,6 +2030,7 @@ class RetrievalService:
         dataset_video_ids: set[str],
         profile: dict[str, Any],
         request_visual_search_mode: str = "profile",
+        allowed_video_ids: set[str] | None = None,
     ) -> tuple[dict[str, float], bool]:
         self._semantic_hit_sources = {}
         if self.vector_client is None:
@@ -1840,7 +2068,12 @@ class RetrievalService:
                 if not query_vector:
                     continue
                 try:
-                    hits = self.vector_client.search(target.collection, query_vector, top_k=top_k)
+                    hits = self.vector_client.search(
+                        target.collection,
+                        query_vector,
+                        top_k=top_k,
+                        filters={"video_id": sorted(allowed_video_ids)} if allowed_video_ids else None,
+                    )
                 except Exception:
                     backend_error = True
                     continue
@@ -1849,6 +2082,8 @@ class RetrievalService:
                     if not frame_id:
                         continue
                     if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                        continue
+                    if allowed_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in allowed_video_ids:
                         continue
                     score = max(0.0, float(hit.score))
                     model_scores = per_model_scores.setdefault(model_id, {})
@@ -2081,6 +2316,7 @@ class RetrievalService:
         dataset_video_ids: set[str],
         profile: dict[str, Any],
         text_source_weights: dict[str, float] | None,
+        allowed_video_ids: set[str] | None = None,
     ) -> tuple[dict[str, float], bool]:
         self._text_hit_sources = {}
         if self.text_client is None:
@@ -2117,6 +2353,8 @@ class RetrievalService:
                     if not frame_id:
                         continue
                     if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
+                        continue
+                    if allowed_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in allowed_video_ids:
                         continue
                     score = max(0.0, float(hit.score))
                     existing = scores.get(frame_id, 0.0)
@@ -2185,14 +2423,17 @@ class RetrievalService:
         rrf_semantic_weight: float,
         rrf_text_weight: float,
         options: SearchOptions,
+        allowed_video_ids: set[str] | None = None,
     ) -> list[FrameScore]:
         frames = (
             self.db.query(Frame)
             .options(joinedload(Frame.video), selectinload(Frame.annotations))
             .join(Frame.video)
             .filter(Video.dataset_id == dataset.id)
-            .all()
         )
+        if allowed_video_ids:
+            frames = frames.filter(Frame.video_id.in_(allowed_video_ids))
+        frames = frames.all()
         filtered_frames, filter_debug = self._apply_filters(frames, options)
         if not filtered_frames:
             return []

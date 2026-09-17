@@ -838,6 +838,11 @@ class AgentQueryPlanner:
             if not text_source_weights:
                 resolved_text_weights = self._gate_ocr_weight(resolved_text_weights, evidence_query)
             semantic_views = self._extract_event_multi_views(raw_event, event_query, max_views)
+            siglip2_views = self._extract_text_values(
+                raw_event,
+                ("siglip2_views", "vietnamese_semantic_views"),
+                ("text", "query", "view", "perspective"),
+            )[:max_views]
             text_views = self._extract_event_text_views(raw_event, text_query or event_query, max_views)
             plans.append(
                 {
@@ -846,6 +851,7 @@ class AgentQueryPlanner:
                     "text_query": text_query,
                     "multi_views": semantic_views,
                     "semantic_views": semantic_views,
+                    "siglip2_views": siglip2_views,
                     "text_views": text_views,
                     "importance": round(min(1.0, max(0.0, importance)), 4),
                     "diagnostic_prior": round(min(1.0, max(0.0, diagnostic_prior)), 4),

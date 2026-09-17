@@ -73,12 +73,28 @@ competition_default:
     min_representative_gap_ms: 10000
   dev_first:
     diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45}
-    diagnostic_candidate_frames: 500
-    candidate_video_limit: 60
+    # One bilingual re-probe of the selected diagnostic event restores
+    # SigLIP2 recall without multiplying every global event search.
+    bilingual_diagnostic_reprobe: true
+    # DEV's global pass reserves distinct videos for each important event; the
+    # second Milvus pass is restricted to this small, diverse set.
+    candidate_video_limit: 32
+    # Expand only when a caller asks for a large top-k.  The pool contains
+    # distinct videos, so one representative sequence/video can still return
+    # more candidates than the requested top-k without a broad local scan.
+    # For top_k=5 this keeps 85 distinct videos. A controlled benchmark at the
+    # 160-video cap did not improve recall but increased latency substantially.
+    output_video_buffer: 80
+    max_candidate_video_limit: 160
+    # Bound multiperspective work in both the global diagnostic and the local
+    # filtered pass: two English CLIP/caption views plus one Vietnamese
+    # SigLIP2 semantic view when the bilingual prompt provides it.
+    max_semantic_views_per_event: 2
+    max_text_views_per_event: 2
     min_candidate_videos: 8
+    diverse_videos_per_event: 2
     video_scoring: {best_weight: 0.55, top_m_mean_weight: 0.30, view_agreement_weight: 0.15, top_m: 3, diagnostic_weight: 0.55, cross_event_weight: 0.35, coverage_weight: 0.10}
-    narrative_probe: {enabled: true, top_k: 200, candidate_video_limit: 20}
-    event_retrieval: {initial_top_k: 200, max_top_k: 1000, widening_factor: 2, min_candidates_per_event: 20}
+    event_retrieval: {initial_top_k: 200, max_top_k: 400, min_candidates_per_event: 24}
     event_nms_window_ms: 2500
     per_video_candidate_min_gap_ms: 1500
     per_event_per_video_limit: 12
@@ -89,6 +105,9 @@ competition_default:
     max_sequences_per_video: 1
     sequence_nms_window_ms: 10000
     min_match_ratio: 0.50
+    # AutoShot may omit one of several planned events; retain the two-event
+    # noise guard without forcing three matches for a five-event narrative.
+    max_default_min_match: 2
     temporal_gap_classes:
       short: {max_gap_ms: 45000}
       medium: {max_gap_ms: 120000}
@@ -96,8 +115,10 @@ competition_default:
       unknown: {max_gap_ms: null}
     score_calibration: {relative_weight: 0.60, absolute_weight: 0.20, hybrid_weight: 0.20}
     sequence_scoring: {evidence_weight: 0.55, coverage_weight: 0.20, strong_coverage_weight: 0.10, diagnostic_weight: 0.05, missing_penalty_weight: 0.10, temporal_gap_penalty_weight: 0.10}
+    temporal_gap_reference_ms: 45000
     strong_match_threshold: 0.55
     representative_frame_policy: highest_confidence_matched_event
+    dynamic_sampling: {enabled: true}
 
 semantic_fast:
   semantic_weight: 0.85

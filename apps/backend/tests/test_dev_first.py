@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 from app.modules.retrieval.temporal.dev_first import (
     DevFirstCandidate,
+    _valid_extension,
     build_dev_first_sequences,
     build_dev_first_vortex_ats_sequences,
     score_candidate_videos,
     score_candidate_videos_across_events,
+    score_dev_first_sequence,
+    select_diverse_candidate_videos,
     temporal_nms,
 )
 from app.modules.retrieval.schemas import SearchOptions, SearchRequest
@@ -75,6 +81,27 @@ def test_timestamp_constraint_does_not_use_frame_rate_assumption() -> None:
     assert [sequence.video_id for sequence in sequences] == ["good"]
 
 
+def test_timestampless_dev_fallback_keeps_frame_order_without_ms_gap_assumption() -> None:
+    first = candidate("video", 1, 10, .8)
+    second = candidate("video", 2, 20, .8)
+    first = replace(first, timestamp_ms=None)
+    second = replace(second, timestamp_ms=None)
+
+    assert _valid_extension(first, second, {(1, 2): 1}, default_max_gap_ms=1)
+    score, details = score_dev_first_sequence([first, second], [1, 1], 1, config())
+
+    assert score > 0
+    assert details["temporal_gap_penalty"] == 0
+    assert details["temporal_gap_coordinate"] == "frame_idx_unpenalized"
+
+
+def test_timestampless_temporal_nms_does_not_apply_ms_window_to_frame_indices() -> None:
+    first = replace(candidate("video", 1, 10, .9), timestamp_ms=None)
+    second = replace(candidate("video", 1, 20, .8), timestamp_ms=None)
+
+    assert temporal_nms([first, second], window_ms=2500) == [first, second]
+
+
 def test_dev_vortex_ats_recovers_a_sequence_with_a_missing_event() -> None:
     sequences = build_dev_first_vortex_ats_sequences(
         [
@@ -88,7 +115,19 @@ def test_dev_vortex_ats_recovers_a_sequence_with_a_missing_event() -> None:
 
     assert sequences
     assert [item.event_index for item in sequences[0].candidates] == [1, 3]
-    assert sequences[0].details["sequence_constructor"] == "vortex_hard_anchor_then_ats"
+    assert sequences[0].details["sequence_constructor"] == "dev_local_vortex_temporal_rescore"
+
+
+def test_dev_vortex_uses_an_available_event_anchor_when_diagnostic_is_missing() -> None:
+    sequences = build_dev_first_vortex_ats_sequences(
+        [[], [candidate("target", 2, 2000, .95)]],
+        [0.2, 0.8], 1, [], config(), min_match=1, limit=10, default_max_gap_ms=5000,
+    )
+
+    assert sequences
+    assert sequences[0].video_id == "target"
+    assert sequences[0].details["anchor_event_index"] == 2
+    assert sequences[0].details["anchor_source"] == "event_fallback"
 
 
 def test_dev_vortex_ats_applies_timestamp_edges_after_ats() -> None:
@@ -123,10 +162,48 @@ def test_cross_event_video_scoring_recovers_evidence_missed_by_generic_diagnosti
     assert ranked[0][0] == "target"
 
 
+def test_diverse_video_selection_reserves_videos_for_each_weighted_event() -> None:
+    selected = select_diverse_candidate_videos(
+        [
+            [candidate("a", 1, 1000, .99), candidate("b", 1, 1000, .70)],
+            [candidate("a", 2, 2000, .98), candidate("c", 2, 2000, .90)],
+        ],
+        [("a", .99), ("c", .90), ("b", .70)],
+        [.2, .8],
+        limit=3,
+        config={"diverse_videos_per_event": 1},
+    )
+
+    assert selected[:2] == ["a", "b"]
+    assert len(set(selected)) == len(selected)
+
+
+def test_dev_plan_preserves_siglip2_view_and_diagnostic_prior(tmp_path) -> None:
+    db, service, _, _, _ = _build_retrieval_fixture(tmp_path)
+    agent_plan = SimpleNamespace(
+        temporal_event_plans=[{
+            "query": "white expanded strands on a white tray",
+            "siglip2_views": ["Các sợi màu trắng nở phồng trên khay trắng"],
+            "diagnostic_prior": .9,
+        }],
+    )
+
+    plans = service._resolve_temporal_event_plans(  # noqa: SLF001 - DEV plan contract.
+        ["white expanded strands on a white tray"], [], agent_plan, "KIS",
+        {"caption": 1.0}, 2,
+    )
+
+    assert plans[0]["siglip2_views"] == ["Các sợi màu trắng nở phồng trên khay trắng"]
+    assert plans[0]["diagnostic_prior"] == .9
+    db.close()
+
+
 def test_dev_strategy_is_explicitly_dispatched_by_retrieval_service(tmp_path, monkeypatch) -> None:
     db, service, dataset, first, second = _build_retrieval_fixture(tmp_path)
+    allowed_video_calls: list[set[str] | None] = []
 
     def fake_rank(**kwargs):
+        allowed_video_calls.append(kwargs.get("allowed_video_ids"))
         semantic_views = kwargs["semantic_views"]
         frame = first if "first" in semantic_views[0] else second
         return [FrameScore(frame=frame, semantic_score=.8, text_score=.1, quality_score=.0, weighted_score=.8, rrf_score=.1, final_score=.8)]
@@ -137,10 +214,16 @@ def test_dev_strategy_is_explicitly_dispatched_by_retrieval_service(tmp_path, mo
         options=SearchOptions(use_query_expansion=False, temporal_mode=True, temporal_strategy="dev_first_search", temporal_events=["first", "second"], min_match=2),
     ))
     assert response.results
-    assert response.results[0].score_breakdown["temporal_reranker"] == "dev_first_vortex_ats"
-    assert response.results[0].score_breakdown["temporal_components"] == ["vortex_hard_anchor", "aithena_ats_recovery", "dev_sequence_score"]
+    assert response.results[0].score_breakdown["temporal_reranker"] == "dev_first_vortex_local"
+    assert response.results[0].score_breakdown["temporal_components"] == [
+        "global_diverse_video_selection",
+        "local_video_retrieval",
+        "vortex_temporal_rescore",
+        "dev_noise_filter",
+    ]
     assert response.results[0].score_breakdown["temporal_coordinate"] == "timestamp_ms"
     assert [item["event_index"] for item in response.results[0].sequence_frames] == [1, 2]
+    assert any(video_ids == {first.video_id} for video_ids in allowed_video_calls)
     db.close()
 
 
