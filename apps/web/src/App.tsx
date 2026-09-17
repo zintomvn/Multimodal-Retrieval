@@ -225,6 +225,7 @@ function resultForTrakeFrame(
   return {
     ...result,
     id: `${result.id}:event:${frame.event_index ?? frame.order_index ?? 0}:${frame.frame_id}`,
+    source_result_id: result.source_result_id ?? result.id,
     frame_id: frame.frame_id,
     frame_idx: frame.frame_idx,
     timestamp_ms: frame.timestamp_ms ?? result.timestamp_ms,
@@ -1230,6 +1231,7 @@ const ResultGrid = memo(function ResultGrid({results,columns,selectedKeys,keyFor
   results:SearchResult[];columns:number;selectedKeys:Set<string>;keyFor:(r:SearchResult)=>string;
   onOpen:(r:SearchResult)=>void;onPick:(r:SearchResult)=>void;onPreview:(r:SearchResult)=>void;
 }) {
+  if(import.meta.env.DEV) performance.mark('result-grid-render');
   return <div className="frame-grid" style={{gridTemplateColumns:`repeat(${columns}, minmax(0, 1fr))`}}>
     {results.map((r,i)=><FrameCard key={r.id} result={r} eager={i<columns} selected={selectedKeys.has(keyFor(r))}
       onOpen={()=>onOpen(r)} onSelect={()=>onPick(r)} onPreview={()=>onPreview(r)}/>)}
@@ -1351,6 +1353,9 @@ function TrakeRows({
                       className={`trake-cell ${selected ? "selected" : ""}`}
                       key={`${result.video_code}-${frameIdx ?? sequenceFrame?.frame_id ?? result.id}`}
                       onClick={() => onOpen(frameResult)}
+                      tabIndex={0}
+                      aria-label={`Open event ${lane+1}, frame ${frameIdx}`}
+                      onKeyDown={e=>{if(e.target===e.currentTarget && (e.key==='Enter'||e.key===' ')){e.preventDefault();onOpen(frameResult);}}}
                     >
                       <div className="trake-thumb">
                         <CloudFrameImage
@@ -1390,6 +1395,7 @@ function TrakeRows({
                                 onSelect(result, sequenceFrame, lane + 1);
                             }}
                             disabled={!sequenceFrame}
+                            aria-pressed={selected}
                           >
                             {selected ? "Picked" : "Pick"}
                           </button>
@@ -1710,6 +1716,8 @@ export function App() {
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const videoDialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocus(videoDialogRef, Boolean(videoPreview), () => setVideoPreview(null));
+  const settingsDialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(settingsDialogRef, settingsOpen, () => setSettingsOpen(false));
 
   useEffect(() => {
     const footer = document.querySelector<HTMLElement>(".composer-wrap");
@@ -1817,6 +1825,7 @@ export function App() {
         : current,
     );
     void getVideoEvidence(preview.result.video_id, {
+      resultId: preview.result.score_breakdown.text_hit ? preview.result.source_result_id ?? preview.result.id : undefined,
       frameId: frame.id,
       seconds: frame.timestamp_ms / 1000,
     })
@@ -2890,11 +2899,11 @@ export function App() {
             <label>From second<input aria-label="From second" type="number" min="0" value={timeStart} onChange={e=>setTimeStart(e.target.value)}/></label>
             <label>To second<input aria-label="To second" type="number" min="0" value={timeEnd} onChange={e=>setTimeEnd(e.target.value)}/></label>
           </details>
-          <label>Filter displayed results <input aria-label="Filter displayed results" value={resultFilter} onChange={e=>setResultFilter(e.target.value)} placeholder="Video, frame, answer" /></label>
+          <div className="source-filter-row"><label>Filter displayed results <input aria-label="Filter displayed results" value={resultFilter} onChange={e=>setResultFilter(e.target.value)} placeholder="Video, frame, answer" /></label>
           <label className="source-control">Search source <select aria-label="Search source" value={sourceMode} onChange={e=>setSourceMode(e.target.value as SourceMode)}>
             <option value="auto">Auto sources</option><option value="ocr">Visible text (OCR)</option>
             <option value="asr">Speech (ASR)</option><option value="scene">Scene (visual + caption)</option>
-          </select></label>
+          </select></label></div>
           {activeQa && <section className="qa-answer-panel" aria-label="Answer for selected evidence">
             <strong>Answer · {activeQa.video_code} / frame {activeQa.frame_idx}</strong>
             <p>Review the frame or generate an answer from the same OCR, speech and caption evidence shown in Video. Text evidence is not direct image understanding.</p>
@@ -3473,7 +3482,7 @@ export function App() {
       </aside>
 
       {settingsOpen && (
-        <div className="settings-popover" role="dialog" aria-label="Settings">
+        <div ref={settingsDialogRef} className="settings-popover" role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1}>
           <div className="panel-heading">
             <strong>Settings</strong>
             <button
@@ -3487,29 +3496,14 @@ export function App() {
           </div>
           {/* <div className="settings-block">
             <span>Search coefficients</span>
-            {(Object.keys(weights) as Array<keyof typeof weights>).map(
-              (key) => (
-                <label key={key}>
-                  {key}
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={weights[key]}
-                    onChange={(event) =>
-                      updateWeight(key, Number(event.target.value))
-                    }
-                  />
-                </label>
-              ),
-            )}
+            <p className="empty-note">Ranking weights follow the active backend profile and Search source. Manual weight editing is not connected.</p>
           </div> */}
           <div className="settings-block toggles">
             <button
               type="button"
               className={useExpansion ? "active" : ""}
               onClick={() => setUseExpansion((value) => !value)}
+              aria-pressed={useExpansion}
             >
               Expansion
             </button>
@@ -3517,6 +3511,7 @@ export function App() {
               type="button"
               className={useMetadata ? "active" : ""}
               onClick={() => setUseMetadata((value) => !value)}
+              aria-pressed={useMetadata}
             >
               Metadata
             </button>
@@ -3524,6 +3519,7 @@ export function App() {
               type="button"
               className={useAgentPlanning ? "active" : ""}
               onClick={() => setUseAgentPlanning((value) => !value)}
+              aria-pressed={useAgentPlanning}
             >
               Agent plan
             </button>
@@ -3533,6 +3529,7 @@ export function App() {
               type="button"
               className={theme === "light" ? "active" : ""}
               onClick={() => setTheme("light")}
+              aria-pressed={theme === 'light'}
             >
               Light
             </button>
@@ -3540,6 +3537,7 @@ export function App() {
               type="button"
               className={theme === "dark" ? "active" : ""}
               onClick={() => setTheme("dark")}
+              aria-pressed={theme === 'dark'}
             >
               Dark
             </button>

@@ -15,12 +15,12 @@
   --border-strong: #d0d0d0;
   --text-1: #0d0d0d;
   --text-2: #5f5f5f;
-  --text-3: #686868;
+  --text-3: #626262;
   --accent: #087f5b;
   --accent-strong: #065f46;
   --accent-ring: rgba(8, 127, 91, 0.2);
   --danger: #d92d20;
-  --warning: #b7791f;
+  --warning: #946017;
   --shadow: 0 18px 55px rgba(0, 0, 0, 0.12);
   --radius: 16px;
   --radius-sm: 12px;
@@ -2426,3 +2426,8 @@ button:disabled {
 .qa-answer-panel p, .temporal-editor p { margin: 6px 0; }
 .frame-card:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 .frame-card details { position: relative; z-index: 1; }
+
+.source-filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 12px 0; }
+.source-filter-row label { display: flex; flex: 1 1 180px; flex-direction: column; gap: 5px; color: var(--text-2); font-size: 12px; }
+.source-filter-row input { color: var(--text-1); background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 8px; }
+.qa-answer-panel button, .readiness button { border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 10px; margin-top: 6px; color: var(--text-1); background: var(--bg-panel); }

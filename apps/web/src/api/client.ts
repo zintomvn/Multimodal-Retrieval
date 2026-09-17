@@ -167,11 +167,13 @@ export async function getVideoEvidence(
   focus?: {
     seconds?: number;
     frameId?: string | null;
+    resultId?: string;
   },
 ): Promise<VideoEvidence> {
   const params = new URLSearchParams();
   if (focus?.seconds !== undefined && Number.isFinite(focus.seconds)) params.set("seconds", String(focus.seconds));
   if (focus?.frameId) params.set("frame_id", focus.frameId);
+  if (focus?.resultId) params.set("result_id", focus.resultId);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return mediaCache.get(`evidence:${videoId}${suffix}`, () => requestJson<VideoEvidence>(
     `/api/media/videos/${encodeURIComponent(videoId)}/evidence${suffix}`,

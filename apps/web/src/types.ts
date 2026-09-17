@@ -18,6 +18,7 @@ export interface Dataset {
 }
 
 export interface SearchResult {
+  source_result_id?: string;
   id: string;
   rank: number;
   video_id: string;
