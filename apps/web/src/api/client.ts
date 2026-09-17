@@ -1,3 +1,4 @@
+import { requireValidExport } from "./submissionValidation";
 import type {
   Dataset,
   FrameListResponse,
@@ -227,6 +228,7 @@ export async function createAndExportSubmission(
   }>(`/api/submissions/${submission.id}/export`, {
     method: "POST",
   });
+  requireValidExport(exported.validation_report, exported.csv_uri);
   return {
     ...exported,
     downloadUrl: `${API_BASE}/api/submissions/${submission.id}/download`,

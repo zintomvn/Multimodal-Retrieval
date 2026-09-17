@@ -54,3 +54,16 @@ missing legacy `export_zip`. These existing failures are not counted as passes.
 New tests verify empty/outage search does not SELECT keyframes and persists source
 status; adapter outage raises a distinguishable failure. Server-side overall
 deadline/cancellation and finer per-source budgets are still outstanding.
+
+## G1 / A06: validate before download
+
+Export explicitly targets the current query, validates the server report and CSV
+artifact before download, and never silently falls back to local CSV on failure.
+An in-flight guard blocks duplicate export. Selection limits apply per query.
+Multi-query export remains disabled until its file contract is implemented; query
+identity/session work in G2 is still needed to distinguish multiple KIS questions.
+
+Validation: 4 web unit tests; Playwright invalid report and 503 produced zero
+downloads. Real local gallery selection/export downloaded a CSV through the API
+(`output/playwright/optimization-live-export.csv`). QA/TRAKE export fixtures and
+query-scoped session restoration still require follow-up.

@@ -1599,6 +1599,8 @@ export function App() {
       contextRequests.current.cancel();
     };
   }, [datasetId, queryType, mode]);
+  const exportInFlight = useRef(false);
+  const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState<SubmissionRow[]>([]);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
@@ -1961,7 +1963,8 @@ export function App() {
 
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      return normalizeRanks([...current, row]).slice(0, 100);
+      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
+      return normalizeRanks([...current, row]);
     });
   }
 
@@ -2033,7 +2036,8 @@ export function App() {
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      return normalizeRanks([...current, row]).slice(0, 100);
+      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
+      return normalizeRanks([...current, row]);
     });
     setTrakeFrameChoices([]);
     setStatus(`Added TRAKE sequence for ${row.video_code}`);
@@ -2626,44 +2630,30 @@ export function App() {
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      return normalizeRanks([...current, row]).slice(0, 100);
+      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
+      return normalizeRanks([...current, row]);
     });
     setStatus(
       `Added ${videoPreview.result.video_code} frame ${videoPreview.selectedFrameIdx}`,
     );
   }
 
-  function exportLocalCsv() {
-    const blob = new Blob([buildSubmissionCsv(selected)], {
-      type: "text/csv;charset=utf-8",
-    });
-    const name = csvDownloadName(exportFileName || "submission");
-    downloadCsvBlob(blob, name);
-    setStatus("CSV downloaded");
-  }
-
   async function exportSubmission() {
-    if (selected.length === 0) return;
-    setStatus("Exporting");
+    const rows = selected.filter((row) => row.query_name === queryName);
+    if (!datasetId || rows.length === 0 || exportInFlight.current) return;
+    exportInFlight.current = true;
+    setExporting(true);
+    setStatus("Validating and exporting current query");
     try {
-      if (datasetId.startsWith("mock"))
-        throw new Error("Using local mock dataset");
-      const csvName = csvDownloadName(exportFileName || "submission");
-      const name = csvName.replace(/\.csv$/i, "");
-      const exported = await createAndExportSubmission(
-        datasetId,
-        name,
-        selected,
-      );
+      const csvName = csvDownloadName(exportFileName || queryName);
+      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.csv$/i, ""), rows);
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
-      const report = exported.validation_report;
-      setStatus(
-        report.valid
-          ? "CSV downloaded"
-          : `Invalid: ${report.errors.join(", ")}`,
-      );
-    } catch {
-      exportLocalCsv();
+      setStatus(`CSV downloaded for ${queryName}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `Export failed: ${error.message}` : "Export failed. Please retry.");
+    } finally {
+      exportInFlight.current = false;
+      setExporting(false);
     }
   }
 
@@ -3332,7 +3322,7 @@ export function App() {
         <section className="selected-panel">
           <div className="panel-heading">
             <strong>Selected frames</strong>
-            <span>{selected.length}/100</span>
+            <span>{selected.filter((row) => row.query_name === queryName).length}/100 for this query</span>
           </div>
           <div className="selected-list">
             {selected.length === 0 ? (
@@ -3402,10 +3392,10 @@ export function App() {
           <button
             type="button"
             className="export-button"
-            disabled={selected.length === 0}
+            disabled={exporting || !selected.some((row) => row.query_name === queryName)}
             onClick={() => void exportSubmission()}
           >
-            Export CSV
+            {exporting ? "Exporting..." : "Export current query CSV"}
           </button>
         </section>
       </aside>
