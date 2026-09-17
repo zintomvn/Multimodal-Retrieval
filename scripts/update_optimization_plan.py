@@ -8,7 +8,8 @@ source = (root / 'docs/optimization-backlog.md').read_text(encoding='utf-8')
 
 
 def inline(text):
-    return re.sub(r'`([^`]+)`', r'<code>\1</code>', html.escape(text))
+    escaped = re.sub(r'`([^`]+)`', r'<code>\1</code>', html.escape(text))
+    return re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', escaped)
 
 
 def render(text):
@@ -55,14 +56,15 @@ for extension in ('md', 'html'):
     path = root / f'output/ui-search-optimization-plan.{extension}'
     content = path.read_text(encoding='utf-8')
     content = re.sub(r'<!-- backlog-start -->.*?<!-- backlog-end -->\s*', '', content, flags=re.S)
-    content = content.replace('ĐỀ XUẤT ĐỂ DUYỆT / 22 HẠNG MỤC', 'ĐANG TRIỂN KHAI / 21 MỤC CÒN MỞ')
+    content = content.replace('ĐANG TRIỂN KHAI / 21 MỤC CÒN MỞ', 'ĐANG TRIỂN KHAI / 18 MỤC QUA LOCAL / 4 CẦN NGHIỆM THU')
+    content = content.replace('ĐỀ XUẤT ĐỂ DUYỆT / 22 HẠNG MỤC', 'ĐANG TRIỂN KHAI / 18 MỤC QUA LOCAL / 4 CẦN NGHIỆM THU')
     content = content.replace('Trạng thái: bản kế hoạch đề xuất để duyệt, ngày 17/09/2026. Chưa triển khai thay đổi ứng dụng.', 'Trạng thái: đang triển khai từ 17/09/2026; xem bảng cập nhật trước lộ trình gốc.')
     if extension == 'md':
         block = '\n<!-- backlog-start -->\n'+source.replace('# Tình trạng', '## Tình trạng', 1)+'\n<!-- backlog-end -->\n'
         first, rest = content.split('\n', 1)
         content = first+'\n'+block+rest
     else:
-        block = '<!-- backlog-start --><details class="node" open id="current-backlog"><summary>Cập nhật triển khai / 21 mục mở + 2 việc con sửa lỗi main</summary><div class="inside">'+render(source)+'</div></details><!-- backlog-end -->'
+        block = '<!-- backlog-start --><style>#current-backlog td:first-child{white-space:nowrap;min-width:60px}#current-backlog td:nth-child(2){min-width:160px}#current-backlog td{vertical-align:top}</style><details class="node" open id="current-backlog"><summary>Cập nhật triển khai / 18 mục qua local / 4 cần nghiệm thu</summary><div class="inside">'+render(source)+'</div></details><!-- backlog-end -->'
         content = content.replace('</header>', '</header>'+block, 1)
     path.write_text(content, encoding='utf-8')
 print('Updated both plan artifacts from docs/optimization-backlog.md')
