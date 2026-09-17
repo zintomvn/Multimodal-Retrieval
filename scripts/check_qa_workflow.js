@@ -30,7 +30,20 @@ async(page)=>{
     await page.getByLabel('Search query',{exact:true}).pressSequentially(' revised');
     const renders=await page.evaluate(()=>performance.getEntriesByName('result-grid-render').length);
     assert(renders===0,`Typing rerendered grid ${renders} times`);
+    await page.locator('.frame-card').getByRole('button',{name:'Video',exact:true}).click();
+    await page.getByRole('dialog',{name:'Video preview'}).waitFor();
+    await page.evaluate(()=>performance.clearMarks('result-grid-render'));
+    for(let second=1;second<=8;second++){
+      await page.locator('video').evaluate((video,value)=>{
+        Object.defineProperty(video,'currentTime',{configurable:true,value});
+        video.dispatchEvent(new Event('timeupdate',{bubbles:true}));
+      },second);
+      await page.waitForTimeout(20);
+    }
+    const playbackRenders=await page.evaluate(()=>performance.getEntriesByName('result-grid-render').length);
+    assert(playbackRenders===0,`Playback updates rerendered grid ${playbackRenders} times`);
+    await page.keyboard.press('Escape');
     await page.screenshot({path:'output/playwright/optimization-qa-workflow.png'});
-    return {deferred:true,singlePlanning:true,manualAnswer:true,gridRendersWhileTyping:renders};
+    return {deferred:true,singlePlanning:true,manualAnswer:true,gridRendersWhileTyping:renders,gridRendersDuringPlaybackUpdates:playbackRenders};
   } finally {await page.unrouteAll({behavior:'ignoreErrors'});}
 }

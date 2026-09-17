@@ -1,6 +1,8 @@
 async (page) => {
   await page.unrouteAll({behavior:'ignoreErrors'});
   await page.goto('http://127.0.0.1:5173');
+  await page.getByRole('button',{name:'KIS Find exact scene'}).click();
+  await page.getByRole('button',{name:'New search',exact:true}).click();
   await page.locator('article').first().waitFor();
   await page.locator('article').first().getByRole('button',{name:/select|pick/i}).click();
   const expected = await page.locator('.selected-row').first().innerText();

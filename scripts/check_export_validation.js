@@ -3,6 +3,8 @@ async (page) => {
   await page.unrouteAll({behavior:'ignoreErrors'});
   await page.setViewportSize({width:1440,height:900});
   await page.goto('http://127.0.0.1:5173');
+  await page.getByRole('button',{name:'KIS Find exact scene'}).click();
+  await page.getByRole('button',{name:'New search',exact:true}).click();
   await page.locator('article').first().waitFor();
   const downloads=[];
   const listener=d=>downloads.push(d);
