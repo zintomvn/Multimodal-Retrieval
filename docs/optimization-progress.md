@@ -85,3 +85,33 @@ Finish G0 labelled retrieval/QA/TRAKE baselines, G1 A08 actual source readiness,
 server deadlines and outstanding accessibility/export contract checks. Then G2
 query persistence/identity and truthful controls, followed by G3 performance.
 G4/G5 have not started. Changes are local commits, not pushed/deployed.
+
+## Live verification after integration
+
+Reloaded only the backend started by this implementation session on 8010.
+Elasticsearch container was stopped; started this project's existing container
+and verified `keyframe_annotations` still contains 783,835 documents, without
+reimport. Other projects' containers and port 8000 were not modified.
+
+With sources down: search returned zero results, mode degraded and both sources
+unavailable, with no metadata fallback. After Elasticsearch recovery: the query
+`a man riding a motorbike` returned 5 results, text ok, semantic unavailable.
+Planning/expansion/reranking were disabled for this smoke to avoid provider calls.
+Request duration was about 5.29s, of which semantic took 4.67s and text 0.47s.
+This is one smoke observation, not a p95 or a retrieval-quality benchmark.
+Trace includes commit/history cache; raw local report is
+`data/ui-optimization/live-smoke.json`.
+
+Web build and 4 unit tests passed; browser checks cover real gallery/media/export
+and controlled outage/race/invalid export. Full backend result remains 121 passed
+and the 2 pre-existing failures documented above. Diff whitespace and credential
+pattern scan passed; no env, dataset, generated screenshots or unrelated docs
+were staged. Branch has no upstream yet.
+
+Implementation commits:
+
+- `356c20c` A20 request/stage diagnostics foundation.
+- `edee212` A01/A02 honest states and latest-request ownership.
+- `240bfff` A03 remove full-dataset fallback, expose source status.
+- `7e31b93` A06 validate current-query export before download.
+- `c45e063` A04/A17 nonblocking drawers and video-modal focus.
