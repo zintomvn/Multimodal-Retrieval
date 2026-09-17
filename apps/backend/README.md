@@ -404,6 +404,15 @@ select count(*) from events;
 | Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
 # Request diagnostics (A20)
 
+## Indexed retrieval status (A03)
+
+Search `normalized_query` adds `retrieval_mode` (`indexed` or `degraded`) and
+`source_status` for semantic/text (`ok`, `disabled`, `degraded`, `unavailable`).
+These are observed per request, not readiness probes. Failures aggregate across
+events/perspectives. Empty indexed retrieval stays empty; the full-dataset ORM
+fallback is removed. Existing strict-hybrid errors remain unchanged. An ES
+outage/missing index propagates to the service rather than masquerading as no hits.
+
 HTTP responses expose `X-Request-ID` (server-generated) and `Server-Timing`
 through CORS. Timings are milliseconds; nested stages overlap and must not be
 summed. `request` measures time to response headers, including successful search

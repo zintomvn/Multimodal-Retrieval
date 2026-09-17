@@ -1176,6 +1176,30 @@ def test_m3_blank_query_returns_http_400(tmp_path: Path) -> None:
     db.close()
 
 
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_empty_indexes_never_scan_metadata_or_invent_hits(tmp_path, monkeypatch, unavailable):
+    from sqlalchemy import event
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
+    monkeypatch.setattr(service, '_semantic_scores', lambda *a, **k: ({}, unavailable))
+    monkeypatch.setattr(service, '_text_scores', lambda *a, **k: ({}, unavailable))
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement.lower())
+    event.listen(db.get_bind(), 'before_cursor_execute', capture)
+    try:
+        response = service.search(SearchRequest(dataset_id=dataset.id, query_text='no indexed match',
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=False)))
+        assert response.results == []
+        assert response.normalized_query['retrieval_mode'] == ('degraded' if unavailable else 'indexed')
+        assert response.normalized_query['source_status']['text'] == ('unavailable' if unavailable else 'ok')
+        assert not any('from keyframes' in sql for sql in statements)
+        saved = service.get_run(response.query_run_id)
+        assert saved.normalized_query['source_status'] == response.normalized_query['source_status']
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', capture)
+        db.close()
+
+
 def test_m3_invalid_time_range_returns_http_400(tmp_path: Path) -> None:
     db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
 

@@ -111,6 +111,8 @@ export interface SearchResponse {
     raw_temporal_events?: string[];
     profile?: string;
     latency_ms?: number;
+    retrieval_mode?: "indexed" | "degraded";
+    source_status?: Record<string, "ok" | "disabled" | "degraded" | "unavailable">;
     agent_query_plan?: {
       source?: string;
       language?: string;

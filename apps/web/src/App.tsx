@@ -2145,7 +2145,9 @@ export function App() {
       }
       setResults(nextResults);
       setStatus(
-        nextResults.length > 0
+        response.normalized_query.retrieval_mode === "degraded"
+          ? `Partial search: ${Object.entries(response.normalized_query.source_status ?? {}).filter(([, state]) => state === "degraded" || state === "unavailable").map(([name]) => name).join(", ")} unavailable. ${nextResults.length} results from available sources.`
+          : nextResults.length > 0
           ? `${nextResults.length} results`
           : queryType === "TRAKE"
             ? "No complete ordered sequence found"

@@ -38,3 +38,19 @@ p95 525.68ms; exact video lookup median 16.52ms, p95 31.43ms. First requests
 2417.36ms and 18.84ms respectively. These are baseline measurements, not gains;
 the old three-sample lookup result is not representative of this exact query.
 Raw local report: `data/ui-optimization/baseline.json`.
+
+## G1 / A03: remove unbounded metadata fallback
+
+Removed full-dataset frame/annotation ranking on empty indexed candidates. No-match
+returns empty; source failures remain visible through additive retrieval_mode and
+source_status fields. Elasticsearch exceptions/missing index no longer become
+successful empty hits. Strict hybrid behavior remains compatible. The web labels
+partial search results. No new replacement lexical index or reimport was needed.
+
+Validation: full backend suite 121 passed / 2 failed. Both failures reproduced on
+untouched base SHA in detached worktree `../Multimodal-Retrieval-baseline-20260917`:
+TRAKE test expects OCR calls although heuristic disables OCR; submission test calls
+missing legacy `export_zip`. These existing failures are not counted as passes.
+New tests verify empty/outage search does not SELECT keyframes and persists source
+status; adapter outage raises a distinguishable failure. Server-side overall
+deadline/cancellation and finer per-source budgets are still outstanding.

@@ -128,12 +128,14 @@ class RetrievalService:
         self._map_keyframes_cache: dict[str, dict[int, dict[str, Any]] | None] = {}
         self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
         self._text_hit_sources: dict[str, dict[str, Any]] = {}
+        self._source_status: dict[str, str] = {}
 
     @timed("search")
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
             raise ValueError("query_text must not be empty")
 
+        self._source_status = {}
         started_at = perf_counter()
         dataset = self._resolve_dataset(request.dataset_id)
         normalized = self._normalize_query(request)
@@ -162,7 +164,10 @@ class RetrievalService:
                 results = self._search_frame_level(run, dataset, request, normalized)
             run.status = "DONE"
             latency_ms = int((perf_counter() - started_at) * 1000)
-            normalized = {**normalized, "latency_ms": latency_ms}
+            degraded = any(value in {"degraded", "unavailable"} for value in self._source_status.values())
+            normalized = {**normalized, "latency_ms": latency_ms,
+                          "source_status": dict(self._source_status),
+                          "retrieval_mode": "degraded" if degraded else "indexed"}
             # Re-assign JSON fields so SQLAlchemy persists updated values reliably.
             run.normalized_query = normalized
             run.options = {**(run.options or {}), "latency_ms": latency_ms}
@@ -1669,6 +1674,15 @@ class RetrievalService:
         else:
             text_scores, text_backend_error = {}, False
 
+        # Aggregate across perspectives/events; never erase an earlier failure.
+        for name, error, scores, enabled in (
+            ("semantic", semantic_backend_error, semantic_scores, True),
+            ("text", text_backend_error, text_scores, options.use_metadata),
+        ):
+            state = "disabled" if not enabled else ("degraded" if scores else "unavailable") if error else "ok"
+            if self._source_status.get(name) not in {"degraded", "unavailable"}:
+                self._source_status[name] = state
+
         if options.strict_hybrid and (semantic_backend_error or text_backend_error):
             failed_backends: list[str] = []
             if semantic_backend_error:
@@ -1687,21 +1701,9 @@ class RetrievalService:
                 raise ValueError(
                     "strict_hybrid is enabled and hybrid retrieval returned no candidates; fallback ranking is disabled."
                 )
-            return self._fallback_rank_frames(
-                dataset=dataset,
-                variants=text_variants,
-                query_text=query_text,
-                profile=profile,
-                semantic_weight=semantic_weight,
-                text_weight=text_weight,
-                quality_weight=quality_weight,
-                rrf_enabled=rrf_enabled,
-                rrf_k=rrf_k,
-                rrf_blend=rrf_blend,
-                rrf_semantic_weight=rrf_semantic_weight,
-                rrf_text_weight=rrf_text_weight,
-                options=options,
-            )
+            # Empty indexed retrieval must remain empty. Scanning metadata here
+            # invents visual scores and makes no-match latency scale with dataset.
+            return []
 
         load_options = [joinedload(Frame.video)]
         if self._needs_frame_annotations(options):
@@ -2160,93 +2162,6 @@ class RetrievalService:
         if value:
             return value[:240]
         return ""
-
-    @timed("fallback")
-    def _fallback_rank_frames(
-        self,
-        dataset: Dataset,
-        variants: list[str],
-        query_text: str,
-        profile: dict[str, Any],
-        semantic_weight: float,
-        text_weight: float,
-        quality_weight: float,
-        rrf_enabled: bool,
-        rrf_k: float,
-        rrf_blend: float,
-        rrf_semantic_weight: float,
-        rrf_text_weight: float,
-        options: SearchOptions,
-    ) -> list[FrameScore]:
-        frames = (
-            self.db.query(Frame)
-            .options(joinedload(Frame.video), selectinload(Frame.annotations))
-            .join(Frame.video)
-            .filter(Video.dataset_id == dataset.id)
-            .all()
-        )
-        filtered_frames, filter_debug = self._apply_filters(frames, options)
-        if not filtered_frames:
-            return []
-
-        overlap_scores = {
-            frame.keyframe_id: max(cosine_like_overlap(variant, self._frame_text(frame)) for variant in variants)
-            for frame in filtered_frames
-        }
-        overlap_rank_map = self._rank_map(overlap_scores, set(overlap_scores))
-
-        intermediate: list[dict[str, Any]] = []
-        max_rrf_raw = 0.0
-        for frame in filtered_frames:
-            overlap_score = overlap_scores.get(frame.keyframe_id, 0.0)
-            quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
-            weighted_score = (
-                semantic_weight * overlap_score
-                + text_weight * overlap_score
-                + quality_weight * quality_score
-            )
-            rrf_raw = 0.0
-            if rrf_enabled:
-                overlap_rank = overlap_rank_map.get(frame.keyframe_id)
-                overlap_rrf = (1.0 / (rrf_k + overlap_rank)) if overlap_rank else 0.0
-                rrf_raw = (rrf_semantic_weight + rrf_text_weight) * overlap_rrf
-                max_rrf_raw = max(max_rrf_raw, rrf_raw)
-            intermediate.append(
-                {
-                    "frame": frame,
-                    "overlap_score": overlap_score,
-                    "quality_score": quality_score,
-                    "weighted_score": weighted_score,
-                    "rrf_raw": rrf_raw,
-                }
-            )
-
-        scored: list[FrameScore] = []
-        for item in intermediate:
-            frame = item["frame"]
-            rrf_score = (item["rrf_raw"] / max_rrf_raw) if rrf_enabled and max_rrf_raw > 0 else 0.0
-            final_score = (
-                (1.0 - rrf_blend) * item["weighted_score"] + rrf_blend * rrf_score
-                if rrf_enabled
-                else item["weighted_score"]
-            )
-            scored.append(
-                FrameScore(
-                    frame=frame,
-                    semantic_score=item["overlap_score"],
-                    text_score=item["overlap_score"],
-                    quality_score=item["quality_score"],
-                    weighted_score=item["weighted_score"],
-                    rrf_score=rrf_score,
-                    final_score=final_score,
-                    filter_debug=filter_debug.get(frame.keyframe_id, {}),
-                    source_hit={},
-                    text_hit={},
-                )
-            )
-        scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
-        return self._diversify_ranked_frames(reranked, profile)
 
     def _apply_reranking(
         self,

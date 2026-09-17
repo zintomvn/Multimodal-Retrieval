@@ -57,13 +57,15 @@ class ElasticsearchTextSearchClient:
             response = self.client.search(
                 index=index,
                 size=top_k,
-                ignore_unavailable=True,
+                ignore_unavailable=False,
                 request_timeout=3,
                 query=query_body,
             )
-        except Exception:  # noqa: BLE001 - text search is optional in hybrid retrieval.
-            logger.warning("Elasticsearch search failed for index '%s'; returning no text hits.", index, exc_info=True)
-            return []
+        except Exception as exc:
+            # The retrieval service decides whether partial results are allowed.
+            # An unavailable index is not a successful query with zero matches.
+            logger.warning("Elasticsearch search unavailable for index '%s'.", index)
+            raise RuntimeError("Text search is unavailable") from exc
         return [
             TextHit(id=hit["_id"], score=float(hit["_score"]), metadata=hit.get("_source", {}))
             for hit in response.get("hits", {}).get("hits", [])
