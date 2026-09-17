@@ -1,4 +1,10 @@
 export type QueryType = "KIS" | "QA" | "TRAKE";
+// Additive HTTP diagnostics; durations are milliseconds and stages may overlap.
+export interface ApiDiagnostics {
+  requestId: string | null;
+  serverTiming: string | null;
+  clientDurationMs: number;
+}
 export type VisualSearchMode = "openclip" | "siglip2" | "both";
 
 export interface Dataset {

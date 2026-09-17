@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import REPO_ROOT, get_settings
+from app.core.telemetry import stage, timed
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video, new_id
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
@@ -128,6 +129,7 @@ class RetrievalService:
         self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
         self._text_hit_sources: dict[str, dict[str, Any]] = {}
 
+    @timed("search")
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
             raise ValueError("query_text must not be empty")
@@ -164,7 +166,8 @@ class RetrievalService:
             # Re-assign JSON fields so SQLAlchemy persists updated values reliably.
             run.normalized_query = normalized
             run.options = {**(run.options or {}), "latency_ms": latency_ms}
-            self.db.commit()
+            with stage("commit"):
+                self.db.commit()
         except Exception:
             self.db.rollback()
             try:
@@ -213,6 +216,7 @@ class RetrievalService:
         self.db.commit()
         return updated
 
+    @timed("history_cache")
     def _cache_search_history(self, response: SearchResponse) -> None:
         redis_url = (self.settings.redis_url or "").strip()
         if not redis_url:
@@ -246,6 +250,7 @@ class RetrievalService:
         with path.open("r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
 
+    @timed("dataset")
     def _resolve_dataset(self, dataset_id: str | None) -> Dataset:
         if dataset_id:
             dataset = self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -256,6 +261,7 @@ class RetrievalService:
         return dataset
 
     # Get request and return a normalized query dict with multi-view variants, temporal events, and retrieval weights.
+    @timed("planning")
     def _normalize_query(self, request: SearchRequest) -> dict[str, Any]:
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
         expansion_profile = profile.get("query_expansion", {})
@@ -1597,6 +1603,7 @@ class RetrievalService:
             items.append(self._result_to_item(result))
         return items
 
+    @timed("ranking")
     def _rank_frames(
         self,
         dataset: Dataset,
@@ -1778,6 +1785,7 @@ class RetrievalService:
         reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
         return self._diversify_ranked_frames(reranked, profile)
 
+    @timed("semantic")
     def _semantic_scores(
         self,
         variants: list[str],
@@ -2055,6 +2063,7 @@ class RetrievalService:
             return "siglip2"
         return "openclip"
 
+    @timed("text")
     def _text_scores(
         self,
         lexical_variants: list[str],
@@ -2152,6 +2161,7 @@ class RetrievalService:
             return value[:240]
         return ""
 
+    @timed("fallback")
     def _fallback_rank_frames(
         self,
         dataset: Dataset,

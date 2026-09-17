@@ -402,3 +402,17 @@ select count(*) from events;
 | Export ZIP invalid | Gọi `/api/submissions/{id}/validate` để xem `errors`. |
 | Model thật không load | Kiểm tra `checkpoint_uri`, `device`, dependency GPU và adapter init. |
 | Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
+# Request diagnostics (A20)
+
+HTTP responses expose `X-Request-ID` (server-generated) and `Server-Timing`
+through CORS. Timings are milliseconds; nested stages overlap and must not be
+summed. `request` measures time to response headers, including successful search
+commit and synchronous history cache. It excludes network transfer and browser
+rendering. `search` includes those persistence/cache stages; the legacy
+`normalized_query.latency_ms` remains pre-commit for compatibility.
+
+Available retrieval spans: dataset, planning, ranking, semantic, text, fallback,
+commit, history_cache, search. Planning includes normalization/expansion;
+semantic includes embedding/vector calls. Finer provider/QA breakdown remains
+follow-up work. Repeated stages aggregate duration and log call counts. Logs
+contain IDs, status and durations, not request bodies, queries or credentials.

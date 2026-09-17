@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.telemetry import RequestTimingMiddleware
 from app.db.bootstrap import init_db
 from app.db.session import warm_database
 from app.modules.datasets.router import router as datasets_router
@@ -28,6 +29,7 @@ async def lifespan(_: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title="Multimodal Retrieval Assistant API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(RequestTimingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +37,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Server-Timing"],
 )
 
 app.include_router(datasets_router)
