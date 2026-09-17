@@ -10,6 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.deps import get_model_registry_service
+from app.adapters.model_runtime.openai_compatible import OpenAICompatibleTextEmbedder
 from app.modules.models.service import ModelRegistryService
 
 
@@ -54,6 +55,46 @@ def test_model_runtime_uses_openai_compatible_entries_when_enabled(monkeypatch) 
     assert getattr(svc.embedder, "l2_normalize", False) is True
     assert svc.query_expander.__class__.__name__ == "OpenAICompatibleQueryExpander"
     assert svc.visual_qa.__class__.__name__ == "OpenAICompatibleVisualQaModel"
+
+
+def test_model_runtime_uses_configured_base_url_environment_variable(monkeypatch) -> None:
+    registry = {
+        "embedders": {
+            "qwen3_vl_embedding": {
+                "task": "multimodal_embedding",
+                "provider": "openai_compatible",
+                "base_url": "http://localhost:8004/v1",
+                "base_url_env": "TEST_QWEN3_VL_BASE_URL",
+                "model": "Qwen/Qwen3-VL-Embedding-2B",
+                "dim": 2048,
+                "timeout_s": 60,
+                "max_retries": 3,
+                "enabled": True,
+            }
+        }
+    }
+    monkeypatch.setenv("TEST_QWEN3_VL_BASE_URL", "https://embedding.example/v1")
+    monkeypatch.setattr(ModelRegistryService, "load_registry", staticmethod(lambda _: registry))
+    get_model_registry_service.cache_clear()
+
+    svc = get_model_registry_service()
+    embedder = svc.embedders["qwen3_vl_embedding"]
+
+    assert getattr(embedder, "base_url", None) == "https://embedding.example/v1"
+    assert getattr(embedder, "timeout_s", None) == 60
+    assert getattr(embedder, "max_retries", None) == 3
+
+
+@pytest.mark.parametrize("vector", [[], [float("nan")], [float("inf")]])
+def test_openai_compatible_embedder_rejects_invalid_vectors(monkeypatch, vector: list[float]) -> None:
+    embedder = OpenAICompatibleTextEmbedder(
+        base_url="https://embedding.example/v1",
+        model="test-model",
+    )
+    monkeypatch.setattr(embedder, "_post", lambda *_args, **_kwargs: {"data": [{"index": 0, "embedding": vector}]})
+
+    with pytest.raises(ValueError, match="empty or contains NaN/Inf"):
+        embedder.embed_text("test")
 
 
 def test_model_runtime_uses_siglip2_embedder_when_enabled(monkeypatch) -> None:

@@ -32,6 +32,21 @@ embedders:
     extractor_version: siglip2-so400m16-384-webli-openclip-1152-v1
     enabled: true
     description: "Fine-grained SigLIP2 1152-dim text encoder for Vortex-style CLIP+SigLIP2 RRF fusion."
+  qwen3_vl_embedding_2b_2048_v1:
+    task: multimodal_embedding
+    provider: openai_compatible
+    base_url: http://localhost:8004/v1
+    base_url_env: QWEN3_VL_EMBEDDING_BASE_URL
+    api_key_env: QWEN3_VL_EMBEDDING_API_KEY
+    model: Qwen/Qwen3-VL-Embedding-2B
+    dim: 2048
+    l2_normalize: true
+    timeout_s: 60
+    max_retries: 2
+    collection: keyframe_embeddings_qwen3_vl_embedding_2b_2048_v1
+    extractor_version: qwen3-vl-embedding-2b-2048-v1
+    enabled: true
+    description: "Qwen3-VL-Embedding-2B text/image encoder for controlled embedding ablations."
   pe_core_bigg_14_448:
     task: multimodal_embedding
     provider: openclip

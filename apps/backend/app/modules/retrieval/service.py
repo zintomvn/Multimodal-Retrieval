@@ -261,10 +261,14 @@ class RetrievalService:
         query_text = request.query_text.strip()
         semantic_variants = [query_text]
         text_variants = [query_text]
+        explicit_semantic_views = self._dedupe_query_variants(
+            request.options.semantic_views,
+            max_variants=8,
+        )
         temporal_kis = request.query_type == "KIS" and request.options.temporal_mode
         query_planner = self._planner_for_request(request)
         agent_plan = None
-        if request.options.use_agent_query_planning or temporal_kis:
+        if (request.options.use_agent_query_planning and not explicit_semantic_views) or temporal_kis:
             if temporal_kis:
                 try:
                     agent_plan = query_planner.plan(
@@ -301,16 +305,19 @@ class RetrievalService:
             [*text_variants, *self._metadata_query_cues(query_text)],
             max_variants=max_variants,
         )
-        if request.options.use_query_expansion and expansion_default_enabled and not temporal_kis:
+        if request.options.use_query_expansion and expansion_default_enabled and not temporal_kis and not explicit_semantic_views:
             semantic_variants = self._dedupe_query_variants(
                 [*semantic_variants, *self._expand_query_variants(query_text, max_variants=max_variants)],
                 max_variants=max_variants,
             )
-        semantic_variants = self._english_semantic_variants(
-            query_text,
-            semantic_variants,
-            max_variants=max_variants,
-        )
+        if explicit_semantic_views:
+            semantic_variants = explicit_semantic_views
+        else:
+            semantic_variants = self._english_semantic_variants(
+                query_text,
+                semantic_variants,
+                max_variants=max_variants,
+            )
         temporal_parse = self._parse_temporal_events(query_text)
         temporal_events, temporal_source = self._resolve_temporal_events(request, agent_plan, temporal_parse)
         text_temporal_events = self._text_temporal_events(request, temporal_parse, temporal_events, agent_plan)
@@ -865,18 +872,32 @@ class RetrievalService:
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
         
-        candidates = self._rank_frames(
-            dataset=dataset,
-            semantic_variants=normalized["semantic_variants"],
-            text_variants=normalized["text_variants"],
-            query_text=request.query_text,
-            profile_name=request.profile,
-            options=request.options,
-            top_k=request.top_k,
-            retrieval_weights=normalized.get("retrieval_weights"),
-            use_agent_retrieval_weights=normalized.get("retrieval_weight_source") == "agent",
-            text_source_weights=normalized.get("text_source_weights"),
+        use_multiperspective = (
+            request.options.semantic_fusion == "multiperspective"
+            and len(normalized["semantic_variants"]) > 1
         )
+        ranker = self._rank_frames_multiperspective if use_multiperspective else self._rank_frames
+        ranker_kwargs = {
+            "dataset": dataset,
+            "query_text": request.query_text,
+            "profile_name": request.profile,
+            "options": request.options,
+            "top_k": request.top_k,
+            "retrieval_weights": normalized.get("retrieval_weights"),
+            "use_agent_retrieval_weights": normalized.get("retrieval_weight_source") == "agent",
+            "text_source_weights": normalized.get("text_source_weights"),
+        }
+        if use_multiperspective:
+            ranker_kwargs.update(
+                semantic_views=normalized["semantic_variants"],
+                text_views=normalized["semantic_variants"],
+            )
+        else:
+            ranker_kwargs.update(
+                semantic_variants=normalized["semantic_variants"],
+                text_variants=normalized["text_variants"],
+            )
+        candidates = ranker(**ranker_kwargs)
         qa_frames_by_id: dict[str, Frame] = {}
         if request.query_type == "QA" and candidates:
             top_frame_ids = [candidate.frame.id for candidate in candidates[: request.top_k]]
@@ -1900,7 +1921,9 @@ class RetrievalService:
             return "openclip"
         if mode in {"siglip", "siglip_2"}:
             return "siglip2"
-        if mode in {"profile", "openclip", "siglip2", "both"}:
+        if mode in {"qwen", "qwen3", "qwen3_vl", "qwen3-vl"}:
+            return "qwen3_vl"
+        if mode in {"profile", "openclip", "siglip2", "qwen3_vl", "both"}:
             return mode
         return "profile"
 
@@ -1910,6 +1933,8 @@ class RetrievalService:
             return {"openclip"}
         if mode == "siglip2":
             return {"siglip2"}
+        if mode == "qwen3_vl":
+            return {"qwen3_vl"}
         if mode == "both":
             return {"openclip", "siglip2"}
         return None
@@ -1936,6 +1961,8 @@ class RetrievalService:
         haystack = " ".join(parts).lower()
         if "siglip2" in haystack or "siglip-2" in haystack:
             return "siglip2"
+        if "qwen3-vl" in haystack or "qwen3_vl" in haystack:
+            return "qwen3_vl"
         return "openclip"
 
     def _text_scores(

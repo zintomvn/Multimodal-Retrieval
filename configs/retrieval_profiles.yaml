@@ -125,6 +125,59 @@ semantic_fast:
     delta_t_max_ms: 120000
     min_match_ratio: 0.67
 
+embedding_ablation:
+  semantic_weight: 1.0
+  metadata_weight: 0.0
+  temporal_weight: 0.0
+  user_boost_weight: 0.0
+  rrf:
+    enabled: false
+    k: 60
+  visual_rrf:
+    enabled: false
+    k: 60
+  visual_models:
+    openclip:
+      model_key: clip_vith14_quickgelu_dfn5b_v2
+      collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+      weight: 1.0
+      enabled: true
+    siglip2:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+      weight: 1.0
+      enabled: true
+    qwen3_vl:
+      model_key: qwen3_vl_embedding_2b_2048_v1
+      collection: keyframe_embeddings_qwen3_vl_embedding_2b_2048_v1
+      weight: 1.0
+      enabled: true
+  query_expansion:
+    enabled_default: false
+    max_variants: 7
+  result_diversification:
+    enabled: false
+    max_frames_per_video: 100
+    min_frame_gap_ms: 0
+    min_frame_gap: 0
+    candidate_pool_multiplier: 10
+    min_candidate_pool: 1000
+    max_candidate_pool: 1000
+  milvus:
+    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
+    model_key: clip_vith14_quickgelu_dfn5b_v2
+    weight: 1.0
+    top_k_per_model: 1000
+    final_top_k: 100
+  metadata:
+    ocr_boost: 0.0
+    asr_boost: 0.0
+    object_boost: 0.0
+    caption_boost: 0.0
+    text_source_weights: {asr: 0.0, caption: 0.0, ocr: 0.0}
+  reranking:
+    enabled: false
+
 competition_mvp_v1:
   semantic_weight: 0.70
   metadata_weight: 0.20

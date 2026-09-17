@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 QueryType = Literal["KIS", "QA", "TRAKE", "IMAGE", "FREEFORM"]
-VisualSearchMode = Literal["profile", "openclip", "siglip2", "both"]
+VisualSearchMode = Literal["profile", "openclip", "siglip2", "qwen3_vl", "both"]
+SemanticFusionMode = Literal["max_similarity", "multiperspective"]
 AgentModel = Literal["gpt-4o", "gpt-5-nano", "gpt-5.6-luna"]
 
 
@@ -18,6 +19,8 @@ class SearchOptions(BaseModel):
     use_reranker: bool = True
     strict_hybrid: bool = False
     visual_search_mode: VisualSearchMode = "profile"
+    semantic_views: list[str] = Field(default_factory=list, max_length=8)
+    semantic_fusion: SemanticFusionMode = "max_similarity"
     delta_t_max_ms: int = 180000
     min_match: int | None = None
     temporal_events: list[str] = Field(default_factory=list)

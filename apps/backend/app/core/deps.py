@@ -111,7 +111,7 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
         return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
     def embedder_base_url(embedder_name: str, embedder_cfg: dict[str, Any]) -> str:
-        env_name = f"{embedder_name.upper()}_BASE_URL"
+        env_name = str(embedder_cfg.get("base_url_env", "")).strip() or f"{embedder_name.upper()}_BASE_URL"
         base_url = os.getenv(env_name, "").strip()
         if not base_url and embedder_name.startswith("clip_"):
             base_url = os.getenv("CLIP_EMBEDDING_BASE_URL", "").strip()
@@ -140,6 +140,8 @@ def get_model_registry_service():  # noqa: ANN201 — avoids circular import wit
                     api_key=api_key(embedder_cfg),
                     expected_dim=configured_dim if configured_dim > 0 else None,
                     l2_normalize=bool_value(embedder_cfg.get("l2_normalize"), default=False),
+                    timeout_s=float(embedder_cfg.get("timeout_s", 15.0)),
+                    max_retries=int(embedder_cfg.get("max_retries", 2)),
                 )
             else:
                 raise RuntimeError(f"Enabled embedder '{embedder_name}' is missing base_url/model.")

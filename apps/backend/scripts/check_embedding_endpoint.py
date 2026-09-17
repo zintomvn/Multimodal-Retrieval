@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 
 import httpx
@@ -12,9 +13,11 @@ import httpx
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify embedding endpoint model/dim/normalization.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
+    parser.add_argument("--base-url-env", default="", help="Read the base URL from this environment variable.")
     parser.add_argument("--model", default="ViT-H-14-quickgelu-dfn5b")
     parser.add_argument("--expected-dim", type=int, default=1024)
     parser.add_argument("--timeout-s", type=float, default=15.0)
+    parser.add_argument("--api-key-env", default="", help="Read a Bearer token from this environment variable.")
     parser.add_argument("--skip-norm-check", action="store_true")
     return parser.parse_args()
 
@@ -25,9 +28,26 @@ def vector_norm(values: list[float]) -> float:
 
 def main() -> int:
     args = parse_args()
+    try:
+        from dotenv import load_dotenv
 
-    with httpx.Client(timeout=args.timeout_s) as client:
-        models_resp = client.get(f"{args.base_url}/models")
+        load_dotenv()
+    except ImportError:
+        pass
+
+    base_url = os.getenv(args.base_url_env, "").strip() if args.base_url_env else args.base_url
+    if args.base_url_env and not base_url:
+        print(json.dumps({"ok": False, "reason": "missing_base_url_env", "env": args.base_url_env}))
+        return 1
+    base_url = base_url.rstrip("/")
+    api_key = os.getenv(args.api_key_env, "").strip() if args.api_key_env else ""
+    if args.api_key_env and not api_key:
+        print(json.dumps({"ok": False, "reason": "missing_api_key_env", "env": args.api_key_env}))
+        return 1
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    with httpx.Client(timeout=args.timeout_s, headers=headers) as client:
+        models_resp = client.get(f"{base_url}/models")
         models_resp.raise_for_status()
         models = models_resp.json()
         available = {str(item.get("id")) for item in models.get("data", []) if isinstance(item, dict)}
@@ -47,7 +67,7 @@ def main() -> int:
             return 1
 
         payload = {"model": args.model, "input": "nguoi phu nu mac ao do"}
-        emb_resp = client.post(f"{args.base_url}/embeddings", json=payload)
+        emb_resp = client.post(f"{base_url}/embeddings", json=payload)
         emb_resp.raise_for_status()
         body = emb_resp.json()
         data = body.get("data") or []

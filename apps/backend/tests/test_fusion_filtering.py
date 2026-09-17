@@ -333,6 +333,61 @@ def test_visual_search_mode_selects_siglip2_and_fuses_both_with_rrf(tmp_path: Pa
     db.close()
 
 
+def test_explicit_semantic_views_use_independent_multiperspective_fusion(tmp_path: Path) -> None:
+    db, service, dataset = _build_fixture(tmp_path)
+    views = ["chef pours egg into soup", "chef cuts tofu above the pot"]
+    response = service.search(
+        SearchRequest(
+            dataset_id=dataset.dataset_id,
+            query_type="KIS",
+            query_name="frozen-perspectives",
+            query_text="long original KIS query",
+            profile="m4_weighted",
+            top_k=3,
+            options=SearchOptions(
+                use_query_expansion=False,
+                use_agent_query_planning=False,
+                use_metadata=False,
+                use_reranker=False,
+                semantic_views=views,
+                semantic_fusion="multiperspective",
+            ),
+        )
+    )
+
+    assert response.normalized_query["semantic_variants"] == views
+    fusion = response.results[0].score_breakdown["semantic_hit"]["multiperspective_fusion"]
+    assert fusion["strategy"] == "aithena_independent_view_merge"
+    assert fusion["total_views"] == 2
+    assert {item["semantic_query"] for item in fusion["matched_view_details"]} == set(views)
+    db.close()
+
+
+def test_qwen3_vl_visual_mode_selects_only_qwen_collection(tmp_path: Path) -> None:
+    db, service, _dataset = _build_fixture(tmp_path)
+    service.model_registry.registry = {
+        "embedders": {
+            "qwen3_vl_embedding_2b_2048_v1": {
+                "provider": "openai_compatible",
+                "model": "Qwen/Qwen3-VL-Embedding-2B",
+                "collection": "qwen3_vectors",
+            },
+            "clip_vith14": {
+                "provider": "openai_compatible",
+                "model": "ViT-H-14",
+                "collection": "clip_vectors",
+            },
+        }
+    }
+
+    collections = service._semantic_collections({}, "qwen3_vl")
+
+    assert [(item.model_key, item.collection) for item in collections] == [
+        ("qwen3_vl_embedding_2b_2048_v1", "qwen3_vectors")
+    ]
+    db.close()
+
+
 def test_result_diversification_prioritizes_videos_and_separated_frames(tmp_path: Path) -> None:
     db, service, _dataset = _build_fixture(tmp_path)
     frames = {frame.keyframe_id: frame for frame in db.query(Frame).all()}

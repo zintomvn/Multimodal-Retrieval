@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from typing import Any
 
 import httpx
@@ -18,6 +19,7 @@ class OpenAICompatibleTextEmbedder(TextImageEmbedder):
         timeout_s: float = 15.0,
         expected_dim: int | None = None,
         l2_normalize: bool = False,
+        max_retries: int = 2,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -25,6 +27,7 @@ class OpenAICompatibleTextEmbedder(TextImageEmbedder):
         self.timeout_s = timeout_s
         self.expected_dim = expected_dim
         self.l2_normalize = l2_normalize
+        self.max_retries = max(0, int(max_retries))
 
     def embed_text(self, text: str) -> list[float]:
         values = self.embed_texts([text])
@@ -52,6 +55,8 @@ class OpenAICompatibleTextEmbedder(TextImageEmbedder):
             if not isinstance(vector, list):
                 raise ValueError(f"Embedding response for model '{self.model}' has no vector.")
             values = [float(value) for value in vector]
+            if not values or not all(math.isfinite(value) for value in values):
+                raise ValueError(f"Embedding response for model '{self.model}' is empty or contains NaN/Inf.")
             if self.expected_dim and len(values) != self.expected_dim:
                 raise ValueError(
                     f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(values)} for model '{self.model}'."
@@ -68,16 +73,30 @@ class OpenAICompatibleTextEmbedder(TextImageEmbedder):
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        with httpx.Client(timeout=self.timeout_s) as client:
-            response = client.post(f"{self.base_url}{path}", headers=headers, json=payload)
-        response.raise_for_status()
-        body = response.json()
-        return body if isinstance(body, dict) else {}
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.Client(timeout=self.timeout_s) as client:
+                    response = client.post(f"{self.base_url}{path}", headers=headers, json=payload)
+                if response.status_code not in {408, 429} and response.status_code < 500:
+                    response.raise_for_status()
+                    body = response.json()
+                    if not isinstance(body, dict):
+                        raise ValueError(f"Embedding endpoint for model '{self.model}' returned a non-object response.")
+                    return body
+                response.raise_for_status()
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                retryable = isinstance(exc, httpx.RequestError) or exc.response.status_code in {408, 429} or exc.response.status_code >= 500
+                if not retryable or attempt >= self.max_retries:
+                    raise
+                time.sleep(0.25 * (2**attempt))
+        raise RuntimeError(f"Embedding endpoint for model '{self.model}' failed after retries.") from last_error
 
     def _normalize(self, vector: list[float]) -> list[float]:
         norm = math.sqrt(sum(value * value for value in vector))
         if norm <= 0:
-            return vector
+            raise ValueError(f"Embedding response for model '{self.model}' has zero norm.")
         return [value / norm for value in vector]
 
 
