@@ -22,6 +22,7 @@ def answer_result(result_id: str, db: Session = Depends(get_db), registry=Depend
         return {'answer': result.answer, 'evidence': result.score_breakdown['qa_evidence'], 'mode': 'text_evidence'}
     frame = result.frame
     payload = _video_evidence_payload(result.video_id, anchor_frame_id=frame.id,
+        index_version=(result.score_breakdown.get('text_hit') or {}).get('index_version'),
         anchor_seconds=float(frame.frame_seconds) if frame.frame_seconds is not None else None)
     evidence = [{**item, 'source': source} for source, items in payload['evidence'].items() for item in items]
     if not evidence:

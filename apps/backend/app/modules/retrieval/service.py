@@ -2179,6 +2179,7 @@ class RetrievalService:
             "field": {"asr": "asr_text", "caption": "caption", "ocr": "ocr_texts"}.get(expected_source, "metadata"),
             "text_source_weights": source_weights,
             "snippet": self._text_hit_snippet(metadata),
+            "index_version": metadata.get('_index'),
         }
 
     def _text_hit_snippet(self, metadata: dict[str, Any]) -> str:

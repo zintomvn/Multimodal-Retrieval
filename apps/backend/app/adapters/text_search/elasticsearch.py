@@ -28,7 +28,7 @@ class ElasticsearchTextSearchClient:
             if item.get("error") or item.get("timed_out") or item.get("_shards", {}).get("failed",0):
                 results.append(RuntimeError("Text source query failed"))
             else:
-                results.append([TextHit(id=h['_id'],score=float(h['_score']),metadata=h.get('_source',{})) for h in item.get('hits',{}).get('hits',[])])
+                results.append([TextHit(id=h['_id'],score=float(h['_score']),metadata={**h.get('_source',{}), '_index':h.get('_index',index)}) for h in item.get('hits',{}).get('hits',[])])
         if len(results) != len(requests):
             raise RuntimeError("Text batch returned incomplete results")
         return results
@@ -89,7 +89,7 @@ class ElasticsearchTextSearchClient:
             logger.warning("Elasticsearch search unavailable for index '%s'.", index)
             raise RuntimeError("Text search is unavailable") from exc
         return [
-            TextHit(id=hit["_id"], score=float(hit["_score"]), metadata=hit.get("_source", {}))
+            TextHit(id=hit["_id"], score=float(hit["_score"]), metadata={**hit.get("_source", {}), '_index':hit.get('_index',index)})
             for hit in response.get("hits", {}).get("hits", [])
         ]
 

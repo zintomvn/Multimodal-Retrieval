@@ -407,6 +407,7 @@ def _video_evidence_payload(
     anchor_seconds: float | None = None,
     anchor_frame_id: str | None = None,
     per_source_limit: int = 5,
+    index_version: str | None = None,
 ) -> dict:
     """Return only annotations aligned to the selected indexed frame."""
     empty = {"asr": [], "ocr": [], "captions": []}
@@ -437,7 +438,7 @@ def _video_evidence_payload(
 
     try:
         response = es_client.search(
-            index=annotation_index(),
+            index=index_version or annotation_index(),
             size=120 if should else 0,
             request_timeout=5,
             query=query,
@@ -510,7 +511,7 @@ def _video_evidence_payload(
             items,
             key=lambda item: item.get("start_seconds") if item.get("start_seconds") is not None else float("inf"),
         )[: max(1, min(per_source_limit, 8))]
-    return {"video_id": video_id, "evidence": buckets}
+    return {"video_id": video_id, "evidence": buckets, 'index_version':index_version or annotation_index()}
 
 
 def _video_fps(video: Video, db: Session) -> float | None:
@@ -567,7 +568,9 @@ def list_frames(
     if present_only:
         query = query.filter(Frame.is_media_present.is_(True))
 
-    total = query.count()
+    from app.core.read_cache import gallery_counts
+    count_key = (str(db.get_bind().url), dataset_id, video_id, video_code, present_only)
+    total = gallery_counts.get(count_key, query.count)
     order_by = (
         (func.abs(Frame.frame_idx - frame_idx), Video.video_code.asc(), Frame.frame_idx.asc(), Frame.keyframe_id.asc())
         if frame_idx is not None
@@ -582,6 +585,7 @@ def list_frames(
     )
     return {
         "total": total,
+        "count_ttl_seconds": 10,
         "limit": limit,
         "offset": offset,
         "frames": [_frame_media_payload(frame) for frame in frames],
@@ -631,15 +635,24 @@ def video_evidence(
     video_id: str,
     seconds: float | None = None,
     frame_id: str | None = None,
+    result_id: str | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
     video = db.query(Video).filter(Video.video_id == video_id).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+    index_version = None
+    if result_id:
+        from app.db.models import RetrievalResult
+        result = db.get(RetrievalResult, result_id)
+        if not result or result.video_id != video_id:
+            raise HTTPException(404, 'Retrieval result not found for this video')
+        index_version = (result.score_breakdown.get('text_hit') or {}).get('index_version')
     payload = _video_evidence_payload(
         video.video_id,
         anchor_seconds=max(0.0, seconds) if seconds is not None else None,
         anchor_frame_id=frame_id,
+        index_version=index_version,
     )
     payload["video_code"] = video.video_code
     return payload
