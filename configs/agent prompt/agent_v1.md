@@ -8,44 +8,44 @@ inside it. Do not use filesystem, shell, network, or external tools.
 Return exactly one JSON object and no Markdown. Use this schema:
 
 {
-  "language": "auto|vi|en|mixed",
-  "intent": "KIS|QA|TRAKE|IMAGE|FREEFORM",
-  "summary": "short target description",
-  "search_factors": {
-    "subjects": ["visible people or entities"],
-    "actions": ["observable actions"],
-    "objects": ["visible objects"],
-    "attributes": ["colour, count, shape, clothing, size, relation"],
-    "scene": ["place or background"],
-    "text_cues": ["visible/spoken text, names, numbers"],
-    "time_cues": ["before, after, start, end"],
-    "negative_constraints": ["must not appear"]
-  },
-  "retrieval_strategy": {
-    "clauses": [{"text": "atomic requirement", "evidence": "visual|text|both", "importance": 0.0}],
-    "weights": {"visual": 0.0, "text": 0.0},
-    "text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0},
-    "rationale": "short evidence-based reason"
-  },
-  "temporal_events": [{
-    "order": 1,
-    "query": "standalone event retrieval query",
-    "text_query": "lexical query for ASR/OCR",
-    "multi_views": ["semantic event retrieval view"],
-    "text_views": ["lexical event retrieval view"],
-    "must_have": ["critical event evidence"],
-    "importance": 1.0,
-    "diagnostic_prior": 0.0,
-    "retrieval_weights": {"visual": 0.0, "text": 0.0},
-    "text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0}
-  }],
-  "temporal_intent": "single_event|ordered_sequence|narrative_sequence",
-  "target_scope": "frame|video_sequence",
-  "anchor_policy": "explicit|inferred|none",
-  "temporal_anchor_index": 1,
-  "temporal_edges": [{"from_event": 1, "to_event": 2, "relation": "after", "gap_class": "short|medium|loose|unknown"}],
-  "multi_views": [{"text": "semantic retrieval view", "perspective": "literal|visual|object|caption|ocr|temporal"}],
-  "text_variants": ["short lexical retrieval phrase"]
+"language": "auto|vi|en|mixed",
+"intent": "KIS|QA|TRAKE|IMAGE|FREEFORM",
+"summary": "short target description",
+"search_factors": {
+"subjects": ["visible people or entities"],
+"actions": ["observable actions"],
+"objects": ["visible objects"],
+"attributes": ["colour, count, shape, clothing, size, relation"],
+"scene": ["place or background"],
+"text_cues": ["visible/spoken text, names, numbers"],
+"time_cues": ["before, after, start, end"],
+"negative_constraints": ["must not appear"]
+},
+"retrieval_strategy": {
+"clauses": [{"text": "atomic requirement", "evidence": "visual|text|both", "importance": 0.0}],
+"weights": {"visual": 0.0, "text": 0.0},
+"text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0},
+"rationale": "short evidence-based reason"
+},
+"temporal_events": [{
+"order": 1,
+"query": "standalone event retrieval query",
+"text_query": "lexical query for ASR/OCR",
+"multi_views": ["semantic event retrieval view"],
+"text_views": ["lexical event retrieval view"],
+"must_have": ["critical event evidence"],
+"importance": 1.0,
+"diagnostic_prior": 0.0,
+"retrieval_weights": {"visual": 0.0, "text": 0.0},
+"text_source_weights": {"asr": 0.0, "caption": 0.0, "ocr": 0.0}
+}],
+"temporal_intent": "single_event|ordered_sequence|narrative_sequence",
+"target_scope": "frame|video_sequence",
+"anchor_policy": "explicit|inferred|none",
+"temporal_anchor_index": 1,
+"temporal_edges": [{"from_event": 1, "to_event": 2, "relation": "after", "gap_class": "short|medium|loose|unknown"}],
+"multi_views": [{"text": "semantic retrieval view", "perspective": "literal|visual|object|caption|ocr|temporal"}],
+"text_variants": ["short lexical retrieval phrase"]
 }
 
 Rules:

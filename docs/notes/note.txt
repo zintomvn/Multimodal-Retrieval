@@ -480,11 +480,14 @@ Future works:
 - Study more about the fundamental (data, cloud, agent, web)
 
 
+# Contribution:
+- 
+
+
+
 # Idea:
 - Multi-views:
 + Search semantic view and text view: Sigma of (w_text * text_embedding + w_semantic * semantic_embedding)
-
-
 
 semantic_views = [
     "chef cooking shrimp",
@@ -600,3 +603,110 @@ Lỗi giải thuật DEV-First
 Những kiến thức có thể áp dụng:
 - Clustering
 - 
+
+Prompt impv 1:
+role: bạn là một AI reseacher
+context:
+hiện tại thì logic của DEV đang bị sai khi không tận dụng hết trọng số của LLM sinh ra, sửa lại logic dùng hết trọng số của LLM, bỏ 2 phần lọc của ats và vortex, chỉ lấy giải thuật của vortex sau khi đã diagnostic video và event cần thiết để tính điểm cho frame cần thiết, vấn đề hiện tại là lượng video dự đoán ra trong frames trong đó số video lọc ra rất ít nên tập trung vào tối ưu phần lấy video sao cho đa dạng nhất, chỉnh lại giải thuật của DEV để lấy ra đa dạng video hơn để search sau đó lọc lại bằng DEV module (ưu tiên nhiều video trước, sau khi lọc cũng đảm bảo lọc được video nhiễu)
+
+trong giải thuật temporal search vortex có một vấn đề là không ghi rõ từ anchor mở rộng ra event 2 bên bao nhiêu để search, chỉnh lại giải thuật temporal search trong DEV là sau khi search ra những video dùng global search bằng retrieval thì local search sẽ dùng thêm retrieval lần 2 trong video đó để đưa vào lọc.
+
+Thêm phần check thứ tự và delta time dựa vào plan agent, thì trong window delta time đó dựa vào frame event để mở rộng để search đúng hơn (thêm một cái dynamic sampling để sampling những video bị miss trong khoảng thời gian  nếu không có frame trong khoảng đó (do autoshot không cover hết) , nhớ căn chỉnh sao cho search ít video nhất có thể vì sẽ tốn thời gian khi search trong milvus) 
+
+contraint: chỉnh lại code thì đảm bảo những phần khác không đổi và chỉ có DEV để tôi test 
+
+Prompt impv 2:
+chạy test cho tôi benchmark trong file tôi gửi trong 4 query đầu và query query-p2-15-kis, đảm bảo search đúng groundtruth, tối ưu tốc độ khi search
+contraint: 
+- đảm bảo không có lỗi khi search bằng DEV, nếu có thì sửa logic
+- phần nào làm nghẽn tốc độ thì phân tích và sửa tối ưu
+- lượng video trước khi vào temporal phải đủ nhiều để search chỉnh xác, lúc lọc ra thì đảm bảo frame đúng (check bằng output của các module để đảm bảo groundtruth)
+- Số frame trả về phải nhiều hơn k để lấy top k chứ số video thấp quá thì không làm được 
+verify: nếu sai thì phân tích lỗi và chỉnh lại, nào đúng groundtruth nằm trong top 5 là ok
+output: nếu làm xong và thành công thì viết technical report vào file temporal_report.md và lưu vào [temporal search](d:/University/Projects/Individual projects/Multimodal-Retrieval/docs/milestones/milestone 6/temporal search/) 
+
+Prompt impv 3:
+role: bạn là AI reseacher
+
+task: chạy test benchmark trong file tôi gửi trong 4 query đầu và query query-p2-15-kis, đảm bảo search đúng groundtruth để tối ưu DEV, nếu có lỗi xảy ra thì sửa logic của search.
+
+contraint: có thể chỉnh sửa giải thuật và câu prompt,&#x20;
+
+- tạo câu prompt version mới nếu tối ưu hơn cho search DEV, câu dùng để search đảm bảo đúng format và chứa đủ ngữ nghĩa để train theo CLIP và SigLIP2 không tách thành các câu quá ngắn hoặc quá dài để đảm bảo search đúng, câu thì chứa đủ  ngữ nghĩa cho search CLIP và SigCLIP2, với siglip2 thì thay vì chỉ search tiếng anh thì thêm search tiếng việt để có nhiều video và search chuẩn hơn &#x20;
+- tạo prompt version mới để test, không viết đè lên version cũ
+- giải thuật thì kiểm tra logic của temporal search DEV và đảm bảo logic search từ fine-grained bao quát video đến course-grained search đúng frame
+
+verify: nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth 5 câu query nằm trong top 5 là thành công
+
+output: viết test\_report\_v1.md vào folder [tests](<docs/milestones/milestone 6/tests/>)&#x20;
+
+
+
+Prompt impv 4:
+role: bạn là một AI reseacher
+
+context: những event có thể cách nhau gần hơn không phải xa, số lượng video trả về vẫn còn thấp, tăng mức tìm được video lên. Có một câu query -query-p2-11-kis trong benchmark: "Người phụ nữ đang lấy 1 thành phẩm từ trong đồ vật màu đỏ, và cho lần lượt nguyên liệu vào tiếp. Thành phẩm có màu trắng, được nở to hơn ban đầu, có hình thù giống các sợi que dính với nhau. Các thành phẩm được bày trí trên 1 vật liệu màu trắng." câu này đánh đố nhiều nên chỉnh lại prompt sao cho giải quyết được những câu dạng này, ưu tiên giải quyết được các hard samples
+task: chạy và tối ưu câu prompt và logic search trên tập groudtruth, từ output của từng phần thì phân tích lý do tại sao lại search sai và viết vào report, cải tiến tiếp (ghi ra prompt version tiếp theo hoặc sửa lại thông số trong DEV)
+
+phân tích lỗi khi search, điểm yếu nằm ở module nào mà không search được groundtruth tối ưu xong viết vào report cho tôi
+
+contraint:
+
+- Đủ top k
+- video dự đoán
+- tạo câu prompt version mới nếu tối ưu hơn cho search DEV, không viết đè lên version cũ
+- sửa giải thuật thì kiểm tra logic của temporal search DEV, kiểm tra theo module nhỏ để fix
+
+verify: nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth 5 câu query nằm trong top 5 là thành công.&#x20;
+
+output: viết test\_report\_v3.md vào folder [tests](<docs/milestones/milestone 6/tests/>)
+
+Prompt impv 5:
+role: bạn là một AI reseacher
+
+context: hiện tại hệ thống của tôi có các module trong phần search của KIS temporal dùng giải thuật DEV tôi vừa tạo ra Đọc tất cả các cách viết prompt trong folder [agent prompt](<configs/agent prompt/>) trong đó thì cách viết prompt hiệu quả và test xem prompt nào tốt nhất.&#x20;
+
+task:
+
+- phân tích lỗi khi search, điểm yếu nằm ở module nào mà không search được groundtruth tối ưu xong viết vào report cho tôi
+- Sửa lại phần module đó sao cho tối ưu nhất để search được 5 câu query mà tôi lấy trong benchmark tôi để dưới
+- benchmark query: query-p2-1-kis, query-p2-2-kis, query-p2-3-kis, query-p2-4-kis, query-p2-11-kis
+
+contraint:
+
+- Đủ top k
+- video dự đoán
+- tạo câu prompt version mới nếu tối ưu hơn cho search DEV, không viết đè lên version cũ
+- sửa giải thuật thì kiểm tra logic của temporal search DEV, kiểm tra theo module nhỏ để fix
+
+verify: nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth 5 câu query nằm trong top 5 là thành công.&#x20;
+
+output: viết test\_report\_v3.md vào folder [tests](<docs/milestones/milestone 6/tests/>)
+
+Prompt impv 6:
+role: bạn là một AI reseacher
+
+context: hiện tại hệ thống của tôi có các module trong phần search của KIS temporal dùng giải thuật DEV tôi vừa tạo ra Đọc tất cả các cách viết prompt trong folder [agent prompt](configs/agent prompt/) trong đó thì cách viết prompt hiệu quả. 
+
+Với việc lên kế hoạch, review code, kiểm tra chất lượng (QC): dùng Astra ở mức medium hoặc high, Với việc gõ code, sửa file, chạy test: giao cho Sub-agent GPT-5.6 Luna Max hoặc Terra Medium. Astra Low ra lệnh, Luna Max thi công thì bạn có thiết lập được workflow đó hay không, đây sẽ là workflow cần lưu vào memory và sử dụng cho các session ở các dự án tới nữa
+
+task:
+- Tối ưu search cho groundtruth cho KIS
+- phân tích lỗi khi search các câu query, điểm yếu nằm ở module nào mà không search được groundtruth tối ưu xong viết vào report cho tôi
+- Sửa lại phần module đó sao cho tối ưu nhất để search được 5 câu query mà tôi lấy trong benchmark tôi để dưới
+- benchmark query cần kiểm tra: query-p2-1-kis, query-p2-2-kis, query-p2-3-kis, query-p2-4-kis, query-p2-11-kis
+- nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth 5 câu query nằm trong top 5 là thành công. 
+
+contraint:
+- Đủ top k
+- video dự đoán
+- tạo câu prompt version mới nếu tối ưu hơn cho search DEV, không viết đè lên version cũ
+- sửa giải thuật thì kiểm tra logic của temporal search DEV, kiểm tra theo module nhỏ để fix
+
+verify: Khi chỉnh xong search lại và kiểm tra cho đến khi groundtruth vào top 10
+
+output: viết test_report_v4.md vào folder [tests](docs/milestones/milestone 6/tests/)
+
+chạy cho tôi ablation study trên 5 câu query đó cho các thông số, hyperparameters liên quan về search và ghi vào report xem 
+
+
