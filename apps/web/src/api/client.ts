@@ -114,7 +114,8 @@ function retrievalPayload(input: RetrievalSearchInput): Record<string, unknown> 
       strict_hybrid: false,
       visual_search_mode: input.visualSearchMode,
       source_mode: input.sourceMode ?? "auto",
-      defer_qa: true,
+      // The original UI displays answers inline and has no deferred-answer action.
+      defer_qa: false,
       video_codes: input.videoFilter?.split(',').map(v=>v.trim()).filter(Boolean) ?? [],
       time_range_start_seconds: input.timeStart?.trim() ? Number(input.timeStart) : null,
       time_range_end_seconds: input.timeEnd?.trim() ? Number(input.timeEnd) : null,
