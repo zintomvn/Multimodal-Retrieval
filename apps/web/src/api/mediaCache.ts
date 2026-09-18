@@ -18,3 +18,14 @@ export class ReadCache {
   clear() { this.values.clear(); }
 }
 export const mediaCache = new ReadCache();
+
+/** Cancel only this caller's wait, not the shared request used by other readers. */
+export function consumeCached<T>(value: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return value;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, {once: true});
+    value.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}

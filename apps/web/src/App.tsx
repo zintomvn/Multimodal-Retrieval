@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { LatestRequest } from "./api/latestRequest";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft } from "./workspace";
+import { useStableEvent } from "./useStableEvent";
+import { useDialogFocus } from "./useDialogFocus";
 import {
   ChevronDown,
   ChevronLeft,
@@ -55,6 +59,8 @@ const reasoningModelLabels: Record<ReasoningModel, string> = {
 
 // Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
+  datasetId?: string;
+  draft?: SearchDraft;
   id: string;
   mode: AppMode;
   queryType: SearchTask;
@@ -1210,6 +1216,23 @@ function FrameCard({
   );
 }
 
+const EMPTY_SELECTION = new Set<string>();
+const ResultGrid = memo(function ResultGrid({results, columns, selectedKeys, keyFor, onOpen, onPick, onPreview, className = "frame-grid"}: {
+  results: SearchResult[]; columns: number; selectedKeys: Set<string>; keyFor: (result: SearchResult) => string;
+  onOpen: (result: SearchResult) => void; onPick: (result: SearchResult) => void; onPreview: (result: SearchResult) => void;
+  className?: string;
+}) {
+  if (import.meta.env.DEV) {
+    if (performance.getEntriesByName("result-grid-render").length >= 100) performance.clearMarks("result-grid-render");
+    performance.mark("result-grid-render");
+  }
+  return <div className={className} style={{gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`}}>
+    {results.map((result, index) => <FrameCard key={result.id} result={result} eager={index < columns}
+      selected={selectedKeys.has(keyFor(result))} onOpen={() => onOpen(result)}
+      onSelect={() => onPick(result)} onPreview={() => onPreview(result)} />)}
+  </div>;
+});
+
 function TrakeRows({
   results,
   eventCount,
@@ -1541,26 +1564,30 @@ function SearchLoadingStage({ frameColumns }: { frameColumns: number }) {
 // Functions in App
 
 export function App() {
+  const [initialWorkspace] = useState(() => readWorkspace());
+  const saved = initialWorkspace.value;
+  const drafts = useRef(saved?.drafts ?? {});
+  const exportInFlight = useRef(false);
   // Attibutes
-  const [mode, setMode] = useState<AppMode>("Search");
+  const [mode, setMode] = useState<AppMode>(saved?.mode ?? "Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [datasetId, setDatasetId] = useState("");
-  const [queryType, setQueryType] = useState<SearchTask>("KIS");
-  const [queryName, setQueryName] = useState(queryNameByType.KIS);
-  const [exportFileName, setExportFileName] = useState(queryNameByType.KIS);
-  const [queryText, setQueryText] = useState(sampleQueries.KIS);
-  const [videoCodeQuery, setVideoCodeQuery] = useState(sampleQueries.VIDEO);
-  const [videoFrameQuery, setVideoFrameQuery] = useState("");
-  const [topK, setTopK] = useState(50);
-  const [useExpansion, setUseExpansion] = useState(true);
-  const [useAgentPlanning, setUseAgentPlanning] = useState(true);
-  const [useMetadata, setUseMetadata] = useState(true);
-  const [kisTemporalMode, setKisTemporalMode] = useState(false);
+  const [datasetId, setDatasetId] = useState(saved?.datasetId ?? "");
+  const [queryType, setQueryType] = useState<SearchTask>(saved?.active.queryType ?? "KIS");
+  const [queryName, setQueryName] = useState(saved?.active.queryName ?? queryNameByType.KIS);
+  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? queryNameByType.KIS);
+  const [queryText, setQueryText] = useState(saved?.active.queryText ?? sampleQueries.KIS);
+  const [videoCodeQuery, setVideoCodeQuery] = useState(saved?.active.videoCodeQuery ?? sampleQueries.VIDEO);
+  const [videoFrameQuery, setVideoFrameQuery] = useState(saved?.active.videoFrameQuery ?? "");
+  const [topK, setTopK] = useState(saved?.active.topK ?? 50);
+  const [useExpansion, setUseExpansion] = useState(saved?.active.useExpansion ?? true);
+  const [useAgentPlanning, setUseAgentPlanning] = useState(saved?.active.useAgentPlanning ?? true);
+  const [useMetadata, setUseMetadata] = useState(saved?.active.useMetadata ?? true);
+  const [kisTemporalMode, setKisTemporalMode] = useState(saved?.active.kisTemporalMode ?? false);
   const [temporalStrategy, setTemporalStrategy] = useState<
     "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
-  >("vortex_k_context");
+  >(saved?.active.temporalStrategy ?? "vortex_k_context");
   const [visualSearchMode, setVisualSearchMode] =
-    useState<VisualSearchMode>("openclip");
+    useState<VisualSearchMode>(saved?.active.visualSearchMode ?? "openclip");
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1579,10 +1606,29 @@ export function App() {
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [selected, setSelected] = useState<SubmissionRow[]>([]);
+  const searchRequests = useRef(new LatestRequest());
+  const contextRequests = useRef(new LatestRequest());
+  const previewRequests = useRef(new LatestRequest());
+
+  function cancelSearch() {
+    searchRequests.current.cancel();
+    contextRequests.current.cancel();
+    previewRequests.current.cancel();
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    cancelSearch();
+    return () => {
+      searchRequests.current.cancel();
+      contextRequests.current.cancel();
+      previewRequests.current.cancel();
+    };
+  }, [datasetId, queryType, mode]);
+  const [selected, setSelected] = useState<SubmissionRow[]>(saved?.selected ?? []);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
-  const [history, setHistory] = useState<SearchHistoryItem[]>([]);
+  const [history, setHistory] = useState<SearchHistoryItem[]>(saved?.history ?? []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
   const [autoEnabled, setAutoEnabled] = useState(true);
@@ -1597,7 +1643,7 @@ export function App() {
   );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [reasoningModel, setReasoningModel] =
-    useState<ReasoningModel>("gpt-4o");
+    useState<ReasoningModel>(saved?.active.reasoningModel ?? "gpt-4o");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
@@ -1624,6 +1670,39 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+
+  const videoDialogRef = useRef<HTMLDivElement>(null);
+  const settingsDialogRef = useRef<HTMLDivElement>(null);
+  function closeVideoPreview() {
+    previewRequests.current.cancel();
+    setVideoPreview(null);
+  }
+  useDialogFocus(videoDialogRef, Boolean(videoPreview), closeVideoPreview);
+  useDialogFocus(settingsDialogRef, settingsOpen, () => setSettingsOpen(false));
+
+  function currentDraft(): SearchDraft {
+    return {queryType, queryName, queryText, exportFileName, videoCodeQuery, videoFrameQuery,
+      topK, useExpansion, useAgentPlanning, useMetadata, kisTemporalMode, temporalStrategy,
+      visualSearchMode, reasoningModel, sourceMode: "auto", temporalEvents: []};
+  }
+  function applyDraft(draft: SearchDraft) {
+    setQueryType(draft.queryType); setQueryName(draft.queryName); setQueryText(draft.queryText);
+    setExportFileName(draft.exportFileName); setVideoCodeQuery(draft.videoCodeQuery); setVideoFrameQuery(draft.videoFrameQuery);
+    setTopK(draft.topK); setUseExpansion(draft.useExpansion); setUseAgentPlanning(draft.useAgentPlanning);
+    setUseMetadata(draft.useMetadata); setKisTemporalMode(draft.kisTemporalMode); setTemporalStrategy(draft.temporalStrategy);
+    setVisualSearchMode(draft.visualSearchMode); setReasoningModel(draft.reasoningModel);
+  }
+  const workspace = useMemo(() => ({version: 1 as const, mode, datasetId, active: currentDraft(),
+    drafts: {...drafts.current, [queryType]: currentDraft()}, selected, history}),
+    [mode,datasetId,queryType,queryName,queryText,exportFileName,videoCodeQuery,videoFrameQuery,
+      topK,useExpansion,useAgentPlanning,useMetadata,kisTemporalMode,temporalStrategy,visualSearchMode,reasoningModel,selected,history]);
+  useEffect(() => {
+    if (initialWorkspace.error) return; // Preserve incompatible storage for recovery.
+    const save = () => { const error = saveWorkspace(workspace); if (error) console.warn(error); };
+    const timer = window.setTimeout(save, 250);
+    window.addEventListener("pagehide", save);
+    return () => { window.clearTimeout(timer); window.removeEventListener("pagehide", save); };
+  }, [workspace, initialWorkspace.error]);
 
   // Effects
   useEffect(() => {
@@ -1722,16 +1801,17 @@ export function App() {
     listDatasets()
       .then((items) => {
         if (cancelled) return;
-        const next = items.length > 0 ? items : mockDatasets;
+        const next = items;
         setDatasets(next);
         setDatasetId((current) => current || next[0]?.id || "");
-        if (items.length === 0) setStatus("Mock dataset ready");
+        if (items.length === 0) setStatus("No datasets available");
       })
       .catch(() => {
         if (cancelled) return;
-        setDatasets(mockDatasets);
-        setDatasetId(mockDatasets[0].id);
-        setStatus("Mock mode");
+        setDatasets([]);
+        setDatasetId("");
+        setGalleryFrames([]);
+        setStatus("Cannot load datasets. Check the API connection and retry.");
       });
     return () => {
       cancelled = true;
@@ -1745,14 +1825,12 @@ export function App() {
     listFrames({ datasetId, limit: 48, offset: 0, presentOnly: true })
       .then((payload) => {
         if (cancelled) return;
-        setGalleryFrames(
-          payload.frames.length > 0 ? payload.frames : makeMockFrames(),
-        );
+        setGalleryFrames(payload.frames);
       })
       .catch(() => {
         if (cancelled) return;
-        const mock = makeMockFrames();
-        setGalleryFrames(mock);
+        setGalleryFrames([]);
+        setStatus("Cannot load frames. Check the API connection and retry.");
       })
       .finally(() => {
         if (!cancelled) setGalleryLoading(false);
@@ -1844,10 +1922,12 @@ export function App() {
   }
 
   function changeType(type: SearchTask) {
-    setQueryType(type);
-    setQueryName(queryNameByType[type]);
-    setExportFileName(queryNameByType[type]);
-    setQueryText(sampleQueries[type]);
+    cancelSearch();
+    drafts.current[queryType] = currentDraft();
+    const draft = drafts.current[type];
+    if (draft) applyDraft(draft);
+    else applyDraft({...currentDraft(), queryType: type, queryName: queryNameByType[type],
+      exportFileName: queryNameByType[type], queryText: sampleQueries[type]});
     setResults([]);
     setHasSearched(false);
     setContext(null);
@@ -1857,6 +1937,7 @@ export function App() {
   }
 
   function switchMode(nextMode: AppMode) {
+    cancelSearch();
     setMode(nextMode);
     setIntelligenceOpen(false);
     if (
@@ -1890,17 +1971,24 @@ export function App() {
       createdAt,
       results: nextResults,
       trace,
+      datasetId, draft: currentDraft(),
     };
     setHistory((current) => [item, ...current].slice(0, 12));
   }
 
   async function openFrameContext(result: SearchResult) {
     if (!result.frame_id) return;
+    contextRequests.current.cancel();
+    const request = contextRequests.current.begin()!;
     setActiveResultId(result.id);
+    setContext(null);
     try {
-      setContext(await getFrameContext(result.frame_id));
+      const next = await getFrameContext(result.frame_id, request.signal);
+      if (contextRequests.current.isCurrent(request)) setContext(next);
     } catch {
-      setContext(mockContextForResult(result));
+      if (contextRequests.current.isCurrent(request)) setStatus("Cannot load frame context. Try opening the frame again.");
+    } finally {
+      contextRequests.current.finish(request);
     }
   }
 
@@ -2024,7 +2112,10 @@ export function App() {
       return;
     }
     if (!datasetId || !queryText.trim()) return;
-
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    contextRequests.current.cancel();
+    setContext(null);
     setLoading(true);
     setHasSearched(true);
     if (queryType === "TRAKE") setTrakeFrameChoices([]);
@@ -2059,7 +2150,8 @@ export function App() {
         (queryType === "KIS" && kisTemporalMode);
       if (shouldShowPlanEarly) {
         try {
-          const planned = await planSearch(searchInput);
+          const planned = await planSearch(searchInput, request.signal);
+          if (!searchRequests.current.isCurrent(request)) return;
           const planningTrace = makeTraceFromResponse(
             mode,
             queryType,
@@ -2082,6 +2174,7 @@ export function App() {
           );
           setAutoTrace(planningTrace);
         } catch {
+          if (!searchRequests.current.isCurrent(request)) return;
           setAutoTrace((current) =>
             current.map((step) =>
               step.title === "Parse query"
@@ -2097,7 +2190,8 @@ export function App() {
         }
       }
 
-      const response = await runSearch(searchInput);
+      const response = await runSearch(searchInput, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(
         response.results,
         queryType,
@@ -2123,6 +2217,7 @@ export function App() {
       rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults: SearchResult[] = [];
       const trace = makeAgentTrace(mode, queryType, 0).map((step, index) =>
         index === 0
@@ -2146,7 +2241,7 @@ export function App() {
       rememberSearch(nextResults, trace);
       setContext(null);
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
@@ -2164,6 +2259,9 @@ export function App() {
       return;
     }
 
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    contextRequests.current.cancel();
     setLoading(true);
     setHasSearched(true);
     setResults([]);
@@ -2188,7 +2286,8 @@ export function App() {
             : Math.min(Math.max(topK, 12), 200),
         offset: 0,
         presentOnly: true,
-      });
+      }, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = response.frames.map((frame, index) =>
         frameToResult(frame, index + 1),
       );
@@ -2208,6 +2307,7 @@ export function App() {
       rememberSearch(nextResults, trace, videoCode);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
       const detail =
         error instanceof Error
           ? error.message.slice(0, 64)
@@ -2220,13 +2320,16 @@ export function App() {
       setStatus(`Video lookup failed: ${detail}`);
       rememberSearch([], trace, videoCode);
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
   async function submitChat() {
     const prompt = queryText.trim();
     if (!prompt && attachedFiles.length === 0) return;
+    const request = searchRequests.current.begin();
+    if (!request) return;
+    contextRequests.current.cancel();
     const fileNames = attachedFiles.map((file) => file.name);
     const fallbackTrace = makeAgentTrace(
       "Chat",
@@ -2256,6 +2359,7 @@ export function App() {
           trace: fallbackTrace,
         },
       ]);
+      searchRequests.current.finish(request);
       setStatus("Chat model selected");
       return;
     }
@@ -2276,7 +2380,8 @@ export function App() {
         temporalMode: false,
         temporalStrategy,
         visualSearchMode,
-      });
+      }, request.signal);
+      if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(response.results, "QA");
       setResults(nextResults);
       setHasSearched(true);
@@ -2303,6 +2408,7 @@ export function App() {
         answer ? "QA answer ready" : `${nextResults.length} evidence frames`,
       );
     } catch (error) {
+      if (!searchRequests.current.isCurrent(request)) return;
       const detail =
         error instanceof Error
           ? error.message.slice(0, 96)
@@ -2320,11 +2426,15 @@ export function App() {
       ]);
       setStatus("Chat request failed");
     } finally {
-      setLoading(false);
+      if (searchRequests.current.finish(request)) setLoading(false);
     }
   }
 
   function restoreHistory(item: SearchHistoryItem) {
+    cancelSearch();
+    drafts.current[queryType] = currentDraft();
+    if (item.draft) applyDraft(item.draft);
+    if (item.datasetId) setDatasetId(item.datasetId);
     setMode(item.mode);
     setQueryType(item.queryType);
     setQueryName(item.queryName);
@@ -2340,6 +2450,8 @@ export function App() {
     result: SearchResult,
     trakeEventIndex: number | null = null,
   ) {
+    previewRequests.current.cancel();
+    const request = previewRequests.current.begin()!;
     let videoUrl = firstMediaUrl(
       result.video_url,
       `/api/media/videos/${result.video_id}/preview`,
@@ -2351,6 +2463,7 @@ export function App() {
     } catch {
       // Fall back to the legacy preview redirect below.
     }
+    if (!previewRequests.current.finish(request)) return;
     if (!videoUrl) {
       setStatus("Video preview unavailable");
       return;
@@ -2574,41 +2687,27 @@ export function App() {
     );
   }
 
-  function exportLocalCsv() {
-    const blob = new Blob([buildSubmissionCsv(selected)], {
-      type: "text/csv;charset=utf-8",
-    });
-    const name = csvDownloadName(exportFileName || "submission");
-    downloadCsvBlob(blob, name);
-    setStatus("CSV downloaded");
-  }
-
   async function exportSubmission() {
-    if (selected.length === 0) return;
+    if (!datasetId || selected.length === 0 || exportInFlight.current) return;
+    exportInFlight.current = true;
     setStatus("Exporting");
     try {
-      if (datasetId.startsWith("mock"))
-        throw new Error("Using local mock dataset");
       const csvName = csvDownloadName(exportFileName || "submission");
-      const name = csvName.replace(/\.csv$/i, "");
-      const exported = await createAndExportSubmission(
-        datasetId,
-        name,
-        selected,
-      );
+      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.csv$/i, ""), selected);
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
-      const report = exported.validation_report;
-      setStatus(
-        report.valid
-          ? "CSV downloaded"
-          : `Invalid: ${report.errors.join(", ")}`,
-      );
-    } catch {
-      exportLocalCsv();
+      setStatus("CSV downloaded");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Export failed");
+      console.warn("Export failed; no unvalidated CSV was downloaded.", error);
+    } finally {
+      exportInFlight.current = false;
     }
   }
 
   function newSession() {
+    const name = newQueryName(queryType);
+    setQueryName(name); setExportFileName(name);
+    cancelSearch();
     setQueryText(sampleQueries[queryType]);
     setResults([]);
     setHasSearched(false);
@@ -2630,6 +2729,11 @@ export function App() {
   function updateTopK(value: number) {
     setTopK(Math.round(clampNumber(value, 1, 100)));
   }
+
+  const stableOpen = useStableEvent((result: SearchResult) => void openFrameContext(result));
+  const stablePick = useStableEvent((result: SearchResult) => addResult(result));
+  const stablePreview = useStableEvent((result: SearchResult) => void openVideoPreview(result));
+  const resultKey = useCallback((result: SearchResult) => selectionKeyForResult(result), [queryName, queryType]);
 
   const videoPreviewFrame =
     videoPreview?.frames[videoPreview.frameIndex] ?? null;
@@ -2871,24 +2975,8 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <div
-                  className="frame-grid"
-                  style={{
-                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {visibleResults.map((result, index) => (
-                    <FrameCard
-                      key={result.id}
-                      result={result}
-                      eager={index < frameColumns}
-                      selected={selectedKeys.has(selectionKeyForResult(result))}
-                      onOpen={() => void openFrameContext(result)}
-                      onSelect={() => addResult(result)}
-                      onPreview={() => void openVideoPreview(result)}
-                    />
-                  ))}
-                </div>
+                <ResultGrid results={visibleResults} columns={frameColumns} selectedKeys={selectedKeys}
+                  keyFor={resultKey} onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
               )}
             </section>
           )}
@@ -2924,24 +3012,9 @@ export function App() {
                       onClearSelection={() => setTrakeFrameChoices([])}
                     />
                   ) : (
-                    <div
-                      className="frame-grid auto-grid"
-                      style={{
-                        gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
-                      }}
-                    >
-                      {visibleResults.map((result, index) => (
-                        <FrameCard
-                          key={result.id}
-                          result={result}
-                          eager={index < frameColumns}
-                          selected={false}
-                          onOpen={() => void openFrameContext(result)}
-                          onSelect={() => addResult(result)}
-                          onPreview={() => void openVideoPreview(result)}
-                        />
-                      ))}
-                    </div>
+                    <ResultGrid className="frame-grid auto-grid" results={visibleResults} columns={frameColumns}
+                      selectedKeys={EMPTY_SELECTION} keyFor={resultKey} onOpen={stableOpen}
+                      onPick={stablePick} onPreview={stablePreview} />
                   )}
                 </>
               ) : loading ? (
@@ -2970,24 +3043,8 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <div
-                  className="frame-grid"
-                  style={{
-                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {visibleResults.map((result, index) => (
-                    <FrameCard
-                      key={result.id}
-                      result={result}
-                      eager={index < frameColumns}
-                      selected={false}
-                      onOpen={() => void openFrameContext(result)}
-                      onSelect={() => addResult(result)}
-                      onPreview={() => void openVideoPreview(result)}
-                    />
-                  ))}
-                </div>
+                <ResultGrid results={visibleResults} columns={frameColumns} selectedKeys={EMPTY_SELECTION}
+                  keyFor={resultKey} onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
               )}
             </section>
           )}
@@ -3346,7 +3403,7 @@ export function App() {
       </aside>
 
       {settingsOpen && (
-        <div className="settings-popover" role="dialog" aria-label="Settings">
+        <div ref={settingsDialogRef} className="settings-popover" role="dialog" aria-label="Settings">
           <div className="panel-heading">
             <strong>Settings</strong>
             <button
@@ -3431,10 +3488,11 @@ export function App() {
         <div
           className="video-backdrop"
           onClick={(event) => {
-            if (event.target === event.currentTarget) setVideoPreview(null);
+            if (event.target === event.currentTarget) closeVideoPreview();
           }}
         >
           <div
+            ref={videoDialogRef}
             className={`video-modal ${videoEvidenceOpen ? "evidence-open" : ""}`}
             role="dialog"
             aria-modal="true"
@@ -3467,7 +3525,7 @@ export function App() {
                 <button
                   type="button"
                   className="icon-button"
-                  onClick={() => setVideoPreview(null)}
+                  onClick={closeVideoPreview}
                   aria-label="Close video"
                 >
                   <X size={16} />

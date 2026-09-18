@@ -1,5 +1,25 @@
 # Web/search optimization implementation
 
+## Current scope: original UI with internal frontend improvements (2026-09-18)
+
+PR #23 restored the original interface. Branch `perf/frontend-logic-original-ui`, based on merged main `d0666de`, restores only internal frontend behavior:
+
+- Request identity/abort guards for search, video lookup, Chat, context and preview; duplicate search/export submissions are rejected.
+- Versioned workspace persistence for task drafts, options, selected rows, search history and active mode. Existing incompatible saves are preserved. New searches receive distinct query identities.
+- Memoized result grids preserve the original DOM/classes, column count and selection presentation. Context/evidence caches remain bounded; cancelling a context reader does not cancel another reader's shared request.
+- Existing Settings/Video dialogs acquire and restore focus and support Escape/Tab trapping without adding controls or changing layout.
+- The existing Export CSV workflow still submits all selected rows. Invalid/failed backend exports no longer download an unvalidated local fallback. QA stays inline; no deferred-answer panel is introduced.
+
+CSS is unchanged from `5f49c49`; backend files are unchanged. No health panel, filters, source selector, event editor, ZIP button, Retry/Cancel controls, or card redesign is added. Search/Auto/Chat and Attach remain present.
+
+Validation: production build and 8 frontend utility tests passed. `scripts/check_original_ui_logic.js` passed against an original-UI comparison server at port 5174 and the current UI at 5173: matching controls/card content/layout bounds at 1440x900; draft/options/selection/history/mode reload; duplicate/stale request rejection; modal focus; invalid/outage export rejection; 0 grid renders while typing in Search and Auto (dev instrumentation). Its request-failure and Chat-answer checks use controlled responses, not real model quality tests. The suite creates and closes its own browser context.
+
+Separate live smoke passed: 48 gallery frames, video preview loaded, 50 KIS results and backend CSV export with the expected `L21_V001,0` row. Inline QA request shape was checked with a fixture; real QA/TRAKE model quality was not revalidated. Screenshots and raw CLI output are local under `output/playwright/logic-ui-*.png` and `data/local-web-session/logic*-results.txt`.
+
+The following is the historical optimization snapshot. Its UI feature and 19/19 E2E claims do not describe the restored interface; use the current validation scope above.
+
+## Historical snapshot before the UI restoration
+
 Branch: `feat/ui-search-optimization`. Base local main/origin-main: `5f49c493b9cc9db2bdb7dfb6ff7da864731b4f2f`. No upstream, push or merge.
 
 Current status: [22-item backlog](optimization-backlog.md). All 22 workstreams have changes; 18 meet local verification scope and 4 retain runtime/quality gates. B01/B02 are fixed child tasks.
