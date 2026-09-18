@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.telemetry import RequestTimingMiddleware
 from app.db.bootstrap import init_db
 from app.db.session import warm_database
 from app.modules.datasets.router import router as datasets_router
@@ -15,6 +16,7 @@ from app.modules.media.router import router as media_router
 from app.modules.models.router import router as models_router
 from app.modules.pipeline.router import router as pipeline_router
 from app.modules.retrieval.router import router as retrieval_router
+from app.modules.retrieval.answers import router as answers_router
 from app.modules.submissions.router import router as submissions_router
 
 
@@ -28,6 +30,7 @@ async def lifespan(_: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title="Multimodal Retrieval Assistant API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(RequestTimingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +38,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Server-Timing"],
 )
 
 app.include_router(datasets_router)
@@ -42,6 +46,7 @@ app.include_router(models_router)
 app.include_router(ingest_router)
 app.include_router(jobs_router)
 app.include_router(retrieval_router)
+app.include_router(answers_router)
 app.include_router(media_router)
 app.include_router(pipeline_router)
 app.include_router(submissions_router)
@@ -58,5 +63,7 @@ def healthz() -> dict:
 
 
 @app.get("/readyz")
+@app.get("/api/readyz")
 def readyz() -> dict:
-    return {"status": "ready"}
+    from app.core.readiness import readiness
+    return readiness()

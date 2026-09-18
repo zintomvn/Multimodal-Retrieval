@@ -5,6 +5,8 @@ from io import StringIO
 from pathlib import Path
 import sys
 import zipfile
+import pytest
+from dataclasses import replace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -32,7 +34,9 @@ def _build_submission_service(tmp_path: Path, monkeypatch) -> tuple[Session, Sub
     db.add(dataset)
     db.commit()
 
-    return db, SubmissionService(db)
+    service = SubmissionService(db)
+    service.settings = replace(service.settings, data_root=tmp_path / "data")
+    return db, service
 
 
 def test_m5_submission_validation_report_contains_detailed_line_violations(tmp_path: Path, monkeypatch) -> None:
@@ -57,6 +61,36 @@ def test_m5_submission_validation_report_contains_detailed_line_violations(tmp_p
     qa_issue = next(item for item in report["violations"] if item["code"] == "qa.answer_too_long")
     assert qa_issue["line_number"] == 1
     assert qa_issue["field"] == "answer"
+    db.close()
+
+
+def test_csv_single_query_has_correct_qa_escaping_and_safe_path(tmp_path, monkeypatch):
+    db, service = _build_submission_service(tmp_path, monkeypatch)
+    submission = service.create(db.query(Dataset).one().id, '../outside')
+    service.add_items(submission.id, [SubmissionRow(query_name='query-1-qa', query_type='QA', rank=1,
+        video_code='L01_V028', frame_indices=[100], answer='màu đỏ, "đẹp"')])
+    exported, report = service.export_csv(submission.id)
+    assert report['valid']
+    path = Path(service.artifact_uri(exported, 'csv'))
+    assert path.is_relative_to(tmp_path)
+    assert list(csv.reader(StringIO(path.read_text(encoding='utf-8')))) == [['L01_V028', '100', 'màu đỏ, "đẹp"']]
+    assert service.artifact_uri(exported, 'zip') is None
+    service.add_items(submission.id, [])
+    assert exported.status == 'DRAFT'
+    assert service.artifact_uri(exported, 'csv') is None
+    db.close()
+
+
+@pytest.mark.parametrize('names,format', [(['one','two'],'csv'), (['../outside'],'zip'), (['Same','same'],'zip')])
+def test_invalid_export_contract_creates_no_artifact(tmp_path, monkeypatch, names, format):
+    db, service = _build_submission_service(tmp_path, monkeypatch)
+    submission = service.create(db.query(Dataset).one().id, 'test')
+    service.add_items(submission.id, [SubmissionRow(query_name=name, query_type='KIS', rank=1,
+        video_code='L01_V028', frame_indices=[100]) for name in names])
+    exported, report = service._export(submission.id, format)
+    assert not report['valid']
+    assert exported.status == 'FAILED'
+    assert not list(tmp_path.rglob('*.csv')) and not list(tmp_path.rglob('*.zip'))
     db.close()
 
 

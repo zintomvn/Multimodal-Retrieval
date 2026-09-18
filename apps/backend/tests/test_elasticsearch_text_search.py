@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import pytest
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -36,4 +37,14 @@ def test_long_vietnamese_query_does_not_enable_fuzzy_clause_expansion() -> None:
     assert multi_match["type"] == "best_fields"
     assert multi_match["minimum_should_match"] == "50%"
     assert "fuzziness" not in multi_match
+
+
+def test_search_outage_is_not_reported_as_empty_hits():
+    class UnavailableClient:
+        def search(self, **kwargs):
+            raise ConnectionError('offline')
+    adapter = ElasticsearchTextSearchClient.__new__(ElasticsearchTextSearchClient)
+    adapter.client = UnavailableClient()
+    with pytest.raises(RuntimeError, match='Text search is unavailable'):
+        adapter.search('keyframe_annotations', query='test', top_k=5, boosts={})
 

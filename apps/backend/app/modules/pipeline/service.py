@@ -140,7 +140,11 @@ class PipelineService:
         results: list[VideoPipelineResult] = []
         total = len(video_keys)
 
+        checkpoint = dict(job.payload.get('completed_videos', {}))
         for idx, video_key in enumerate(video_keys):
+            if video_key in checkpoint:
+                results.append(VideoPipelineResult(**checkpoint[video_key]))
+                continue
             progress = idx / total
             job.progress = progress
             job.message = f"Processing video {idx + 1}/{total}: {video_key}"
@@ -157,7 +161,12 @@ class PipelineService:
                     progress_scale=1.0 / total,
                 )
                 results.append(result)
+                if result.status in {'COMPLETED', 'SKIPPED'}:
+                    checkpoint[video_key] = result.model_dump()
+                    job.payload = {**job.payload, 'completed_videos': checkpoint}
+                    self.db.commit()
             except Exception as exc:
+                self.db.rollback()
                 logger.error("Failed to process %s: %s", video_key, exc, exc_info=True)
                 results.append(VideoPipelineResult(
                     video_id=Path(video_key).stem,
@@ -174,7 +183,7 @@ class PipelineService:
             job.status = "FAILED"
             job.message = f"Pipeline failed: all {total} video(s) failed."
         elif n_failed > 0:
-            job.status = "COMPLETED"
+            job.status = "FAILED"
             job.message = (
                 f"Pipeline complete with errors: {n_completed} completed, "
                 f"{n_failed} failed, {n_skipped} skipped out of {total}."
@@ -371,6 +380,7 @@ class PipelineService:
 
         # --- Step 9: Finalize ---
         video.num_keyframes = len(extraction.keyframes)
+        video.extra_metadata = {**(video.extra_metadata or {}), 'pipeline_complete': True}
         job.progress = progress_base + 1.0 * progress_scale
         job.message = f"Complete: {video_id} ({len(extraction.keyframes)} keyframes, {len(events)} events)"
         self.db.commit()
@@ -408,7 +418,7 @@ class PipelineService:
             )
 
         # Same dataset, same URI → idempotent skip or force_reprocess
-        if existing_video.num_keyframes and not force_reprocess:
+        if existing_video.num_keyframes and not force_reprocess and (existing_video.extra_metadata or {}).get('pipeline_complete') is not False:
             return VideoPipelineResult(
                 video_id=video_id,
                 status="SKIPPED",
@@ -510,6 +520,7 @@ class PipelineService:
             "num_keyframes": len(extraction.keyframes),
             "embedding_shape": "512",
             "extra_metadata": {
+                "pipeline_complete": False,
                 "source_dataset_id": source_dataset_id,
                 "pipeline_version": PIPELINE_VERSION,
                 "segmentation_version": SEGMENTATION_VERSION,

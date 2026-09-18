@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.index_catalog import annotation_index
+
 import csv
 import json
 import logging
@@ -17,6 +19,8 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.adapters.text_search.base import TextSearchClient
 from app.adapters.vector_db.base import VectorSearchClient
 from app.core.config import REPO_ROOT, get_settings
+from app.core.telemetry import stage, timed
+from app.core.budget import bounded_call, search_budget, remaining
 from app.db.models import Dataset, Frame, QueryRun, RetrievalResult, Video, new_id
 from app.modules.media.urls import gcs_public_url
 from app.modules.models.service import ModelRegistryService
@@ -128,14 +132,18 @@ class RetrievalService:
         self._map_keyframes_cache: dict[str, dict[int, dict[str, Any]] | None] = {}
         self._semantic_hit_sources: dict[str, dict[str, Any]] = {}
         self._text_hit_sources: dict[str, dict[str, Any]] = {}
+        self._source_status: dict[str, str] = {}
 
+    @timed("search")
+    @search_budget
     def search(self, request: SearchRequest) -> SearchResponse:
         if not request.query_text.strip():
             raise ValueError("query_text must not be empty")
 
+        self._source_status = {}
         started_at = perf_counter()
         dataset = self._resolve_dataset(request.dataset_id)
-        normalized = self._normalize_query(request)
+        normalized = bounded_call(self._normalize_query, request, max_seconds=15)
         run_id = new_id()
 
         # Init run data
@@ -161,11 +169,15 @@ class RetrievalService:
                 results = self._search_frame_level(run, dataset, request, normalized)
             run.status = "DONE"
             latency_ms = int((perf_counter() - started_at) * 1000)
-            normalized = {**normalized, "latency_ms": latency_ms}
+            degraded = any(value in {"degraded", "unavailable"} for value in self._source_status.values())
+            normalized = {**normalized, "latency_ms": latency_ms,
+                          "source_status": dict(self._source_status),
+                          "retrieval_mode": "degraded" if degraded else "indexed"}
             # Re-assign JSON fields so SQLAlchemy persists updated values reliably.
             run.normalized_query = normalized
             run.options = {**(run.options or {}), "latency_ms": latency_ms}
-            self.db.commit()
+            with stage("commit"):
+                self.db.commit()
         except Exception:
             self.db.rollback()
             try:
@@ -214,6 +226,7 @@ class RetrievalService:
         self.db.commit()
         return updated
 
+    @timed("history_cache")
     def _cache_search_history(self, response: SearchResponse) -> None:
         redis_url = (self.settings.redis_url or "").strip()
         if not redis_url:
@@ -247,6 +260,7 @@ class RetrievalService:
         with path.open("r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
 
+    @timed("dataset")
     def _resolve_dataset(self, dataset_id: str | None) -> Dataset:
         if dataset_id:
             dataset = self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -257,6 +271,7 @@ class RetrievalService:
         return dataset
 
     # Get request and return a normalized query dict with multi-view variants, temporal events, and retrieval weights.
+    @timed("planning")
     def _normalize_query(self, request: SearchRequest) -> dict[str, Any]:
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
         expansion_profile = profile.get("query_expansion", {})
@@ -405,6 +420,13 @@ class RetrievalService:
         }
         if agent_plan is not None:
             normalized["agent_query_plan"] = agent_plan.as_normalized_query()
+        if request.options.source_mode != "auto":
+            source = "caption" if request.options.source_mode == "scene" else request.options.source_mode
+            normalized["text_source_weights"] = {name: float(name == source) for name in ("ocr", "asr", "caption")}
+            normalized["text_source_weight_source"] = "user"
+            if source != "caption":
+                normalized["retrieval_weights"] = {"visual": 0.0, "text": 1.0}
+                normalized["retrieval_weight_source"] = "user"
         return normalized
 
     def _planner_for_request(self, request: SearchRequest) -> AgentQueryPlanner:
@@ -893,7 +915,7 @@ class RetrievalService:
             text_source_weights=normalized.get("text_source_weights"),
         )
         qa_frames_by_id: dict[str, Frame] = {}
-        if request.query_type == "QA" and candidates:
+        if request.query_type == "QA" and not request.options.defer_qa and candidates:
             top_frame_ids = [candidate.frame.id for candidate in candidates[: request.top_k]]
             qa_frames_by_id = {
                 frame.id: frame
@@ -906,11 +928,11 @@ class RetrievalService:
         for rank, candidate in enumerate(candidates[: request.top_k], start=1):
             frame = qa_frames_by_id.get(candidate.frame.id, candidate.frame)
             answer = None
-            if request.query_type == "QA":
+            if request.query_type == "QA" and not request.options.defer_qa and rank <= request.options.qa_candidate_limit:
                 evidence = self._frame_text(frame)
                 answer_hint = self._answer_hint(frame)
                 try:
-                    raw_answer = self.model_registry.visual_qa.answer(request.query_text, evidence, answer_hint)
+                    raw_answer = bounded_call(self.model_registry.visual_qa.answer, request.query_text, evidence, answer_hint)
                 except Exception:
                     raw_answer = answer_hint
                 answer = self._postprocess_qa_answer(raw_answer)
@@ -1615,6 +1637,7 @@ class RetrievalService:
             items.append(self._result_to_item(result))
         return items
 
+    @timed("ranking")
     def _rank_frames(
         self,
         dataset: Dataset,
@@ -1633,6 +1656,11 @@ class RetrievalService:
         text_weight = float(profile.get("metadata_weight", profile.get("text_weight", 0.25)))
         quality_weight = float(profile.get("quality_weight", profile.get("user_boost_weight", 0.05)))
         modality_weights = self._normalize_retrieval_weights(retrieval_weights)
+        if options.source_mode != "auto":
+            text_source_weights = {"ocr": 0.0, "asr": 0.0, "caption": 0.0}
+            text_source_weights["caption" if options.source_mode == "scene" else options.source_mode] = 1.0
+            if options.source_mode in {"ocr", "asr"}:
+                modality_weights = {"visual": 0.0, "text": 1.0}
         if modality_weights:
             modality_total = semantic_weight + text_weight
             semantic_weight = modality_total * modality_weights["visual"]
@@ -1661,14 +1689,19 @@ class RetrievalService:
         )
 
         dataset_video_ids = self._dataset_video_ids(dataset)
-        semantic_scores, semantic_backend_error = self._semantic_scores(
+        if options.video_codes:
+            dataset_video_ids &= {row[0] for row in self.db.query(Video.video_id).filter(
+                Video.dataset_id == dataset.id, Video.video_code.in_(options.video_codes)).all()}
+        if not dataset_video_ids:
+            return []
+        semantic_scores, semantic_backend_error = ({}, False) if options.source_mode in {"ocr", "asr"} else self._semantic_scores(
             semantic_variants,
             ann_top_k,
             dataset_video_ids,
             profile,
             request_visual_search_mode=options.visual_search_mode,
         )
-        if options.use_metadata:
+        if options.use_metadata or options.source_mode != "auto":
             text_scores, text_backend_error = self._text_scores(
                 text_variants,
                 semantic_variants,
@@ -1679,6 +1712,15 @@ class RetrievalService:
             )
         else:
             text_scores, text_backend_error = {}, False
+
+        # Aggregate across perspectives/events; never erase an earlier failure.
+        for name, error, scores, enabled in (
+            ("semantic", semantic_backend_error, semantic_scores, options.source_mode not in {"ocr", "asr"}),
+            ("text", text_backend_error, text_scores, options.use_metadata or options.source_mode != "auto"),
+        ):
+            state = "disabled" if not enabled else ("degraded" if scores else "unavailable") if error else "ok"
+            if self._source_status.get(name) not in {"degraded", "unavailable"}:
+                self._source_status[name] = state
 
         if options.strict_hybrid and (semantic_backend_error or text_backend_error):
             failed_backends: list[str] = []
@@ -1698,21 +1740,9 @@ class RetrievalService:
                 raise ValueError(
                     "strict_hybrid is enabled and hybrid retrieval returned no candidates; fallback ranking is disabled."
                 )
-            return self._fallback_rank_frames(
-                dataset=dataset,
-                variants=text_variants,
-                query_text=query_text,
-                profile=profile,
-                semantic_weight=semantic_weight,
-                text_weight=text_weight,
-                quality_weight=quality_weight,
-                rrf_enabled=rrf_enabled,
-                rrf_k=rrf_k,
-                rrf_blend=rrf_blend,
-                rrf_semantic_weight=rrf_semantic_weight,
-                rrf_text_weight=rrf_text_weight,
-                options=options,
-            )
+            # Empty indexed retrieval must remain empty. Scanning metadata here
+            # invents visual scores and makes no-match latency scale with dataset.
+            return []
 
         load_options = [joinedload(Frame.video)]
         if self._needs_frame_annotations(options):
@@ -1796,6 +1826,7 @@ class RetrievalService:
         reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
         return self._diversify_ranked_frames(reranked, profile)
 
+    @timed("semantic")
     def _semantic_scores(
         self,
         variants: list[str],
@@ -1828,7 +1859,8 @@ class RetrievalService:
                 try:
                     embedder = self.model_registry.embedder_for(target.model_key)
                     batch_embed = getattr(embedder, "embed_texts", None)
-                    vectors = batch_embed(variants) if callable(batch_embed) else [embedder.embed_text(value) for value in variants]
+                    with stage("embedding"):
+                        vectors = bounded_call(batch_embed, variants) if callable(batch_embed) else [bounded_call(embedder.embed_text, value) for value in variants]
                     if len(vectors) != len(variants):
                         raise ValueError(f"Embedding batch returned {len(vectors)} vectors for {len(variants)} queries.")
                     query_vectors_by_model[model_id] = vectors
@@ -1836,11 +1868,26 @@ class RetrievalService:
                     # Keep retrieval available even when one embedder runtime is misconfigured.
                     backend_error = True
                     query_vectors_by_model[model_id] = [[] for _ in variants]
-            for variant, query_vector in zip(variants, query_vectors_by_model[model_id], strict=True):
+            vector_batch = getattr(self.vector_client, "search_many", None)
+            valid_vectors = [(i,v) for i,v in enumerate(query_vectors_by_model[model_id]) if v]
+            batches = None
+            if callable(vector_batch) and valid_vectors:
+                try:
+                    with stage("vector_batch"):
+                        found = bounded_call(vector_batch, target.collection, [v for _,v in valid_vectors],
+                            top_k, filters={"video_id": sorted(dataset_video_ids)})
+                    if len(found) != len(valid_vectors):
+                        raise RuntimeError("Vector batch returned incomplete results")
+                    batches = {i:hits for (i,_),hits in zip(valid_vectors,found)}
+                except Exception:
+                    backend_error = True
+                    continue
+            for variant_index, (variant, query_vector) in enumerate(zip(variants, query_vectors_by_model[model_id], strict=True)):
                 if not query_vector:
                     continue
                 try:
-                    hits = self.vector_client.search(target.collection, query_vector, top_k=top_k)
+                    with stage("vector"):
+                        hits = batches[variant_index] if batches is not None else bounded_call(self.vector_client.search, target.collection, query_vector, top_k=top_k, filters={"video_id": sorted(dataset_video_ids)})
                 except Exception:
                     backend_error = True
                     continue
@@ -2073,6 +2120,7 @@ class RetrievalService:
             return "siglip2"
         return "openclip"
 
+    @timed("text")
     def _text_scores(
         self,
         lexical_variants: list[str],
@@ -2095,41 +2143,37 @@ class RetrievalService:
             ("ocr", lexical_variants, {"ocr_texts": ocr_boost}),
             ("caption", caption_variants, {"caption": caption_boost}),
         )
+        jobs = [(source,variant,boosts) for source,variants,boosts in source_searches
+                if any(boost>0 for boost in boosts.values()) for variant in variants]
+        batch = getattr(self.text_client, "search_many", None)
+        batch_results = None
+        if callable(batch):
+            try:
+                batch_results = bounded_call(batch, annotation_index(), [
+                    {"query":variant,"top_k":top_k,"boosts":boosts,"source_types":[source]}
+                    for source,variant,boosts in jobs], sorted(dataset_video_ids))
+            except Exception:
+                return {}, True
         scores: dict[str, float] = {}
         backend_error = False
-        for expected_source, variants, boosts in source_searches:
-            if not variants or not any(boost > 0 for boost in boosts.values()):
+        for index,(expected_source,variant,boosts) in enumerate(jobs):
+            try:
+                hits = batch_results[index] if batch_results is not None else bounded_call(self.text_client.search,
+                    annotation_index(), query=variant, top_k=top_k, boosts=boosts, source_types=[expected_source])
+                if isinstance(hits, Exception):
+                    raise hits
+            except Exception:
+                backend_error = True
                 continue
-            for variant in variants:
-                try:
-                    hits = self.text_client.search(
-                        "keyframe_annotations",
-                        query=variant,
-                        top_k=top_k,
-                        boosts=boosts,
-                        source_types=[expected_source],
-                    )
-                except Exception:
-                    backend_error = True
+            for hit in hits:
+                frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
+                if not frame_id or self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
                     continue
-                for hit in hits:
-                    frame_id = self._resolve_keyframe_id(hit.id, hit.metadata)
-                    if not frame_id:
-                        continue
-                    if dataset_video_ids and self._resolve_video_id(frame_id, hit.metadata) not in dataset_video_ids:
-                        continue
-                    score = max(0.0, float(hit.score))
-                    existing = scores.get(frame_id, 0.0)
-                    if score > existing:
-                        scores[frame_id] = score
-                        self._text_hit_sources[frame_id] = self._text_source_hit(
-                            metadata=hit.metadata,
-                            score=score,
-                            resolved_frame_id=frame_id,
-                            variant=variant,
-                            expected_source=expected_source,
-                            source_weights=source_weights,
-                        )
+                score = max(0.0,float(hit.score))
+                if score > scores.get(frame_id,0.0):
+                    scores[frame_id]=score
+                    self._text_hit_sources[frame_id]=self._text_source_hit(metadata=hit.metadata,score=score,
+                        resolved_frame_id=frame_id,variant=variant,expected_source=expected_source,source_weights=source_weights)
         return scores, backend_error
 
     def _text_source_hit(
@@ -2153,6 +2197,7 @@ class RetrievalService:
             "field": {"asr": "asr_text", "caption": "caption", "ocr": "ocr_texts"}.get(expected_source, "metadata"),
             "text_source_weights": source_weights,
             "snippet": self._text_hit_snippet(metadata),
+            "index_version": metadata.get('_index'),
         }
 
     def _text_hit_snippet(self, metadata: dict[str, Any]) -> str:
@@ -2169,92 +2214,6 @@ class RetrievalService:
         if value:
             return value[:240]
         return ""
-
-    def _fallback_rank_frames(
-        self,
-        dataset: Dataset,
-        variants: list[str],
-        query_text: str,
-        profile: dict[str, Any],
-        semantic_weight: float,
-        text_weight: float,
-        quality_weight: float,
-        rrf_enabled: bool,
-        rrf_k: float,
-        rrf_blend: float,
-        rrf_semantic_weight: float,
-        rrf_text_weight: float,
-        options: SearchOptions,
-    ) -> list[FrameScore]:
-        frames = (
-            self.db.query(Frame)
-            .options(joinedload(Frame.video), selectinload(Frame.annotations))
-            .join(Frame.video)
-            .filter(Video.dataset_id == dataset.id)
-            .all()
-        )
-        filtered_frames, filter_debug = self._apply_filters(frames, options)
-        if not filtered_frames:
-            return []
-
-        overlap_scores = {
-            frame.keyframe_id: max(cosine_like_overlap(variant, self._frame_text(frame)) for variant in variants)
-            for frame in filtered_frames
-        }
-        overlap_rank_map = self._rank_map(overlap_scores, set(overlap_scores))
-
-        intermediate: list[dict[str, Any]] = []
-        max_rrf_raw = 0.0
-        for frame in filtered_frames:
-            overlap_score = overlap_scores.get(frame.keyframe_id, 0.0)
-            quality_score = max(0.0, min(1.0, float(frame.quality_score or 0.0)))
-            weighted_score = (
-                semantic_weight * overlap_score
-                + text_weight * overlap_score
-                + quality_weight * quality_score
-            )
-            rrf_raw = 0.0
-            if rrf_enabled:
-                overlap_rank = overlap_rank_map.get(frame.keyframe_id)
-                overlap_rrf = (1.0 / (rrf_k + overlap_rank)) if overlap_rank else 0.0
-                rrf_raw = (rrf_semantic_weight + rrf_text_weight) * overlap_rrf
-                max_rrf_raw = max(max_rrf_raw, rrf_raw)
-            intermediate.append(
-                {
-                    "frame": frame,
-                    "overlap_score": overlap_score,
-                    "quality_score": quality_score,
-                    "weighted_score": weighted_score,
-                    "rrf_raw": rrf_raw,
-                }
-            )
-
-        scored: list[FrameScore] = []
-        for item in intermediate:
-            frame = item["frame"]
-            rrf_score = (item["rrf_raw"] / max_rrf_raw) if rrf_enabled and max_rrf_raw > 0 else 0.0
-            final_score = (
-                (1.0 - rrf_blend) * item["weighted_score"] + rrf_blend * rrf_score
-                if rrf_enabled
-                else item["weighted_score"]
-            )
-            scored.append(
-                FrameScore(
-                    frame=frame,
-                    semantic_score=item["overlap_score"],
-                    text_score=item["overlap_score"],
-                    quality_score=item["quality_score"],
-                    weighted_score=item["weighted_score"],
-                    rrf_score=rrf_score,
-                    final_score=final_score,
-                    filter_debug=filter_debug.get(frame.keyframe_id, {}),
-                    source_hit={},
-                    text_hit={},
-                )
-            )
-        scored.sort(key=lambda item: (item.final_score, item.frame.frame_idx), reverse=True)
-        reranked = self._apply_reranking(query_text=query_text, scored=scored, profile=profile, options=options)
-        return self._diversify_ranked_frames(reranked, profile)
 
     def _apply_reranking(
         self,
@@ -2284,7 +2243,7 @@ class RetrievalService:
         top_items = scored[:top_k]
         passages = [self._frame_text(item.frame) or item.frame.video.video_code for item in top_items]
         try:
-            cross_scores = reranker.rerank(query_text, passages)
+            cross_scores = bounded_call(reranker.rerank, query_text, passages)
         except Exception:
             cross_scores = [0.0 for _ in top_items]
         cross_scores = self._normalize_signal(cross_scores)
@@ -2295,7 +2254,7 @@ class RetrievalService:
                 evidence = passages[index]
                 answer_hint = self._answer_hint(item.frame)
                 try:
-                    answer = self.model_registry.visual_qa.answer(query_text, evidence, answer_hint)
+                    answer = bounded_call(self.model_registry.visual_qa.answer, query_text, evidence, answer_hint)
                 except Exception:
                     answer = ""
                 mllm_scores[index] = self._alignment_score(query_text, answer or evidence, evidence)
@@ -2706,7 +2665,8 @@ class RetrievalService:
                 return str(hint)
         return None
 
-    def _postprocess_qa_answer(self, answer: str | None) -> str | None:
+    @staticmethod
+    def _postprocess_qa_answer(answer: str | None) -> str | None:
         if answer is None:
             return None
         normalized = " ".join(str(answer).split())

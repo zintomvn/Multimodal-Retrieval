@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+import json
+import re
 
 from app.adapters.vector_db.base import VectorHit
 
@@ -25,6 +27,15 @@ _SEARCH_OUTPUT_FIELDS = [
 
 class MilvusVectorSearchClient:
     """Thin optional wrapper. Import pymilvus only when this adapter is enabled."""
+
+    def search_many(self, collection, vectors, top_k, filters=None):
+        if not vectors:
+            return []
+        self._ensure_client()
+        raw = self.client.search(collection_name=collection, data=vectors, limit=top_k,
+            filter=self._to_filter_expr(filters or {}), output_fields=_SEARCH_OUTPUT_FIELDS,
+            timeout=self.search_timeout_s)
+        return [[VectorHit(id=str(hit['id']),score=float(hit['distance']),metadata=hit.get('entity',{})) for hit in group] for group in raw]
 
     def __init__(self, uri: str, token: str = "") -> None:
         self.uri = uri
@@ -105,10 +116,10 @@ class MilvusVectorSearchClient:
     def _to_filter_expr(self, filters: dict) -> str:
         parts = []
         for key, value in filters.items():
-            if isinstance(value, str):
-                parts.append(f'{key} == "{value}"')
-            else:
-                parts.append(f"{key} == {value}")
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError("Invalid vector filter field")
+            operator = "in" if isinstance(value, list) else "=="
+            parts.append(f"{key} {operator} {json.dumps(value)}")
         return " and ".join(parts)
 
     def _ensure_collection(self, collection: str, dimension: int) -> None:

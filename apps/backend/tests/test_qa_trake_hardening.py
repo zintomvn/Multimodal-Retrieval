@@ -58,6 +58,7 @@ class TextClientForTrake:
 class RecordingTextClientForFourEventTrake:
     def __init__(self) -> None:
         self.queries: list[str] = []
+        self.requests: list[tuple[str, tuple[str, ...]]] = []
         self.mapping: dict[str, list[TextHit]] = {
             "The moment the batter is added to the bowl of asparagus": [
                 TextHit(id="L30_V001_F000100", score=5.0, metadata={"keyframe_id": "L30_V001_F000100", "video_id": "L30_V001"}),
@@ -76,6 +77,7 @@ class RecordingTextClientForFourEventTrake:
     def search(self, index: str, query: str, top_k: int, boosts: dict[str, float] | None = None, source_types: list[str] | None = None) -> list[TextHit]:
         _ = (index, top_k, boosts, source_types)
         self.queries.append(query)
+        self.requests.append((query, tuple(source_types or [])))
         return self.mapping.get(query, [])
 
     def upsert(self, index: str, documents: list[tuple[str, dict]]) -> int:
@@ -263,7 +265,7 @@ def test_trake_labeled_query_searches_every_event_as_separate_query(tmp_path: Pa
         )
     )
 
-    assert text_client.queries == [event for event in events for _ in range(3)]
+    assert set(text_client.requests) == {(event, (source,)) for event in events for source in ("asr", "caption")}
     assert response.normalized_query["temporal_events"] == events
     assert response.normalized_query["temporal_event_count"] == 4
     assert response.normalized_query["temporal_event_source"] == "event_labels"

@@ -402,3 +402,43 @@ select count(*) from events;
 | Export ZIP invalid | Gọi `/api/submissions/{id}/validate` để xem `errors`. |
 | Model thật không load | Kiểm tra `checkpoint_uri`, `device`, dependency GPU và adapter init. |
 | Milvus/Elasticsearch chưa có dữ liệu | Chạy ingest vector/text index rồi kiểm tra collection/index tương ứng. |
+# Request diagnostics (A20)
+
+## Explicit retrieval sources (A09/A11)
+
+Search options accept `source_mode`: auto (default), ocr, asr, scene. OCR/ASR
+skip visual embedding and override heuristic text routing, even when use_metadata
+was disabled. Scene searches visual/caption evidence. The web submits search once;
+normalized planning remains in the response rather than running a separate plan
+request before search. Explicit temporal_events are sent when edited in the UI.
+
+## Submission format contract (B02/A06)
+
+`POST /api/submissions/{id}/export?format=csv|zip` defaults to CSV for one query.
+Multiple queries require ZIP, containing `submission/<query_name>.csv` files.
+`GET /api/submissions/{id}/download?format=csv|zip` serves only validated exports.
+Response `csv_uri` and `zip_uri` refer only to the corresponding artifact type.
+New CSV paths live in validation_report.artifacts; legacy CSV-in-zip_uri records
+remain readable without a schema migration. Editing rows invalidates old exports.
+
+## Indexed retrieval status (A03)
+
+Search `normalized_query` adds `retrieval_mode` (`indexed` or `degraded`) and
+`source_status` for semantic/text (`ok`, `disabled`, `degraded`, `unavailable`).
+These are observed per request, not readiness probes. Failures aggregate across
+events/perspectives. Empty indexed retrieval stays empty; the full-dataset ORM
+fallback is removed. Existing strict-hybrid errors remain unchanged. An ES
+outage/missing index propagates to the service rather than masquerading as no hits.
+
+HTTP responses expose `X-Request-ID` (server-generated) and `Server-Timing`
+through CORS. Timings are milliseconds; nested stages overlap and must not be
+summed. `request` measures time to response headers, including successful search
+commit and synchronous history cache. It excludes network transfer and browser
+rendering. `search` includes those persistence/cache stages; the legacy
+`normalized_query.latency_ms` remains pre-commit for compatibility.
+
+Available retrieval spans: dataset, planning, ranking, semantic, text, fallback,
+commit, history_cache, search. Planning includes normalization/expansion;
+semantic includes embedding/vector calls. Finer provider/QA breakdown remains
+follow-up work. Repeated stages aggregate duration and log call counts. Logs
+contain IDs, status and durations, not request bodies, queries or credentials.
