@@ -1,0 +1,2144 @@
+{
+  "http": {
+    "scope": "Paired sequential requests; alternating variant order; production stacks; identical initial DB snapshots; OS cache uncontrolled",
+    "measurements": {
+      "gallery": {
+        "before": {
+          "samples_ms": [
+            334.2,
+            284.63,
+            287.64,
+            278.93,
+            298.18,
+            272.5,
+            279.95,
+            282.27,
+            298.53,
+            407.75,
+            436.92,
+            363.22,
+            345.32,
+            304.72,
+            306.2,
+            295.09,
+            287.2,
+            296.54,
+            668.05,
+            460.75,
+            444.74,
+            392.78,
+            338.78,
+            431.84,
+            313.89,
+            326.49,
+            380.62,
+            269.36,
+            260.15,
+            295.03
+          ],
+          "fingerprints": [
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12"
+          ],
+          "first_observed_ms": 382.38,
+          "frame_count": 48,
+          "n": 30,
+          "p50_ms": 305.46000000000004,
+          "p95_ms": 460.75,
+          "min_ms": 260.15,
+          "max_ms": 668.05
+        },
+        "after": {
+          "samples_ms": [
+            17.05,
+            22.15,
+            20.93,
+            17.9,
+            16.65,
+            17.21,
+            13.96,
+            10.94,
+            4.79,
+            55.16,
+            19.74,
+            23.36,
+            18.72,
+            5.93,
+            6.45,
+            12.67,
+            16.89,
+            18.48,
+            33.07,
+            8.78,
+            9.42,
+            9.14,
+            31.56,
+            6.9,
+            9.47,
+            20.69,
+            15.54,
+            280.92,
+            30.78,
+            17.38
+          ],
+          "fingerprints": [
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12",
+            "b37449f6e2d7cd3df26b41abae9322fdc8888f4457ab15f08996882e95894b12"
+          ],
+          "first_observed_ms": 2254.26,
+          "frame_count": 48,
+          "n": 30,
+          "p50_ms": 17.130000000000003,
+          "p95_ms": 55.16,
+          "min_ms": 4.79,
+          "max_ms": 280.92
+        },
+        "ordered_frame_parity": true
+      },
+      "video_lookup": {
+        "before": {
+          "samples_ms": [
+            12.69,
+            18.41,
+            18.1,
+            14.31,
+            7.48,
+            25.87,
+            18.02,
+            29.05,
+            16.7,
+            6.15,
+            20.94,
+            15.88,
+            17.41,
+            15.58,
+            29.56,
+            14.28,
+            8.44,
+            7.63,
+            9.46,
+            24.2,
+            17.5,
+            7.26,
+            19.25,
+            8.85,
+            28.38,
+            16.44,
+            9.0,
+            25.45,
+            16.42,
+            16.6
+          ],
+          "fingerprints": [
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309"
+          ],
+          "first_observed_ms": 20.09,
+          "frame_count": 12,
+          "n": 30,
+          "p50_ms": 16.520000000000003,
+          "p95_ms": 29.05,
+          "min_ms": 6.15,
+          "max_ms": 29.56
+        },
+        "after": {
+          "samples_ms": [
+            7.74,
+            18.17,
+            19.41,
+            5.68,
+            8.72,
+            13.69,
+            15.95,
+            13.94,
+            16.69,
+            13.2,
+            7.57,
+            13.49,
+            16.87,
+            15.16,
+            4.49,
+            14.52,
+            16.73,
+            15.84,
+            14.54,
+            31.42,
+            12.99,
+            4.68,
+            18.87,
+            18.53,
+            5.24,
+            13.4,
+            16.05,
+            7.33,
+            6.94,
+            13.35
+          ],
+          "fingerprints": [
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309",
+            "489cb09425737d124579bb947312150eccdf511de8cb4ba6c2007b7fed9d6309"
+          ],
+          "first_observed_ms": 17.22,
+          "frame_count": 12,
+          "n": 30,
+          "p50_ms": 13.815,
+          "p95_ms": 19.41,
+          "min_ms": 4.49,
+          "max_ms": 31.42
+        },
+        "ordered_frame_parity": true
+      }
+    }
+  },
+  "search": {
+    "scope": "KIS auto; planning, expansion, reranker disabled identically; semantic runtime availability unchanged; no labeled relevance claim",
+    "samples": [
+      {
+        "variant": "before",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": null,
+        "ms": 5508.4
+      },
+      {
+        "variant": "after",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 5400.32
+      },
+      {
+        "variant": "after",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 5554.19
+      },
+      {
+        "variant": "before",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": null,
+        "ms": 5434.69
+      },
+      {
+        "variant": "before",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": null,
+        "ms": 5214.75
+      },
+      {
+        "variant": "after",
+        "query": "PHU XUAN GIA DINH",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L30_V074_F005372",
+          "L27_V010_F003105",
+          "L22_V002_F002625",
+          "L26_V268_F002798",
+          "L26_V478_F001782",
+          "L28_V013_F013309",
+          "L30_V045_F001191",
+          "L28_V005_F002685",
+          "L25_V042_F047945",
+          "L26_V249_F003120",
+          "L25_V076_F001482",
+          "L26_V280_F001380",
+          "L26_V378_F001702",
+          "L29_V012_F007434",
+          "L22_V028_F006008",
+          "L28_V004_F011047",
+          "L30_V014_F002857",
+          "L30_V050_F000938",
+          "L30_V066_F004277",
+          "L26_V191_F000596"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4923.78
+      },
+      {
+        "variant": "before",
+        "query": "thành phố",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": null,
+        "ms": 5458.88
+      },
+      {
+        "variant": "after",
+        "query": "thành phố",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 5265.93
+      },
+      {
+        "variant": "after",
+        "query": "thành phố",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4724.23
+      },
+      {
+        "variant": "before",
+        "query": "thành phố",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": null,
+        "ms": 4716.47
+      },
+      {
+        "variant": "before",
+        "query": "thành phố",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": null,
+        "ms": 4780.74
+      },
+      {
+        "variant": "after",
+        "query": "thành phố",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L22_V004_F002725",
+          "L25_V031_F001911",
+          "L29_V005_F008022",
+          "L25_V013_F002382",
+          "L25_V078_F031703",
+          "L27_V007_F002165",
+          "L21_V027_F026830",
+          "L24_V030_F008661",
+          "L22_V026_F000620",
+          "L22_V023_F005845",
+          "L24_V037_F003513",
+          "L30_V030_F004624",
+          "L27_V009_F012895",
+          "L27_V010_F013581",
+          "L30_V067_F000467",
+          "L21_V026_F004155",
+          "L22_V017_F017655",
+          "L24_V028_F009746",
+          "L22_V025_F004370",
+          "L21_V028_F009813"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4728.47
+      },
+      {
+        "variant": "before",
+        "query": "Việt Nam",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": null,
+        "ms": 4954.37
+      },
+      {
+        "variant": "after",
+        "query": "Việt Nam",
+        "iteration": 0,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4727.72
+      },
+      {
+        "variant": "after",
+        "query": "Việt Nam",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4972.88
+      },
+      {
+        "variant": "before",
+        "query": "Việt Nam",
+        "iteration": 1,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": null,
+        "ms": 4989.55
+      },
+      {
+        "variant": "before",
+        "query": "Việt Nam",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": null,
+        "ms": 4787.62
+      },
+      {
+        "variant": "after",
+        "query": "Việt Nam",
+        "iteration": 2,
+        "status": 200,
+        "frame_ids": [
+          "L26_V398_F007746",
+          "L25_V064_F019432",
+          "L26_V241_F007575",
+          "L26_V213_F007791",
+          "L26_V341_F007575",
+          "L26_V030_F006821",
+          "L26_V314_F008009",
+          "L26_V291_F007442",
+          "L26_V247_F007878",
+          "L22_V004_F014202",
+          "L21_V002_F004229",
+          "L26_V033_F008441",
+          "L26_V413_F007136",
+          "L26_V410_F007680",
+          "L26_V262_F008006",
+          "L26_V255_F007708",
+          "L26_V249_F007775",
+          "L26_V013_F008406",
+          "L26_V026_F007407",
+          "L26_V080_F007493"
+        ],
+        "source_status": {
+          "semantic": "unavailable",
+          "text": "ok"
+        },
+        "ms": 4927.39
+      }
+    ],
+    "summary": {
+      "before": {
+        "n": 9,
+        "p50_ms": 4989.55,
+        "p95_ms": 5508.4,
+        "min_ms": 4716.47,
+        "max_ms": 5508.4,
+        "errors": 0
+      },
+      "after": {
+        "n": 9,
+        "p50_ms": 4927.39,
+        "p95_ms": 5554.19,
+        "min_ms": 4724.23,
+        "max_ms": 5554.19,
+        "errors": 0
+      }
+    }
+  },
+  "media_http": {
+    "context": {
+      "before": {
+        "n": 20,
+        "p50_ms": 8.205,
+        "p95_ms": 26.11,
+        "min_ms": 5.4,
+        "max_ms": 31.95,
+        "samples_ms": [
+          14.43,
+          5.4,
+          11.29,
+          16.41,
+          14.47,
+          8.21,
+          8.2,
+          7.9,
+          7.07,
+          7.67,
+          26.11,
+          9.04,
+          7.25,
+          7.32,
+          8.0,
+          13.89,
+          7.33,
+          7.91,
+          16.32,
+          31.95
+        ]
+      },
+      "after": {
+        "n": 20,
+        "p50_ms": 16.33,
+        "p95_ms": 33.65,
+        "min_ms": 8.68,
+        "max_ms": 33.77,
+        "samples_ms": [
+          17.43,
+          14.69,
+          16.29,
+          33.65,
+          13.9,
+          16.61,
+          16.05,
+          15.26,
+          16.37,
+          21.71,
+          21.46,
+          30.64,
+          19.8,
+          8.68,
+          26.06,
+          10.79,
+          33.77,
+          9.7,
+          9.53,
+          11.18
+        ]
+      }
+    },
+    "evidence": {
+      "before": {
+        "n": 20,
+        "p50_ms": 19.35,
+        "p95_ms": 50.07,
+        "min_ms": 16.1,
+        "max_ms": 58.07,
+        "samples_ms": [
+          17.22,
+          19.31,
+          19.0,
+          18.91,
+          17.41,
+          21.19,
+          19.4,
+          16.12,
+          16.1,
+          19.25,
+          20.46,
+          17.93,
+          16.72,
+          50.07,
+          19.39,
+          20.7,
+          58.07,
+          23.11,
+          21.25,
+          22.84
+        ]
+      },
+      "after": {
+        "n": 20,
+        "p50_ms": 19.56,
+        "p95_ms": 34.68,
+        "min_ms": 12.29,
+        "max_ms": 35.75,
+        "samples_ms": [
+          12.29,
+          33.19,
+          25.32,
+          13.05,
+          13.21,
+          28.68,
+          32.27,
+          13.15,
+          12.97,
+          19.13,
+          19.99,
+          17.28,
+          15.8,
+          15.28,
+          14.11,
+          34.68,
+          30.83,
+          32.74,
+          35.75,
+          28.96
+        ]
+      }
+    },
+    "gallery_concurrency4": {
+      "before": {
+        "n": 40,
+        "p50_ms": 705.48,
+        "p95_ms": 865.04,
+        "min_ms": 599.72,
+        "max_ms": 905.74,
+        "samples_ms": [
+          702.0,
+          718.84,
+          722.95,
+          723.08,
+          679.43,
+          654.26,
+          669.12,
+          662.8,
+          747.08,
+          789.45,
+          754.89,
+          762.8,
+          755.25,
+          750.5,
+          734.96,
+          754.27,
+          681.4,
+          695.54,
+          680.12,
+          700.1,
+          863.19,
+          903.78,
+          865.04,
+          905.74,
+          708.96,
+          700.62,
+          691.43,
+          697.48,
+          724.29,
+          717.76,
+          718.46,
+          753.82,
+          682.26,
+          667.06,
+          694.34,
+          678.99,
+          606.45,
+          608.25,
+          646.12,
+          599.72
+        ],
+        "errors": 0
+      },
+      "after": {
+        "n": 40,
+        "p50_ms": 29.564999999999998,
+        "p95_ms": 53.35,
+        "min_ms": 8.13,
+        "max_ms": 60.43,
+        "samples_ms": [
+          18.44,
+          23.85,
+          26.73,
+          32.21,
+          13.34,
+          17.33,
+          60.43,
+          53.35,
+          47.62,
+          45.58,
+          29.38,
+          18.01,
+          22.36,
+          25.7,
+          19.23,
+          9.06,
+          50.81,
+          58.45,
+          52.84,
+          44.95,
+          15.55,
+          37.81,
+          8.13,
+          26.02,
+          30.44,
+          34.46,
+          33.02,
+          18.48,
+          30.61,
+          19.7,
+          29.75,
+          23.16,
+          42.47,
+          39.34,
+          26.72,
+          49.73,
+          35.43,
+          39.44,
+          25.26,
+          15.96
+        ],
+        "errors": 0
+      }
+    }
+  },
+  "regressions_initial": [
+    {
+      "name": "workspace",
+      "scope": "live",
+      "pass": true,
+      "result": {
+        "taskDrafts": true,
+        "reload": true,
+        "options": true,
+        "selections": true,
+        "uniqueQuery": true
+      }
+    },
+    {
+      "name": "keyboard_layout",
+      "scope": "live",
+      "pass": true,
+      "result": {
+        "searchUncoveredAt": [
+          390,
+          1024,
+          1180,
+          1440
+        ],
+        "modalFocus": true,
+        "tabCycle": true,
+        "escape": true,
+        "focusRestored": true
+      }
+    },
+    {
+      "name": "responsive_controls",
+      "scope": "live",
+      "pass": true,
+      "result": {
+        "drawers": [
+          {
+            "width": 390,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 390,
+            "side": "selected frames",
+            "uncovered": true
+          },
+          {
+            "width": 900,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 900,
+            "side": "selected frames",
+            "uncovered": true
+          },
+          {
+            "width": 1024,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 1024,
+            "side": "selected frames",
+            "uncovered": true
+          },
+          {
+            "width": 1152,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 1152,
+            "side": "selected frames",
+            "uncovered": true
+          },
+          {
+            "width": 1180,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 1180,
+            "side": "selected frames",
+            "uncovered": true
+          },
+          {
+            "width": 1440,
+            "side": "left",
+            "uncovered": true
+          },
+          {
+            "width": 1440,
+            "side": "selected frames",
+            "uncovered": true
+          }
+        ],
+        "zoom125EquivalentCssWidth": 1152,
+        "settingsFocus": true,
+        "toggleSemantics": true,
+        "mutedContrast": true
+      }
+    },
+    {
+      "name": "export_zip",
+      "scope": "live",
+      "pass": true,
+      "result": {
+        "filename": "submission.zip",
+        "rows": 3
+      }
+    },
+    {
+      "name": "search_reliability",
+      "scope": "controlled failures",
+      "pass": false
+    },
+    {
+      "name": "qa_workflow",
+      "scope": "mock model",
+      "pass": true,
+      "result": {
+        "deferred": true,
+        "singlePlanning": true,
+        "manualAnswer": true,
+        "gridRendersWhileTyping": 0,
+        "gridRendersDuringPlaybackUpdates": 0
+      }
+    },
+    {
+      "name": "trake_editor",
+      "scope": "mock retrieval",
+      "pass": true,
+      "result": {
+        "editedEventPayload": true,
+        "preservedOtherEvents": true,
+        "preservedAcrossRerun": true,
+        "eventCount": 3
+      }
+    },
+    {
+      "name": "export_validation",
+      "scope": "controlled failures",
+      "pass": true,
+      "result": {
+        "invalidBlocked": true,
+        "outageBlocked": true,
+        "noLocalFallback": true
+      }
+    }
+  ],
+  "regression_isolated": [
+    {
+      "name": "search_reliability",
+      "scope": "controlled failures",
+      "pass": true,
+      "result": {
+        "outageNoMock": true,
+        "retryRecovered": true,
+        "duplicateBlocked": true,
+        "staleResponseBlocked": true,
+        "errorDistinctFromEmpty": true
+      }
+    }
+  ],
+  "browser": {
+    "variants": {
+      "before": {
+        "gallery_ms": [
+          878,
+          397,
+          414,
+          889,
+          879,
+          384,
+          442,
+          900,
+          465,
+          407
+        ],
+        "preview_ms": [
+          136,
+          95,
+          71,
+          88,
+          71
+        ],
+        "checks": {
+          "gallery48": true,
+          "previewFocus": false,
+          "escapeClosesPreview": false,
+          "selection": true,
+          "exportDownloaded": true,
+          "draftReload": false,
+          "selectionReload": false
+        },
+        "video": {
+          "readyState": 4,
+          "error": null,
+          "duration": 1261.725896
+        },
+        "export": {
+          "ms": 315,
+          "filename": "query-1-kis.csv",
+          "selected": "1\nL21_V001\nKIS | query-1-kis\n0"
+        },
+        "responsive": [
+          {
+            "width": 390,
+            "searchUncovered": false,
+            "overflow": false
+          },
+          {
+            "width": 900,
+            "searchUncovered": false,
+            "overflow": false
+          },
+          {
+            "width": 1024,
+            "searchUncovered": false,
+            "overflow": false
+          },
+          {
+            "width": 1152,
+            "searchUncovered": false,
+            "overflow": false
+          },
+          {
+            "width": 1180,
+            "searchUncovered": false,
+            "overflow": false
+          },
+          {
+            "width": 1440,
+            "searchUncovered": true,
+            "overflow": false
+          }
+        ],
+        "pageErrors": []
+      },
+      "after": {
+        "gallery_ms": [
+          929,
+          281,
+          240,
+          256,
+          180,
+          226,
+          184,
+          173,
+          193,
+          168
+        ],
+        "preview_ms": [
+          80,
+          281,
+          246,
+          112,
+          174
+        ],
+        "checks": {
+          "gallery48": true,
+          "previewFocus": true,
+          "escapeClosesPreview": true,
+          "selection": true,
+          "exportDownloaded": true,
+          "draftReload": true,
+          "selectionReload": true
+        },
+        "video": {
+          "readyState": 4,
+          "error": null,
+          "duration": 1261.725896
+        },
+        "export": {
+          "ms": 280,
+          "filename": "query-e6797f12-a0b5-407d-a196-22365288193b-kis.csv",
+          "selected": "1\nL21_V001\nKIS | query-e6797f12-a0b5-407d-a196-22365288193b-kis\n0"
+        },
+        "responsive": [
+          {
+            "width": 390,
+            "searchUncovered": true,
+            "overflow": false
+          },
+          {
+            "width": 900,
+            "searchUncovered": true,
+            "overflow": false
+          },
+          {
+            "width": 1024,
+            "searchUncovered": true,
+            "overflow": false
+          },
+          {
+            "width": 1152,
+            "searchUncovered": true,
+            "overflow": false
+          },
+          {
+            "width": 1180,
+            "searchUncovered": true,
+            "overflow": false
+          },
+          {
+            "width": 1440,
+            "searchUncovered": true,
+            "overflow": false
+          }
+        ],
+        "pageErrors": []
+      }
+    },
+    "scope": "Production browser, live API/database/media, no response mocks"
+  },
+  "live_search": [
+    {
+      "variant": "before",
+      "flow": "KIS live search",
+      "iteration": 0,
+      "ms": 6061,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "before",
+      "flow": "KIS live search",
+      "iteration": 1,
+      "ms": 6110,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "before",
+      "flow": "KIS live search",
+      "iteration": 2,
+      "ms": 5735,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "before",
+      "flow": "Video lookup",
+      "ms": 83,
+      "status": 200,
+      "results": 50,
+      "correctVideo": true
+    },
+    {
+      "variant": "after",
+      "flow": "KIS live search",
+      "iteration": 0,
+      "ms": 6617,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "source_mode": "auto",
+        "defer_qa": true,
+        "video_codes": [],
+        "time_range_start_seconds": null,
+        "time_range_end_seconds": null,
+        "temporal_events": [],
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "after",
+      "flow": "KIS live search",
+      "iteration": 1,
+      "ms": 5650,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "source_mode": "auto",
+        "defer_qa": true,
+        "video_codes": [],
+        "time_range_start_seconds": null,
+        "time_range_end_seconds": null,
+        "temporal_events": [],
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "after",
+      "flow": "KIS live search",
+      "iteration": 2,
+      "ms": 5403,
+      "status": 200,
+      "results": 50,
+      "frames": [
+        "L30_V074_F005372",
+        "L27_V010_F003105",
+        "L22_V002_F002625",
+        "L26_V268_F002798",
+        "L26_V478_F001782",
+        "L28_V013_F013309",
+        "L30_V045_F001191",
+        "L28_V005_F002685",
+        "L25_V042_F047945",
+        "L26_V249_F003120",
+        "L25_V076_F001482",
+        "L26_V280_F001380",
+        "L26_V378_F001702",
+        "L29_V012_F007434",
+        "L22_V028_F006008",
+        "L28_V004_F011047",
+        "L30_V014_F002857",
+        "L30_V050_F000938",
+        "L30_V066_F004277",
+        "L26_V191_F000596",
+        "L26_V312_F003846",
+        "L26_V322_F000376",
+        "L30_V095_F000703",
+        "L21_V009_F027868",
+        "L26_V013_F007564",
+        "L30_V015_F000531",
+        "L28_V007_F016223",
+        "L28_V003_F018225",
+        "L28_V019_F000006",
+        "L28_V020_F000006",
+        "L30_V059_F002852",
+        "L26_V014_F006964",
+        "L22_V018_F010141",
+        "L26_V444_F007135",
+        "L28_V023_F000006",
+        "L29_V018_F024439",
+        "L26_V030_F005771",
+        "L26_V216_F006714",
+        "L28_V015_F000006",
+        "L28_V021_F000000",
+        "L28_V022_F000006",
+        "L28_V024_F000000",
+        "L29_V007_F003159",
+        "L22_V024_F026131",
+        "L27_V015_F011238",
+        "L21_V024_F001886",
+        "L28_V006_F000000",
+        "L28_V008_F000000",
+        "L28_V009_F000000",
+        "L28_V016_F024935"
+      ],
+      "options": {
+        "use_query_expansion": false,
+        "use_agent_query_planning": false,
+        "agent_model": "gpt-4o",
+        "use_metadata": true,
+        "use_reranker": true,
+        "strict_hybrid": false,
+        "visual_search_mode": "openclip",
+        "source_mode": "auto",
+        "defer_qa": true,
+        "video_codes": [],
+        "time_range_start_seconds": null,
+        "time_range_end_seconds": null,
+        "temporal_events": [],
+        "delta_t_max_ms": 180000,
+        "temporal_mode": false,
+        "temporal_strategy": "vortex_k_context"
+      }
+    },
+    {
+      "variant": "after",
+      "flow": "Video lookup",
+      "ms": 73,
+      "status": 200,
+      "results": 50,
+      "correctVideo": true
+    }
+  ],
+  "media_browser": [
+    {
+      "variant": "before",
+      "playback": {
+        "before": 0,
+        "after": 0.556475,
+        "advanced": true
+      },
+      "evidenceSections": {
+        "ocr": true,
+        "asr": true,
+        "caption": true
+      },
+      "firstRequests": [
+        "videos/L21_V001/preview-url",
+        "frames/L21_V001_F000000/context",
+        "videos/L21_V001/evidence"
+      ],
+      "reopenedRequests": [
+        "videos/L21_V001/preview-url",
+        "frames/L21_V001_F000000/context",
+        "videos/L21_V001/evidence"
+      ]
+    },
+    {
+      "variant": "after",
+      "playback": {
+        "before": 0,
+        "after": 0.565422,
+        "advanced": true
+      },
+      "evidenceSections": {
+        "ocr": true,
+        "asr": true,
+        "caption": true
+      },
+      "firstRequests": [
+        "videos/L21_V001/preview-url",
+        "frames/L21_V001_F000000/context",
+        "videos/L21_V001/preview",
+        "videos/L21_V001/evidence"
+      ],
+      "reopenedRequests": [
+        "videos/L21_V001/preview-url",
+        "videos/L21_V001/preview"
+      ]
+    }
+  ],
+  "bootstrap_repeated": [
+    {
+      "iteration": 0,
+      "calls": 1,
+      "retry": 1,
+      "frames": 0,
+      "disabled": true
+    },
+    {
+      "iteration": 1,
+      "calls": 1,
+      "retry": 1,
+      "frames": 0,
+      "disabled": true
+    },
+    {
+      "iteration": 2,
+      "calls": 1,
+      "retry": 1,
+      "frames": 0,
+      "disabled": true
+    },
+    {
+      "iteration": 3,
+      "calls": 1,
+      "retry": 1,
+      "frames": 0,
+      "disabled": true
+    },
+    {
+      "iteration": 4,
+      "calls": 1,
+      "retry": 1,
+      "frames": 0,
+      "disabled": true
+    }
+  ],
+  "readiness": {
+    "status": "degraded",
+    "checked_at": 1789645890.28764,
+    "cache_seconds": 15,
+    "checks": {
+      "metadata": {
+        "status": "ready",
+        "datasets": 1
+      },
+      "text": {
+        "status": "ready",
+        "documents": 783835,
+        "sources": {
+          "caption": 310212,
+          "ocr": 291909,
+          "asr": 181714
+        }
+      },
+      "embedding:clip_vith14_quickgelu_dfn5b_v2": {
+        "status": "unavailable",
+        "reason": "TimeoutError"
+      },
+      "vector:clip_vith14_quickgelu_dfn5b_v2": {
+        "status": "reachable",
+        "collection": "keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2",
+        "reason": "Schema checked; search preflight required"
+      },
+      "embedding:siglip2_so400m16_384_webli_openclip_1152_v1": {
+        "status": "unverified",
+        "reason": "Remote inference not invoked by readiness"
+      },
+      "vector:siglip2_so400m16_384_webli_openclip_1152_v1": {
+        "status": "reachable",
+        "collection": "keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1",
+        "reason": "Schema checked; search preflight required"
+      }
+    }
+  },
+  "measured_shas": {
+    "before": "5f49c493b9cc9db2bdb7dfb6ff7da864731b4f2f",
+    "after": "03d16085fd91ebbf36ec08a55a3657239eeec8eb"
+  },
+  "csv_exact": {
+    "before": true,
+    "after": true
+  },
+  "zip": {
+    "files": [
+      "submission/query-26d54ce0-1684-42ab-884b-4170dac58e66-kis.csv",
+      "submission/query-5f3fc403-deeb-483d-bbe8-ff61de5c843a-kis.csv",
+      "submission/query-a7784e22-7a8d-495b-820f-c4d8140a5145-kis.csv"
+    ],
+    "valid": true
+  },
+  "ranking_parity": true,
+  "acceptance_checks": [
+    {
+      "name": "Hiện đủ 48 card",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Focus vào preview",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Escape đóng preview",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Pick frame",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Tải CSV",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Giữ draft khi reload",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Giữ frame đã chọn khi reload",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "CSV đúng L21_V001,0",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "KIS 3 lần trả 50 kết quả",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Video lookup đúng mã",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Video thực sự tăng thời gian khi play",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Có 3 mục OCR / ASR / Caption",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Không có uncaught JS error trong suite chung",
+      "before": true,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 390px",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 900px",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 1024px",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 1152px",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 1180px",
+      "before": false,
+      "after": true
+    },
+    {
+      "name": "Search không bị drawer che ở 1440px",
+      "before": true,
+      "after": true
+    }
+  ]
+}

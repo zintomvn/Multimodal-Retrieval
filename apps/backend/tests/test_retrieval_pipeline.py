@@ -1176,6 +1176,47 @@ def test_m3_blank_query_returns_http_400(tmp_path: Path) -> None:
     db.close()
 
 
+@pytest.mark.parametrize('source', ['ocr','asr'])
+def test_explicit_text_source_never_calls_semantic_and_overrides_heuristic(tmp_path, monkeypatch, source):
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
+    def semantic(*a, **k):
+        pytest.fail('Explicit text request must not call visual models')
+    seen=[]
+    def text_scores(*args):
+        seen.append(args[-1]); return {}, False
+    monkeypatch.setattr(service,'_semantic_scores',semantic)
+    monkeypatch.setattr(service,'_text_scores',text_scores)
+    result=service.search(SearchRequest(dataset_id=dataset.id,query_text='plain scene without cue',options=SearchOptions(
+        source_mode=source,use_agent_query_planning=False,use_query_expansion=False,use_metadata=False)))
+    assert seen and all(w[source]==1 and sum(w.values())==1 for w in seen)
+    assert result.normalized_query['source_status']=={'semantic':'disabled','text':'ok'}
+    db.close()
+
+
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_empty_indexes_never_scan_metadata_or_invent_hits(tmp_path, monkeypatch, unavailable):
+    from sqlalchemy import event
+    db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
+    monkeypatch.setattr(service, '_semantic_scores', lambda *a, **k: ({}, unavailable))
+    monkeypatch.setattr(service, '_text_scores', lambda *a, **k: ({}, unavailable))
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement.lower())
+    event.listen(db.get_bind(), 'before_cursor_execute', capture)
+    try:
+        response = service.search(SearchRequest(dataset_id=dataset.id, query_text='no indexed match',
+            options=SearchOptions(use_query_expansion=False, use_agent_query_planning=False)))
+        assert response.results == []
+        assert response.normalized_query['retrieval_mode'] == ('degraded' if unavailable else 'indexed')
+        assert response.normalized_query['source_status']['text'] == ('unavailable' if unavailable else 'ok')
+        assert not any('from keyframes' in sql for sql in statements)
+        saved = service.get_run(response.query_run_id)
+        assert saved.normalized_query['source_status'] == response.normalized_query['source_status']
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', capture)
+        db.close()
+
+
 def test_m3_invalid_time_range_returns_http_400(tmp_path: Path) -> None:
     db, service, dataset, _, _ = _build_retrieval_fixture(tmp_path)
 

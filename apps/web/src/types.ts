@@ -1,4 +1,11 @@
 export type QueryType = "KIS" | "QA" | "TRAKE";
+export type SubmissionFormat = "csv" | "zip";
+// Additive HTTP diagnostics; durations are milliseconds and stages may overlap.
+export interface ApiDiagnostics {
+  requestId: string | null;
+  serverTiming: string | null;
+  clientDurationMs: number;
+}
 export type VisualSearchMode = "openclip" | "siglip2" | "both";
 
 export interface Dataset {
@@ -11,6 +18,7 @@ export interface Dataset {
 }
 
 export interface SearchResult {
+  source_result_id?: string;
   id: string;
   rank: number;
   video_id: string;
@@ -105,6 +113,8 @@ export interface SearchResponse {
     raw_temporal_events?: string[];
     profile?: string;
     latency_ms?: number;
+    retrieval_mode?: "indexed" | "degraded";
+    source_status?: Record<string, "ok" | "disabled" | "degraded" | "unavailable">;
     agent_query_plan?: {
       source?: string;
       language?: string;

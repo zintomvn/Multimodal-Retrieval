@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
@@ -73,6 +74,10 @@ def create_pipeline_job(
         message="Pipeline queued.",
         payload=request.model_dump(mode="json"),
     )
+    if os.getenv('JOB_EXECUTION_MODE', 'background') == 'worker':
+        from app.modules.jobs.durable import enqueue
+        enqueue(db, job)
+        return PipelineJobResponse(job_id=job.id, status=job.status, message=job.message or '')
     db.add(job)
     db.commit()
     db.refresh(job)

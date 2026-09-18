@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import csv
+import io
+import re
+import zipfile
+from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -46,6 +50,10 @@ class SubmissionService:
         return submission
 
     def add_items(self, submission_id: str, rows: list[SubmissionRow]) -> int:
+        submission = self.db.query(Submission).filter(Submission.id == submission_id).one()
+        submission.status = "DRAFT"
+        submission.zip_uri = None
+        submission.validation_report = {}
         existing = self.db.query(SubmissionItem).filter(SubmissionItem.submission_id == submission_id).all()
         for item in existing:
             self.db.delete(item)
@@ -237,23 +245,49 @@ class SubmissionService:
         return report
 
     def export_csv(self, submission_id: str) -> tuple[Submission, dict]:
+        return self._export(submission_id, "csv")
+
+    def export_zip(self, submission_id: str) -> tuple[Submission, dict]:
+        return self._export(submission_id, "zip")
+
+    @staticmethod
+    def artifact_uri(submission: Submission, format: str) -> str | None:
+        # Old releases stored CSV paths in zip_uri; read them without migration.
+        uri = (submission.validation_report or {}).get("artifacts", {}).get(format)
+        legacy = submission.zip_uri
+        return uri or (legacy if legacy and Path(legacy).suffix == f".{format}" else None)
+
+    def _export(self, submission_id: str, format: str) -> tuple[Submission, dict]:
         report = self.validate(submission_id)
         submission = self.db.query(Submission).filter(Submission.id == submission_id).one()
         if not report["valid"]:
             return submission, report
 
-        base_dir = self.settings.data_root / "submissions" / submission.id
-        base_dir.mkdir(parents=True, exist_ok=True)
-
         grouped: dict[str, list[SubmissionItem]] = defaultdict(list)
         for item in submission.items:
             grouped[item.query_name].append(item)
 
-        csv_path = base_dir / f"{submission.name}.csv"
-        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        errors = []
+        if format == "csv" and len(grouped) != 1:
+            errors.append("CSV export requires exactly one query; use ZIP for multiple queries.")
+        safe_names = [name for name in grouped if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,119}", name)]
+        if format == "zip" and (len(safe_names) != len(grouped) or len({n.casefold() for n in safe_names}) != len(safe_names)):
+            errors.append("ZIP query names must be unique safe filenames (letters, digits, underscore, hyphen).")
+        if errors:
+            report = {**report, "valid": False, "errors": [*report["errors"], *errors]}
+            submission.validation_report = report
+            submission.status = "FAILED"
+            self.db.commit()
+            return submission, report
+
+        base_dir = self.settings.data_root / "submissions" / submission.id
+        base_dir.mkdir(parents=True, exist_ok=True)
+        # Fixed storage filename: user supplied display names never become paths.
+        artifact = base_dir / f"submission.{format}"
+        def serialize(rows):
+            handle = io.StringIO(newline="")
             writer = csv.writer(handle)
-            for query_name, rows in sorted(grouped.items()):
-                for row in sorted(rows, key=lambda item: item.rank)[:100]:
+            for row in sorted(rows, key=lambda item: item.rank):
                     normalized_answer = self._normalize_answer(row.answer)
                     if row.query_type == "QA":
                         writer.writerow([row.video_code, row.frame_indices[0], normalized_answer or ""])
@@ -262,7 +296,16 @@ class SubmissionService:
                     else:
                         writer.writerow([row.video_code, *row.frame_indices])
 
-        submission.zip_uri = str(csv_path)
+            return handle.getvalue()
+        if format == "csv":
+            artifact.write_text(serialize(next(iter(grouped.values()))), encoding="utf-8", newline="")
+        else:
+            with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as archive:
+                for query_name, rows in sorted(grouped.items()):
+                    archive.writestr(f"submission/{query_name}.csv", serialize(rows).encode("utf-8"))
+        submission.zip_uri = str(artifact) if format == "zip" else None
+        report = {**report, "artifacts": {format: str(artifact)}}
+        submission.validation_report = report
         submission.status = "EXPORTED"
         self.db.commit()
         return submission, report
