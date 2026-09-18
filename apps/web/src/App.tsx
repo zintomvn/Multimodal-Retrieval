@@ -1,11 +1,4 @@
-import { Readiness } from "./Readiness";
-import { generateAnswer } from "./api/client";
-import { useStableEvent } from "./useStableEvent";
-import { mediaCache } from "./api/mediaCache";
-import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft, type SourceMode } from "./workspace";
-import { LatestRequest } from "./api/latestRequest";
-import { useDialogFocus } from "./useDialogFocus";
-import { Profiler, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -62,8 +55,6 @@ const reasoningModelLabels: Record<ReasoningModel, string> = {
 
 // Classes for the main app container based on sidebar visibility
 interface SearchHistoryItem {
-  datasetId?: string;
-  draft?: SearchDraft;
   id: string;
   mode: AppMode;
   queryType: SearchTask;
@@ -105,7 +96,6 @@ interface VideoPreview {
   trakeEventIndex: number | null;
   evidence: VideoEvidence | null;
   evidenceLoading: boolean;
-  evidenceError?: string;
 }
 
 type TrakeSequenceFrame = SearchResult["sequence_frames"][number];
@@ -225,7 +215,6 @@ function resultForTrakeFrame(
   return {
     ...result,
     id: `${result.id}:event:${frame.event_index ?? frame.order_index ?? 0}:${frame.frame_id}`,
-    source_result_id: result.source_result_id ?? result.id,
     frame_id: frame.frame_id,
     frame_idx: frame.frame_idx,
     timestamp_ms: frame.timestamp_ms ?? result.timestamp_ms,
@@ -1178,9 +1167,6 @@ function FrameCard({
     <article
       className={`frame-card ${selected ? "selected" : ""}`}
       onClick={onOpen}
-      tabIndex={0}
-      onKeyDown={e=>{if(e.target===e.currentTarget && (e.key==="Enter" || e.key===" ")){e.preventDefault();onOpen();}}}
-      aria-label={`Open context for ${result.video_code}, frame ${frameText}`}
     >
       <div className="frame-thumb">
         <CloudFrameImage
@@ -1196,9 +1182,7 @@ function FrameCard({
           <span>{formatScore(result.score)}</span>
         </div>
         <p>Frame {frameText}</p>
-        {result.answer && <p>Answer: {result.answer}</p>}
-        {Boolean(result.score_breakdown.text_hit) && <p className="match-snippet">{String((result.score_breakdown.text_hit as Record<string,unknown>).source_type ?? "Text")}: {String((result.score_breakdown.text_hit as Record<string,unknown>).snippet ?? "")}</p>}
-        <details><summary>Match details</summary><ScoreBreakdown result={result} compact /></details>
+        <ScoreBreakdown result={result} compact />
         <div className="frame-actions">
           <button
             type="button"
@@ -1213,7 +1197,6 @@ function FrameCard({
           <button
             type="button"
             className="select-button"
-            aria-pressed={selected}
             onClick={(event) => {
               event.stopPropagation();
               onSelect();
@@ -1226,22 +1209,6 @@ function FrameCard({
     </article>
   );
 }
-
-const ResultGrid = memo(function ResultGrid({results,columns,selectedKeys,keyFor,onOpen,onPick,onPreview}:{
-  results:SearchResult[];columns:number;selectedKeys:Set<string>;keyFor:(r:SearchResult)=>string;
-  onOpen:(r:SearchResult)=>void;onPick:(r:SearchResult)=>void;onPreview:(r:SearchResult)=>void;
-}) {
-  if(import.meta.env.DEV) performance.mark('result-grid-render');
-  return <Profiler id="result-grid" onRender={(_id,_phase,duration,_base,start)=>{
-    if(import.meta.env.DEV){
-      if(performance.getEntriesByName('result-grid-commit').length>=100)performance.clearMeasures('result-grid-commit');
-      performance.measure('result-grid-commit',{start,duration});
-    }
-  }}><div className="frame-grid" style={{gridTemplateColumns:`repeat(${columns}, minmax(0, 1fr))`}}>
-    {results.map((r,i)=><FrameCard key={r.id} result={r} eager={i<columns} selected={selectedKeys.has(keyFor(r))}
-      onOpen={()=>onOpen(r)} onSelect={()=>onPick(r)} onPreview={()=>onPreview(r)}/>)}
-  </div></Profiler>;
-});
 
 function TrakeRows({
   results,
@@ -1358,9 +1325,6 @@ function TrakeRows({
                       className={`trake-cell ${selected ? "selected" : ""}`}
                       key={`${result.video_code}-${frameIdx ?? sequenceFrame?.frame_id ?? result.id}`}
                       onClick={() => onOpen(frameResult)}
-                      tabIndex={0}
-                      aria-label={`Open event ${lane+1}, frame ${frameIdx}`}
-                      onKeyDown={e=>{if(e.target===e.currentTarget && (e.key==='Enter'||e.key===' ')){e.preventDefault();onOpen(frameResult);}}}
                     >
                       <div className="trake-thumb">
                         <CloudFrameImage
@@ -1400,7 +1364,6 @@ function TrakeRows({
                                 onSelect(result, sequenceFrame, lane + 1);
                             }}
                             disabled={!sequenceFrame}
-                            aria-pressed={selected}
                           >
                             {selected ? "Picked" : "Pick"}
                           </button>
@@ -1578,36 +1541,26 @@ function SearchLoadingStage({ frameColumns }: { frameColumns: number }) {
 // Functions in App
 
 export function App() {
-  const [initialWorkspace] = useState(()=>readWorkspace());
-  const [initialQueryName] = useState(()=>newQueryName("KIS"));
-  const saved = initialWorkspace.value;
-  const drafts = useRef<Partial<Record<SearchTask, SearchDraft>>>(saved?.drafts ?? {});
-  const [storageError, setStorageError] = useState(initialWorkspace.error);
-  const [videoFilter,setVideoFilter] = useState(saved?.active.videoFilter ?? "");
-  const [timeStart,setTimeStart] = useState(saved?.active.timeStart ?? "");
-  const [timeEnd,setTimeEnd] = useState(saved?.active.timeEnd ?? "");
-  const [sourceMode, setSourceMode] = useState<SourceMode>(saved?.active.sourceMode ?? "auto");
-  const [temporalEvents, setTemporalEvents] = useState<string[]>(saved?.active.temporalEvents ?? []);
   // Attibutes
   const [mode, setMode] = useState<AppMode>("Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [datasetId, setDatasetId] = useState(saved?.datasetId ?? "");
-  const [queryType, setQueryType] = useState<SearchTask>(saved?.active.queryType ?? "KIS");
-  const [queryName, setQueryName] = useState(saved?.active.queryName ?? initialQueryName);
-  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? initialQueryName);
-  const [queryText, setQueryText] = useState(saved?.active.queryText ?? sampleQueries.KIS);
-  const [videoCodeQuery, setVideoCodeQuery] = useState(saved?.active.videoCodeQuery ?? sampleQueries.VIDEO);
-  const [videoFrameQuery, setVideoFrameQuery] = useState(saved?.active.videoFrameQuery ?? "");
-  const [topK, setTopK] = useState(saved?.active.topK ?? 50);
-  const [useExpansion, setUseExpansion] = useState(saved?.active.useExpansion ?? true);
-  const [useAgentPlanning, setUseAgentPlanning] = useState(saved?.active.useAgentPlanning ?? true);
-  const [useMetadata, setUseMetadata] = useState(saved?.active.useMetadata ?? true);
-  const [kisTemporalMode, setKisTemporalMode] = useState(saved?.active.kisTemporalMode ?? false);
+  const [datasetId, setDatasetId] = useState("");
+  const [queryType, setQueryType] = useState<SearchTask>("KIS");
+  const [queryName, setQueryName] = useState(queryNameByType.KIS);
+  const [exportFileName, setExportFileName] = useState(queryNameByType.KIS);
+  const [queryText, setQueryText] = useState(sampleQueries.KIS);
+  const [videoCodeQuery, setVideoCodeQuery] = useState(sampleQueries.VIDEO);
+  const [videoFrameQuery, setVideoFrameQuery] = useState("");
+  const [topK, setTopK] = useState(50);
+  const [useExpansion, setUseExpansion] = useState(true);
+  const [useAgentPlanning, setUseAgentPlanning] = useState(true);
+  const [useMetadata, setUseMetadata] = useState(true);
+  const [kisTemporalMode, setKisTemporalMode] = useState(false);
   const [temporalStrategy, setTemporalStrategy] = useState<
     "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
-  >(saved?.active.temporalStrategy ?? "vortex_k_context");
+  >("vortex_k_context");
   const [visualSearchMode, setVisualSearchMode] =
-    useState<VisualSearchMode>(saved?.active.visualSearchMode ?? "openclip");
+    useState<VisualSearchMode>("openclip");
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1615,68 +1568,21 @@ export function App() {
     temporal: 0.1,
   });
   const [frameColumns, setFrameColumns] = useState(5);
-  const [maxColumns, setMaxColumns] = useState(8);
-  const effectiveColumns = Math.min(frameColumns, maxColumns);
-  useEffect(() => {
-    const area=document.querySelector(".content-scroll"); if(!area) return;
-    const observer=new ResizeObserver(entries=>setMaxColumns(Math.max(1,Math.floor(entries[0].contentRect.width/180))));
-    observer.observe(area);return ()=>observer.disconnect();
-  },[]);
-  const [answerError, setAnswerError] = useState("");
-  const [answerLoading, setAnswerLoading] = useState(false);
-  const answerRequest = useRef(new LatestRequest());
   const [resultFilter, setResultFilter] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [trakeEventCount, setTrakeEventCount] = useState(4);
   const [trakeFrameChoices, setTrakeFrameChoices] = useState<
     TrakeFrameChoice[]
-  >(saved?.trakeChoices ?? []);
-  function updateAnswer(id:string,answer:string) {
-    setResults(items=>items.map(r=>r.id===id ? {...r,answer} : r));
-    const result = results.find(r=>r.id===id);
-    if(result) setSelected(rows=>rows.map(row=>row.query_name===queryName && row.video_code===result.video_code && row.frame_indices[0]===result.frame_idx ? {...row,answer} : row));
-  }
-  async function answerActive() {
-    if(!activeQa) return;
-    const request = answerRequest.current.begin(); if(!request)return;
-    setAnswerLoading(true);setAnswerError("");
-    try { const value=await generateAnswer(activeQa.id,request.signal);
-      if(answerRequest.current.isCurrent(request)) updateAnswer(activeQa.id,value.answer);
-    } catch(e) {if(answerRequest.current.isCurrent(request))setAnswerError(String(e));}
-    finally {if(answerRequest.current.isCurrent(request)){answerRequest.current.finish(request);setAnswerLoading(false);}}
-  }
+  >([]);
   const [galleryFrames, setGalleryFrames] = useState<MediaFrame[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [dataError, setDataError] = useState<string | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
-  const searchRequests = useRef(new LatestRequest());
-  const contextRequests = useRef(new LatestRequest());
-
-  function cancelSearch() {
-    answerRequest.current.cancel(); setAnswerLoading(false); setAnswerError("");
-    searchRequests.current.cancel();
-    contextRequests.current.cancel();
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    cancelSearch();
-    return () => {
-      searchRequests.current.cancel();
-      contextRequests.current.cancel();
-    };
-  }, [datasetId, queryType, mode]);
-  const exportInFlight = useRef(false);
-  const [exporting, setExporting] = useState(false);
-  const [selected, setSelected] = useState<SubmissionRow[]>(saved?.selected ?? []);
+  const [selected, setSelected] = useState<SubmissionRow[]>([]);
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
-  const activeQa = queryType === "QA" ? results.find(r=>r.id===activeResultId) : undefined;
-  const [history, setHistory] = useState<SearchHistoryItem[]>(saved?.history ?? []);
+  const [history, setHistory] = useState<SearchHistoryItem[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
   const [autoEnabled, setAutoEnabled] = useState(true);
@@ -1691,18 +1597,17 @@ export function App() {
   );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [reasoningModel, setReasoningModel] =
-    useState<ReasoningModel>(saved?.active.reasoningModel ?? "gpt-4o");
+    useState<ReasoningModel>("gpt-4o");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
       role: "assistant",
-      text: "QA searches the indexed dataset. File upload and conversation history are not connected to retrieval.",
+      text: "Upload a video or ask a QA query. I will keep the trace visible and prepare CSV rows.",
       trace: makeAgentTrace("Chat", "QA", 0),
     },
   ]);
   const [videoPreview, setVideoPreview] = useState<VideoPreview | null>(null);
   const [videoEvidenceOpen, setVideoEvidenceOpen] = useState(false);
-  const [evidenceAttempt, setEvidenceAttempt] = useState(0);
   const [videoPlaybackSeconds, setVideoPlaybackSeconds] = useState<
     number | null
   >(null);
@@ -1719,58 +1624,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
-  const videoDialogRef = useRef<HTMLDivElement | null>(null);
-  useDialogFocus(videoDialogRef, Boolean(videoPreview), () => setVideoPreview(null));
-  const settingsDialogRef = useRef<HTMLDivElement>(null);
-  useDialogFocus(settingsDialogRef, settingsOpen, () => setSettingsOpen(false));
 
-  useEffect(() => {
-    const footer = document.querySelector<HTMLElement>(".composer-wrap");
-    if (!footer) return;
-    const update = () => document.documentElement.style.setProperty("--composer-height", `${window.innerHeight - footer.getBoundingClientRect().top}px`);
-    const observer = new ResizeObserver(update);
-    observer.observe(footer);
-    window.addEventListener("resize", update);
-    update();
-    return () => { observer.disconnect(); window.removeEventListener("resize", update); };
-  }, []);
-
-  useEffect(() => {
-    const closeDrawers = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || videoPreview) return;
-      if (window.innerWidth <= 1180) setRightSidebarOpen(false);
-      if (window.innerWidth <= 900) setLeftSidebarOpen(false);
-    };
-    document.addEventListener("keydown", closeDrawers);
-    return () => document.removeEventListener("keydown", closeDrawers);
-  }, [videoPreview]);
-
-  function currentDraft(): SearchDraft {
-    return { queryType, queryName, queryText, exportFileName, videoCodeQuery, videoFrameQuery,
-      topK, useExpansion, useAgentPlanning, useMetadata, kisTemporalMode, temporalStrategy,
-      visualSearchMode, reasoningModel, sourceMode, temporalEvents, videoFilter, timeStart, timeEnd };
-  }
-  function applyDraft(d: SearchDraft) {
-    setQueryType(d.queryType); setQueryName(d.queryName); setQueryText(d.queryText);
-    setExportFileName(d.exportFileName); setVideoCodeQuery(d.videoCodeQuery); setVideoFrameQuery(d.videoFrameQuery);
-    setTopK(d.topK); setUseExpansion(d.useExpansion); setUseAgentPlanning(d.useAgentPlanning);
-    setUseMetadata(d.useMetadata); setKisTemporalMode(d.kisTemporalMode); setTemporalStrategy(d.temporalStrategy);
-    setVisualSearchMode(d.visualSearchMode); setReasoningModel(d.reasoningModel); setSourceMode(d.sourceMode);
-    setTemporalEvents(d.temporalEvents); setVideoFilter(d.videoFilter ?? ""); setTimeStart(d.timeStart ?? ""); setTimeEnd(d.timeEnd ?? "");
-  }
-  const workspaceSnapshot = useMemo(()=>({version:1 as const, datasetId, active:currentDraft(), drafts:drafts.current, selected, history, trakeChoices:trakeFrameChoices}),
-    [datasetId,queryType,queryName,queryText,exportFileName,videoCodeQuery,videoFrameQuery,topK,useExpansion,useAgentPlanning,useMetadata,kisTemporalMode,temporalStrategy,visualSearchMode,reasoningModel,sourceMode,temporalEvents,videoFilter,timeStart,timeEnd,selected,history,trakeFrameChoices]);
-  useEffect(() => {
-    if (initialWorkspace.error) return; // Do not overwrite a corrupt/version-mismatched save.
-    const save = () => { const error=saveWorkspace({...workspaceSnapshot,scrollTop:document.querySelector(".content-scroll")?.scrollTop ?? 0}); if(error) setStorageError(error); };
-    const timer=window.setTimeout(save,250);
-    window.addEventListener("pagehide",save);
-    return ()=>{window.clearTimeout(timer); window.removeEventListener("pagehide",save);};
-  },[workspaceSnapshot]);
-
-  useEffect(()=>{
-    if(saved?.scrollTop && galleryFrames.length) document.querySelector('.content-scroll')?.scrollTo(0,saved.scrollTop);
-  },[galleryFrames.length>0]);
   // Effects
   useEffect(() => {
     const apply = () => {
@@ -1822,15 +1676,14 @@ export function App() {
   useEffect(() => {
     const preview = videoPreview;
     const frame = preview?.frames[preview.frameIndex];
-    if (!preview || !frame || !videoEvidenceOpen) return;
+    if (!preview || !frame) return;
     let cancelled = false;
     setVideoPreview((current) =>
       current && current.result.id === preview.result.id
-        ? { ...current, evidence: null, evidenceLoading: true, evidenceError: undefined }
+        ? { ...current, evidence: null, evidenceLoading: true }
         : current,
     );
     void getVideoEvidence(preview.result.video_id, {
-      resultId: preview.result.score_breakdown.text_hit ? preview.result.source_result_id ?? preview.result.id : undefined,
       frameId: frame.id,
       seconds: frame.timestamp_ms / 1000,
     })
@@ -1850,7 +1703,7 @@ export function App() {
           current &&
           current.result.id === preview.result.id &&
           current.selectedFrameIdx === frame.frame_idx
-            ? { ...current, evidenceLoading: false, evidenceError: "Cannot load evidence. This is not an empty transcript." }
+            ? { ...current, evidenceLoading: false }
             : current,
         );
       });
@@ -1861,7 +1714,7 @@ export function App() {
     videoPreview?.result.id,
     videoPreview?.frameIndex,
     videoPreview?.selectedFrameIdx,
-    videoPreview?.selectedTimestampMs, videoEvidenceOpen, evidenceAttempt,
+    videoPreview?.selectedTimestampMs,
   ]);
 
   useEffect(() => {
@@ -1869,23 +1722,21 @@ export function App() {
     listDatasets()
       .then((items) => {
         if (cancelled) return;
-        const next = items;
-        setDataError(null);
+        const next = items.length > 0 ? items : mockDatasets;
         setDatasets(next);
         setDatasetId((current) => current || next[0]?.id || "");
-        if (items.length === 0) setStatus("No datasets available");
+        if (items.length === 0) setStatus("Mock dataset ready");
       })
       .catch(() => {
         if (cancelled) return;
-        setDatasets([]);
-        setDatasetId("");
-        setGalleryFrames([]);
-        setDataError("Cannot load datasets. Check the API connection and retry.");
+        setDatasets(mockDatasets);
+        setDatasetId(mockDatasets[0].id);
+        setStatus("Mock mode");
       });
     return () => {
       cancelled = true;
     };
-  }, [bootstrapAttempt]);
+  }, []);
 
   useEffect(() => {
     if (!datasetId) return;
@@ -1894,13 +1745,14 @@ export function App() {
     listFrames({ datasetId, limit: 48, offset: 0, presentOnly: true })
       .then((payload) => {
         if (cancelled) return;
-        setGalleryFrames(payload.frames);
-        setDataError(null);
+        setGalleryFrames(
+          payload.frames.length > 0 ? payload.frames : makeMockFrames(),
+        );
       })
       .catch(() => {
         if (cancelled) return;
-        setGalleryFrames([]);
-        setDataError("Cannot load frames. Check the API connection and retry.");
+        const mock = makeMockFrames();
+        setGalleryFrames(mock);
       })
       .finally(() => {
         if (!cancelled) setGalleryLoading(false);
@@ -1908,7 +1760,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [datasetId, bootstrapAttempt]);
+  }, [datasetId]);
 
   useEffect(() => {
     const element = composerRef.current;
@@ -1992,19 +1844,19 @@ export function App() {
   }
 
   function changeType(type: SearchTask) {
-    cancelSearch(); setSearchError(null);
-    drafts.current[queryType]=currentDraft();
-    const next=drafts.current[type];
-    const name=newQueryName(type);
-    applyDraft(next ?? {...currentDraft(),queryType:type,queryName:name,exportFileName:name,
-      queryText:sampleQueries[type],temporalEvents:[]});
-    setResults([]); setHasSearched(false); setContext(null); setTrakeFrameChoices([]); setActiveResultId(null);
-    setAutoTrace(makeAgentTrace(mode,type,0));
+    setQueryType(type);
+    setQueryName(queryNameByType[type]);
+    setExportFileName(queryNameByType[type]);
+    setQueryText(sampleQueries[type]);
+    setResults([]);
+    setHasSearched(false);
+    setContext(null);
+    setTrakeFrameChoices([]);
+    setActiveResultId(null);
+    setAutoTrace(makeAgentTrace(mode, type, 0));
   }
 
   function switchMode(nextMode: AppMode) {
-    cancelSearch();
-    setSearchError(null);
     setMode(nextMode);
     setIntelligenceOpen(false);
     if (
@@ -2029,7 +1881,6 @@ export function App() {
       minute: "2-digit",
     });
     const item: SearchHistoryItem = {
-      datasetId, draft: currentDraft(),
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       mode,
       queryType,
@@ -2045,17 +1896,11 @@ export function App() {
 
   async function openFrameContext(result: SearchResult) {
     if (!result.frame_id) return;
-    contextRequests.current.cancel();
-    const request = contextRequests.current.begin()!;
     setActiveResultId(result.id);
-    setContext(null);
     try {
-      const next = await getFrameContext(result.frame_id, request.signal);
-      if (contextRequests.current.isCurrent(request)) setContext(next);
+      setContext(await getFrameContext(result.frame_id));
     } catch {
-      if (contextRequests.current.isCurrent(request)) setStatus("Cannot load frame context. Try opening the frame again.");
-    } finally {
-      contextRequests.current.finish(request);
+      setContext(mockContextForResult(result));
     }
   }
 
@@ -2085,8 +1930,7 @@ export function App() {
 
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
-      return normalizeRanks([...current, row]);
+      return normalizeRanks([...current, row]).slice(0, 100);
     });
   }
 
@@ -2158,8 +2002,7 @@ export function App() {
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
-      return normalizeRanks([...current, row]);
+      return normalizeRanks([...current, row]).slice(0, 100);
     });
     setTrakeFrameChoices([]);
     setStatus(`Added TRAKE sequence for ${row.video_code}`);
@@ -2181,20 +2024,10 @@ export function App() {
       return;
     }
     if (!datasetId || !queryText.trim()) return;
-    if ([timeStart,timeEnd].some(v=>v.trim() && (!Number.isFinite(Number(v)) || Number(v)<0)) || (timeStart.trim() && timeEnd.trim() && Number(timeStart)>Number(timeEnd))) {
-      setSearchError("Time filters must be nonnegative seconds, with start before end.");return;
-    }
-    if(temporalEvents.some(v=>v.trim()) && temporalEvents.filter(v=>v.trim()).length<2) {
-      setSearchError("Enter at least two ordered events, or clear the event editor for automatic planning.");return;
-    }
-    const request = searchRequests.current.begin();
-    if (!request) return;
-    contextRequests.current.cancel();
-    setContext(null);
-    setSearchError(null);
+
     setLoading(true);
     setHasSearched(true);
-    answerRequest.current.cancel(); setAnswerLoading(false); setAnswerError("");
+    if (queryType === "TRAKE") setTrakeFrameChoices([]);
     setStatus(mode === "Auto" && autoEnabled ? "Auto running" : "Searching");
     const runningTrace = makeAgentTrace(mode, queryType, 0).map(
       (step, index) => ({
@@ -2216,21 +2049,65 @@ export function App() {
       useMetadata,
       temporalMode: queryType === "KIS" && kisTemporalMode,
       temporalStrategy,
-      visualSearchMode, sourceMode, temporalEvents, videoFilter, timeStart, timeEnd,
+      visualSearchMode,
     };
 
     try {
-      const response = await runSearch(searchInput, request.signal);
-      if (!searchRequests.current.isCurrent(request)) return;
-      const nextResults = response.results;
+      const shouldShowPlanEarly =
+        useAgentPlanning ||
+        queryType === "TRAKE" ||
+        (queryType === "KIS" && kisTemporalMode);
+      if (shouldShowPlanEarly) {
+        try {
+          const planned = await planSearch(searchInput);
+          const planningTrace = makeTraceFromResponse(
+            mode,
+            queryType,
+            {
+              query_run_id: "planning",
+              query_type: queryType,
+              query_name: queryName,
+              normalized_query: planned.normalized_query,
+              results: [],
+            },
+            0,
+          ).map((step) =>
+            step.title === "Retrieve candidates"
+              ? {
+                  ...step,
+                  detail: "LLM reasoning is ready. Retrieving matching frames.",
+                  status: "running" as const,
+                }
+              : step,
+          );
+          setAutoTrace(planningTrace);
+        } catch {
+          setAutoTrace((current) =>
+            current.map((step) =>
+              step.title === "Parse query"
+                ? {
+                    ...step,
+                    detail:
+                      "Planning is unavailable. Continuing with retrieval.",
+                    status: "warning" as const,
+                  }
+                : step,
+            ),
+          );
+        }
+      }
+
+      const response = await runSearch(searchInput);
+      const nextResults = diversifyResultsForDisplay(
+        response.results,
+        queryType,
+      );
       if (queryType === "TRAKE") {
         setTrakeEventCount(response.normalized_query.temporal_event_count ?? 4);
       }
       setResults(nextResults);
       setStatus(
-        response.normalized_query.retrieval_mode === "degraded"
-          ? `Partial search: ${Object.entries(response.normalized_query.source_status ?? {}).filter(([, state]) => state === "degraded" || state === "unavailable").map(([name]) => name).join(", ")} unavailable. ${nextResults.length} results from available sources.`
-          : nextResults.length > 0
+        nextResults.length > 0
           ? `${nextResults.length} results`
           : queryType === "TRAKE"
             ? "No complete ordered sequence found"
@@ -2246,8 +2123,6 @@ export function App() {
       rememberSearch(nextResults, trace);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
-      if (!searchRequests.current.isCurrent(request)) return;
-      setSearchError(error instanceof Error ? error.message : "Search failed");
       const nextResults: SearchResult[] = [];
       const trace = makeAgentTrace(mode, queryType, 0).map((step, index) =>
         index === 0
@@ -2271,7 +2146,7 @@ export function App() {
       rememberSearch(nextResults, trace);
       setContext(null);
     } finally {
-      if (searchRequests.current.finish(request)) setLoading(false);
+      setLoading(false);
     }
   }
 
@@ -2289,10 +2164,6 @@ export function App() {
       return;
     }
 
-    const request = searchRequests.current.begin();
-    if (!request) return;
-    contextRequests.current.cancel();
-    setSearchError(null);
     setLoading(true);
     setHasSearched(true);
     setResults([]);
@@ -2317,8 +2188,7 @@ export function App() {
             : Math.min(Math.max(topK, 12), 200),
         offset: 0,
         presentOnly: true,
-      }, request.signal);
-      if (!searchRequests.current.isCurrent(request)) return;
+      });
       const nextResults = response.frames.map((frame, index) =>
         frameToResult(frame, index + 1),
       );
@@ -2338,8 +2208,6 @@ export function App() {
       rememberSearch(nextResults, trace, videoCode);
       if (nextResults[0]) void openFrameContext(nextResults[0]);
     } catch (error) {
-      if (!searchRequests.current.isCurrent(request)) return;
-      setSearchError(error instanceof Error ? error.message : "Video lookup failed");
       const detail =
         error instanceof Error
           ? error.message.slice(0, 64)
@@ -2352,17 +2220,13 @@ export function App() {
       setStatus(`Video lookup failed: ${detail}`);
       rememberSearch([], trace, videoCode);
     } finally {
-      if (searchRequests.current.finish(request)) setLoading(false);
+      setLoading(false);
     }
   }
 
   async function submitChat() {
     const prompt = queryText.trim();
     if (!prompt && attachedFiles.length === 0) return;
-    const request = searchRequests.current.begin();
-    if (!request) return;
-    setSearchError(null);
-    contextRequests.current.cancel();
     const fileNames = attachedFiles.map((file) => file.name);
     const fallbackTrace = makeAgentTrace(
       "Chat",
@@ -2392,7 +2256,6 @@ export function App() {
           trace: fallbackTrace,
         },
       ]);
-      searchRequests.current.finish(request);
       setStatus("Chat model selected");
       return;
     }
@@ -2413,9 +2276,8 @@ export function App() {
         temporalMode: false,
         temporalStrategy,
         visualSearchMode,
-      }, request.signal);
-      if (!searchRequests.current.isCurrent(request)) return;
-      const nextResults = response.results;
+      });
+      const nextResults = diversifyResultsForDisplay(response.results, "QA");
       setResults(nextResults);
       setHasSearched(true);
       const trace = makeTraceFromResponse(
@@ -2441,8 +2303,6 @@ export function App() {
         answer ? "QA answer ready" : `${nextResults.length} evidence frames`,
       );
     } catch (error) {
-      if (!searchRequests.current.isCurrent(request)) return;
-      setSearchError(error instanceof Error ? error.message : "QA request failed");
       const detail =
         error instanceof Error
           ? error.message.slice(0, 96)
@@ -2460,17 +2320,12 @@ export function App() {
       ]);
       setStatus("Chat request failed");
     } finally {
-      if (searchRequests.current.finish(request)) setLoading(false);
+      setLoading(false);
     }
   }
 
   function restoreHistory(item: SearchHistoryItem) {
-    cancelSearch();
-    setSearchError(null);
-    drafts.current[queryType]=currentDraft();
-    if (item.draft) applyDraft(item.draft);
-    if (item.datasetId) setDatasetId(item.datasetId);
-    setMode("Search");
+    setMode(item.mode);
     setQueryType(item.queryType);
     setQueryName(item.queryName);
     setQueryText(item.queryText);
@@ -2490,6 +2345,12 @@ export function App() {
       `/api/media/videos/${result.video_id}/preview`,
     );
     setStatus("Opening video");
+    try {
+      const preview = await getVideoPreviewUrl(result.video_id);
+      videoUrl = mediaUrl(preview.url) ?? preview.url;
+    } catch {
+      // Fall back to the legacy preview redirect below.
+    }
     if (!videoUrl) {
       setStatus("Video preview unavailable");
       return;
@@ -2519,12 +2380,9 @@ export function App() {
       evidenceLoading: true,
     });
     setStatus("Video ready");
-    void getVideoPreviewUrl(result.video_id).then(preview => {
-      setVideoPreview(current => current?.result.id === result.id ? {...current,url:mediaUrl(preview.url) ?? preview.url} : current);
-    }).catch(() => setStatus("Using video redirect; retry preview if playback fails."));
     if (!result.frame_id) return;
     try {
-      const nextContext = context?.target_frame_id === result.frame_id ? context : await getFrameContext(result.frame_id);
+      const nextContext = await getFrameContext(result.frame_id);
       const targetIndex = Math.max(
         0,
         nextContext.frames.findIndex(
@@ -2709,38 +2567,48 @@ export function App() {
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
-      if (current.filter((item) => item.query_name === row.query_name).length >= 100) return current;
-      return normalizeRanks([...current, row]);
+      return normalizeRanks([...current, row]).slice(0, 100);
     });
     setStatus(
       `Added ${videoPreview.result.video_code} frame ${videoPreview.selectedFrameIdx}`,
     );
   }
 
-  async function exportSubmission(allQueries = false) {
-    const rows = allQueries ? selected : selected.filter((row) => row.query_name === queryName);
-    if (!datasetId || rows.length === 0 || exportInFlight.current) return;
-    exportInFlight.current = true;
-    setExporting(true);
-    setStatus(allQueries ? "Validating and exporting all queries" : "Validating and exporting current query");
+  function exportLocalCsv() {
+    const blob = new Blob([buildSubmissionCsv(selected)], {
+      type: "text/csv;charset=utf-8",
+    });
+    const name = csvDownloadName(exportFileName || "submission");
+    downloadCsvBlob(blob, name);
+    setStatus("CSV downloaded");
+  }
+
+  async function exportSubmission() {
+    if (selected.length === 0) return;
+    setStatus("Exporting");
     try {
-      const csvName = allQueries ? "submission.zip" : csvDownloadName(exportFileName || queryName);
-      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.(csv|zip)$/i, ""), rows, allQueries ? "zip" : "csv");
+      if (datasetId.startsWith("mock"))
+        throw new Error("Using local mock dataset");
+      const csvName = csvDownloadName(exportFileName || "submission");
+      const name = csvName.replace(/\.csv$/i, "");
+      const exported = await createAndExportSubmission(
+        datasetId,
+        name,
+        selected,
+      );
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
-      setStatus(allQueries ? "ZIP downloaded for all selected queries" : `CSV downloaded for ${queryName}`);
-    } catch (error) {
-      setStatus(error instanceof Error ? `Export failed: ${error.message}` : "Export failed. Please retry.");
-    } finally {
-      exportInFlight.current = false;
-      setExporting(false);
+      const report = exported.validation_report;
+      setStatus(
+        report.valid
+          ? "CSV downloaded"
+          : `Invalid: ${report.errors.join(", ")}`,
+      );
+    } catch {
+      exportLocalCsv();
     }
   }
 
   function newSession() {
-    const name=newQueryName(queryType);
-    setQueryName(name); setExportFileName(name); setTemporalEvents([]); setTrakeFrameChoices([]);
-    cancelSearch();
-    setSearchError(null);
     setQueryText(sampleQueries[queryType]);
     setResults([]);
     setHasSearched(false);
@@ -2772,11 +2640,6 @@ export function App() {
     videoPreview && videoPreviewFrame && !videoPreview.loadingFrames,
   );
 
-  const stableOpen = useStableEvent((r:SearchResult)=>void openFrameContext(r));
-  const stablePick = useStableEvent((r:SearchResult)=>addResult(r));
-  const stablePreview = useStableEvent((r:SearchResult)=>void openVideoPreview(r));
-  const resultKey = useCallback((r:SearchResult)=>selectionKeyForResult(r),[queryName,queryType]);
-
   const modeCaption =
     mode === "Search" && hasSearched && !loading
       ? `${visibleResults.length} frames`
@@ -2786,7 +2649,6 @@ export function App() {
     <main
       className={`chat-shell ${leftSidebarOpen ? "" : "left-collapsed"} ${rightSidebarOpen ? "" : "right-collapsed"}`}
     >
-      {(leftSidebarOpen || rightSidebarOpen) && <button type="button" className={`drawer-backdrop ${rightSidebarOpen ? "right-open" : ""} ${leftSidebarOpen ? "left-open" : ""}`} aria-label="Close sidebars" onClick={() => { if (window.innerWidth <= 900) setLeftSidebarOpen(false); setRightSidebarOpen(false); }} />}
       <aside className="left-sidebar">
         <div className="brand-row">
           <div className="brand-mark">CS</div>
@@ -2863,7 +2725,7 @@ export function App() {
             <PanelLeft size={18} />
           </button>
           <div className="mode-switch" role="tablist" aria-label="Mode">
-            {(["Search"] as AppMode[]).map((item) => (
+            {(["Search", "Auto", "Chat"] as AppMode[]).map((item) => (
               <button
                 type="button"
                 role="tab"
@@ -2897,39 +2759,6 @@ export function App() {
         </header>
 
         <div className="content-scroll">
-          <Readiness />
-          {storageError && <p role="alert">{storageError}</p>}
-          <details className="search-filters"><summary>Video and time filters</summary>
-            <label>Video codes (comma separated)<input aria-label="Filter video codes" value={videoFilter} onChange={e=>setVideoFilter(e.target.value)}/></label>
-            <label>From second<input aria-label="From second" type="number" min="0" value={timeStart} onChange={e=>setTimeStart(e.target.value)}/></label>
-            <label>To second<input aria-label="To second" type="number" min="0" value={timeEnd} onChange={e=>setTimeEnd(e.target.value)}/></label>
-          </details>
-          <div className="source-filter-row"><label>Filter displayed results <input aria-label="Filter displayed results" value={resultFilter} onChange={e=>setResultFilter(e.target.value)} placeholder="Video, frame, answer" /></label>
-          <label className="source-control">Search source <select aria-label="Search source" value={sourceMode} onChange={e=>setSourceMode(e.target.value as SourceMode)}>
-            <option value="auto">Auto sources</option><option value="ocr">Visible text (OCR)</option>
-            <option value="asr">Speech (ASR)</option><option value="scene">Scene (visual + caption)</option>
-          </select></label></div>
-          {activeQa && <section className="qa-answer-panel" aria-label="Answer for selected evidence">
-            <strong>Answer · {activeQa.video_code} / frame {activeQa.frame_idx}</strong>
-            <p>Review the frame or generate an answer from the same OCR, speech and caption evidence shown in Video. Text evidence is not direct image understanding.</p>
-            <label>Answer <input aria-label="QA answer" maxLength={100} value={activeQa.answer ?? ""} onChange={e=>{answerRequest.current.cancel();setAnswerLoading(false);updateAnswer(activeQa.id,e.target.value);}} /></label>
-            <button type="button" disabled={answerLoading} onClick={()=>void answerActive()}>{answerLoading ? 'Generating answer…' : 'Generate from evidence'}</button>
-            {answerError && <p role="alert">{answerError}</p>}
-          </section>}
-          {(queryType==="TRAKE" || (queryType==="KIS" && kisTemporalMode)) && <section className="temporal-editor" aria-label="Ordered events">
-            <label>Ordered events (one per line, 2–8; blank uses query planning)
-              <textarea aria-label="Ordered events" rows={3} value={temporalEvents.join('\n')} onChange={e=>{
-                const next=e.target.value.split('\n').slice(0,8);
-                setTrakeFrameChoices(choices=>choices.filter(choice=>next[choice.eventIndex-1]===temporalEvents[choice.eventIndex-1]));
-                setTemporalEvents(next);setTrakeEventCount(next.filter(v=>v.trim()).length || 4);
-              }}/>
-            </label><p>Picked events stay locked when rerunning the same event list. Editing an event clears its pick; Clear selection unlocks all.</p>
-          </section>}
-          <div className="request-status" role="status" aria-live="polite">{status}</div>
-          {dataError && <div className="request-error" role="alert">{dataError} <button type="button" onClick={() => setBootstrapAttempt((n) => n + 1)}>Retry data</button></div>}
-          {searchError && <div className="request-error" role="alert">Request failed: {searchError} <button type="button" onClick={() => void submitSearch()}>Retry search</button></div>}
-          {loading && results.length > 0 && <p role="status">Updating search. Displayed results belong to the previous request.</p>}
-          {loading && <button type="button" className="cancel-search" onClick={() => { cancelSearch(); setHasSearched(false); setStatus("Search cancelled"); }}>Cancel search</button>}
           <div className="workspace-toolbar">
             <div className="workspace-context">
               <strong>{queryLabels[queryType].title}</strong>
@@ -3010,8 +2839,8 @@ export function App() {
               {(loading || hasSearched) && (
                 <ReasoningDisclosure steps={autoTrace} />
               )}
-              {loading && results.length === 0 ? (
-                <SearchLoadingStage frameColumns={effectiveColumns} />
+              {loading ? (
+                <SearchLoadingStage frameColumns={frameColumns} />
               ) : galleryLoading && !hasSearched ? (
                 <div className="skeleton-grid">
                   {Array.from({ length: 12 }).map((_, index) => (
@@ -3020,7 +2849,7 @@ export function App() {
                 </div>
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
+                  {queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -3042,8 +2871,24 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <ResultGrid results={visibleResults} columns={effectiveColumns} selectedKeys={selectedKeys} keyFor={resultKey}
-                  onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
+                <div
+                  className="frame-grid"
+                  style={{
+                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {visibleResults.map((result, index) => (
+                    <FrameCard
+                      key={result.id}
+                      result={result}
+                      eager={index < frameColumns}
+                      selected={selectedKeys.has(selectionKeyForResult(result))}
+                      onOpen={() => void openFrameContext(result)}
+                      onSelect={() => addResult(result)}
+                      onPreview={() => void openVideoPreview(result)}
+                    />
+                  ))}
+                </div>
               )}
             </section>
           )}
@@ -3054,10 +2899,10 @@ export function App() {
                 <>
                   <ReasoningDisclosure steps={autoTrace} />
                   {loading ? (
-                    <SearchLoadingStage frameColumns={effectiveColumns} />
+                    <SearchLoadingStage frameColumns={frameColumns} />
                   ) : hasSearched && visibleResults.length === 0 ? (
                     <p className="empty-note search-empty-note">
-                      {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
+                      {queryType === "TRAKE"
                         ? "No complete ordered sequence matches this query."
                         : "No frames match this query."}
                     </p>
@@ -3082,7 +2927,7 @@ export function App() {
                     <div
                       className="frame-grid auto-grid"
                       style={{
-                        gridTemplateColumns: `repeat(${effectiveColumns}, minmax(0, 1fr))`,
+                        gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
                       }}
                     >
                       {visibleResults.map((result, index) => (
@@ -3100,10 +2945,10 @@ export function App() {
                   )}
                 </>
               ) : loading ? (
-                <SearchLoadingStage frameColumns={effectiveColumns} />
+                <SearchLoadingStage frameColumns={frameColumns} />
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {searchError ? "Search could not complete. Retry above." : queryType === "TRAKE"
+                  {queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -3125,8 +2970,24 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <ResultGrid results={visibleResults} columns={effectiveColumns} selectedKeys={selectedKeys} keyFor={resultKey}
-                  onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
+                <div
+                  className="frame-grid"
+                  style={{
+                    gridTemplateColumns: `repeat(${frameColumns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {visibleResults.map((result, index) => (
+                    <FrameCard
+                      key={result.id}
+                      result={result}
+                      eager={index < frameColumns}
+                      selected={false}
+                      onOpen={() => void openFrameContext(result)}
+                      onSelect={() => addResult(result)}
+                      onPreview={() => void openVideoPreview(result)}
+                    />
+                  ))}
+                </div>
               )}
             </section>
           )}
@@ -3230,7 +3091,7 @@ export function App() {
                   type="button"
                   className="icon-button"
                   onClick={() => fileInputRef.current?.click()}
-                  aria-label="Attach file (not available)" disabled title="Attachments are not connected to search yet"
+                  aria-label="Attach file"
                 >
                   <Paperclip size={17} />
                 </button>
@@ -3238,7 +3099,6 @@ export function App() {
                   <button
                     type="button"
                     className="intelligence-button"
-                    aria-expanded={intelligenceOpen}
                     onClick={() => setIntelligenceOpen((open) => !open)}
                   >
                     <SlidersHorizontal size={16} />
@@ -3248,7 +3108,7 @@ export function App() {
                   {intelligenceOpen && (
                     <div className="intelligence-popover">
                       <label>
-                        Frames per row ({effectiveColumns} shown)
+                        Frames per row
                         <input
                           type="number"
                           min={1}
@@ -3386,7 +3246,7 @@ export function App() {
                   type="button"
                   className="send-button"
                   onClick={() => void submitSearch()}
-                  disabled={loading || !datasetId}
+                  disabled={loading}
                   aria-label={mode === "Chat" ? "Send message" : "Run search"}
                 >
                   {loading ? (
@@ -3407,7 +3267,7 @@ export function App() {
         <section className="selected-panel">
           <div className="panel-heading">
             <strong>Selected frames</strong>
-            <span>{selected.filter((row) => row.query_name === queryName).length}/100 for this query</span>
+            <span>{selected.length}/100</span>
           </div>
           <div className="selected-list">
             {selected.length === 0 ? (
@@ -3477,17 +3337,16 @@ export function App() {
           <button
             type="button"
             className="export-button"
-            disabled={exporting || !selected.some((row) => row.query_name === queryName)}
+            disabled={selected.length === 0}
             onClick={() => void exportSubmission()}
           >
-            {exporting ? "Exporting..." : "Export current query CSV"}
+            Export CSV
           </button>
-          <button type="button" className="export-button" disabled={exporting || selected.length === 0} onClick={() => void exportSubmission(true)}>Export all queries ZIP</button>
         </section>
       </aside>
 
       {settingsOpen && (
-        <div ref={settingsDialogRef} className="settings-popover" role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1}>
+        <div className="settings-popover" role="dialog" aria-label="Settings">
           <div className="panel-heading">
             <strong>Settings</strong>
             <button
@@ -3501,14 +3360,29 @@ export function App() {
           </div>
           {/* <div className="settings-block">
             <span>Search coefficients</span>
-            <p className="empty-note">Ranking weights follow the active backend profile and Search source. Manual weight editing is not connected.</p>
+            {(Object.keys(weights) as Array<keyof typeof weights>).map(
+              (key) => (
+                <label key={key}>
+                  {key}
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={weights[key]}
+                    onChange={(event) =>
+                      updateWeight(key, Number(event.target.value))
+                    }
+                  />
+                </label>
+              ),
+            )}
           </div> */}
           <div className="settings-block toggles">
             <button
               type="button"
               className={useExpansion ? "active" : ""}
               onClick={() => setUseExpansion((value) => !value)}
-              aria-pressed={useExpansion}
             >
               Expansion
             </button>
@@ -3516,7 +3390,6 @@ export function App() {
               type="button"
               className={useMetadata ? "active" : ""}
               onClick={() => setUseMetadata((value) => !value)}
-              aria-pressed={useMetadata}
             >
               Metadata
             </button>
@@ -3524,7 +3397,6 @@ export function App() {
               type="button"
               className={useAgentPlanning ? "active" : ""}
               onClick={() => setUseAgentPlanning((value) => !value)}
-              aria-pressed={useAgentPlanning}
             >
               Agent plan
             </button>
@@ -3534,7 +3406,6 @@ export function App() {
               type="button"
               className={theme === "light" ? "active" : ""}
               onClick={() => setTheme("light")}
-              aria-pressed={theme === 'light'}
             >
               Light
             </button>
@@ -3542,7 +3413,6 @@ export function App() {
               type="button"
               className={theme === "dark" ? "active" : ""}
               onClick={() => setTheme("dark")}
-              aria-pressed={theme === 'dark'}
             >
               Dark
             </button>
@@ -3565,8 +3435,6 @@ export function App() {
           }}
         >
           <div
-            ref={videoDialogRef}
-            tabIndex={-1}
             className={`video-modal ${videoEvidenceOpen ? "evidence-open" : ""}`}
             role="dialog"
             aria-modal="true"
@@ -3606,7 +3474,6 @@ export function App() {
                 </button>
               </div>
             </div>
-            {videoPreview.evidenceError && <div role="alert" className="request-error">{videoPreview.evidenceError}<button type="button" onClick={()=>{mediaCache.clear();setEvidenceAttempt(n=>n+1);}}>Retry evidence</button></div>}
             <div className="video-modal-layout">
               {videoEvidenceOpen && (
                 <VideoEvidenceSidebar
