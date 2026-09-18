@@ -40,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--batch-min", type=int, default=0)
+    parser.add_argument("--batch-max", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--max-pixels", type=int, default=256 * 256)
     parser.add_argument("--checkpoint", type=Path, default=Path("qwen3_vl_ingest_checkpoint.json"))
@@ -83,22 +85,34 @@ def ensure_qwen_collection(client: MilvusClient, name: str) -> None:
     client.create_collection(collection_name=name, schema=schema, index_params=index_params)
 
 
-def load_keyframes(database: Path, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+def load_keyframes(
+    database: Path, offset: int, limit: int, batch_min: int = 0, batch_max: int = 0
+) -> tuple[list[dict[str, Any]], int]:
     if not database.exists():
         raise FileNotFoundError(database)
     connection = sqlite3.connect(str(database))
     connection.row_factory = sqlite3.Row
-    total = int(connection.execute("SELECT COUNT(*) FROM keyframes WHERE is_media_present = 1").fetchone()[0])
-    sql = """
+    conditions = ["is_media_present = 1"]
+    parameters: list[int] = []
+    batch_number = "CAST(SUBSTR(video_id, 2, INSTR(video_id, '_') - 2) AS INTEGER)"
+    if batch_min > 0:
+        conditions.append(f"{batch_number} >= ?")
+        parameters.append(batch_min)
+    if batch_max > 0:
+        conditions.append(f"{batch_number} <= ?")
+        parameters.append(batch_max)
+    where_clause = " AND ".join(conditions)
+    total = int(connection.execute(f"SELECT COUNT(*) FROM keyframes WHERE {where_clause}", parameters).fetchone()[0])
+    sql = f"""
         SELECT keyframe_id, video_id, frame_idx, frame_seconds, timestamp_ms,
                image_url, image_uri, image_storage_key
         FROM keyframes
-        WHERE is_media_present = 1
+        WHERE {where_clause}
         ORDER BY keyframe_id
         LIMIT ? OFFSET ?
     """
     query_limit = limit if limit > 0 else max(0, total - offset)
-    rows = [dict(row) for row in connection.execute(sql, (query_limit, offset)).fetchall()]
+    rows = [dict(row) for row in connection.execute(sql, (*parameters, query_limit, offset)).fetchall()]
     connection.close()
     return rows, total
 
@@ -196,6 +210,8 @@ def main() -> None:
     args = parse_args()
     if args.batch_size < 1 or args.max_pixels < 1:
         raise ValueError("batch-size and max-pixels must be positive")
+    if args.batch_min < 0 or args.batch_max < 0 or (args.batch_max and args.batch_min > args.batch_max):
+        raise ValueError("invalid batch range")
     uri = os.getenv("MILVUS_URI", "").strip()
     token = os.getenv("MILVUS_TOKEN", "").strip()
     if not uri or not token:
@@ -203,7 +219,9 @@ def main() -> None:
 
     rank, world_size, device = distributed_runtime(args.device)
     input_root = resolve_input_root(args.input_root)
-    keyframes, source_total = load_keyframes(args.database, args.offset, args.limit)
+    keyframes, source_total = load_keyframes(
+        args.database, args.offset, args.limit, batch_min=args.batch_min, batch_max=args.batch_max
+    )
     selected_total = len(keyframes)
     keyframes = keyframes[rank::world_size]
     client = MilvusClient(uri=uri, token=token, timeout=30)
@@ -214,7 +232,8 @@ def main() -> None:
             f"Baseline corpus mismatch: OpenCLIP={openclip_count}, SigLIP2={siglip2_count}. "
             "A controlled ablation requires identical keyframes."
         )
-    if source_total != openclip_count and not args.allow_baseline_count_mismatch:
+    batch_filtered = args.batch_min > 0 or args.batch_max > 0
+    if source_total != openclip_count and not batch_filtered and not args.allow_baseline_count_mismatch:
         raise RuntimeError(
             f"Canonical SQLite keyframes={source_total}, baseline vectors={openclip_count}. "
             "Fix corpus parity before Qwen ingest or explicitly pass --allow-baseline-count-mismatch."
@@ -234,6 +253,8 @@ def main() -> None:
                     "world_size": world_size,
                     "batch_size_per_gpu": args.batch_size,
                     "max_pixels": args.max_pixels,
+                    "batch_min": args.batch_min,
+                    "batch_max": args.batch_max,
                 },
                 ensure_ascii=False,
             )
@@ -337,25 +358,28 @@ def main() -> None:
     if rank == 0:
         final_count = int(client.get_collection_stats(collection_name=args.collection).get("row_count") or 0)
         rate = processed / elapsed if elapsed > 0 else 0.0
-        remaining = max(0, openclip_count - final_count)
+        covered_selected = processed + skipped
+        remaining = max(0, source_total - covered_selected)
         summary = {
             "collection": args.collection,
             "processed_this_run": processed,
             "skipped_existing": skipped,
             "row_count": final_count,
             "baseline_count": openclip_count,
+            "target_count": source_total,
+            "covered_target_count": covered_selected,
             "elapsed_seconds": elapsed,
             "frames_per_second": rate,
             "estimated_remaining_hours": (remaining / rate / 3600.0) if rate > 0 else math.inf,
-            "complete": final_count == openclip_count,
+            "complete": covered_selected == selected_total,
             "world_size": world_size,
             "batch_size_per_gpu": args.batch_size,
             "max_pixels": args.max_pixels,
         }
         write_checkpoint(args.checkpoint, summary)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        if args.limit <= 0 and final_count != openclip_count:
-            raise RuntimeError(f"Qwen collection is incomplete: {final_count} != {openclip_count}")
+        if args.limit <= 0 and covered_selected != source_total:
+            raise RuntimeError(f"Qwen target range is incomplete: {covered_selected} != {source_total}")
     if dist.is_initialized():
         dist.destroy_process_group()
 

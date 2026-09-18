@@ -106,6 +106,25 @@ def load_queries(path: Path, include_uncertain: bool = False) -> list[Query]:
     return queries
 
 
+def filter_queries_by_batch(queries: list[Query], batch_min: int = 0, batch_max: int = 0) -> list[Query]:
+    if batch_min <= 0 and batch_max <= 0:
+        return queries
+    output: list[Query] = []
+    for query in queries:
+        match = re.match(r"L(\d+)_", query.video_id, flags=re.IGNORECASE)
+        if not match:
+            continue
+        batch_number = int(match.group(1))
+        if batch_min > 0 and batch_number < batch_min:
+            continue
+        if batch_max > 0 and batch_number > batch_max:
+            continue
+        output.append(query)
+    if not output:
+        raise ValueError(f"No queries remain after batch filter {batch_min}..{batch_max}")
+    return output
+
+
 def dedupe(values: list[str]) -> list[str]:
     output: list[str] = []
     seen: set[str] = set()
@@ -256,6 +275,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-tolerance", type=int, default=0)
     parser.add_argument("--timeout-s", type=float, default=180.0)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--batch-min", type=int, default=0)
+    parser.add_argument("--batch-max", type=int, default=0)
     parser.add_argument("--validate-only", action="store_true", help="Validate and summarize ground truth without calling the backend.")
     parser.add_argument("--plan-only", action="store_true", help="Generate/validate frozen perspectives, then stop before retrieval.")
     parser.add_argument("--sleep-s", type=float, default=0.0)
@@ -266,11 +287,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.batch_min < 0 or args.batch_max < 0 or (args.batch_max and args.batch_min > args.batch_max):
+        raise ValueError("invalid batch range")
     if args.top_k < 100:
         raise ValueError("top_k must be at least 100 to report Recall@100 and -1 misses consistently")
     if not args.perspective_counts or min(args.perspective_counts) < 2 or max(args.perspective_counts) > 8:
         raise ValueError("perspective counts must be between 2 and 8")
     queries = load_queries(args.benchmark_csv, include_uncertain=args.include_uncertain)
+    queries = filter_queries_by_batch(queries, args.batch_min, args.batch_max)
     if args.limit > 0:
         queries = queries[: args.limit]
     if args.validate_only:
@@ -370,8 +394,11 @@ def main() -> None:
         "top_k": args.top_k,
         "frame_tolerance": args.frame_tolerance,
         "profile": args.profile,
+        "dataset_id": args.dataset_id,
         "perspectives_file": str(args.perspectives_file),
         "query_count": len(queries),
+        "batch_min": args.batch_min,
+        "batch_max": args.batch_max,
     }
     (args.output_dir / "run_config.json").write_text(
         json.dumps(run_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
