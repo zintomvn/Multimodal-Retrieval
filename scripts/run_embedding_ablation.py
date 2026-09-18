@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import statistics
 import time
@@ -137,37 +138,78 @@ def dedupe(values: list[str]) -> list[str]:
     return output
 
 
+def generate_openai_perspectives(query: str, required: int, timeout_s: float) -> list[str]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required to generate frozen perspectives")
+    model = os.getenv("PERSPECTIVE_OPENAI_MODEL", "gpt-4o").strip() or "gpt-4o"
+    prompt = (
+        f"Create exactly {required} complementary English visual-search perspectives for this KIS video query. "
+        "Each perspective must be a standalone concrete description under 24 words for image-text retrieval. "
+        "Cover literal scene, subject/action, objects/attributes, environment, and other stated visual evidence. "
+        "Preserve the meaning, names, numbers, and visible text; do not invent details. "
+        f"Return only JSON with this schema: {{\"perspectives\": [exactly {required} distinct strings]}}.\n\n"
+        f"KIS query:\n{query}"
+    )
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": "You produce controlled multi-perspective queries for video retrieval ablation studies."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    last_error: Exception | None = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            content = str(body["choices"][0]["message"]["content"]).strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE | re.DOTALL)
+            raw = json.loads(content)
+            views = dedupe([str(item) for item in raw.get("perspectives", [])])
+            if len(views) != required:
+                raise ValueError(f"OpenAI returned {len(views)} perspectives; expected exactly {required}")
+            return views
+        except Exception as exc:  # noqa: BLE001 - retry transport, rate-limit, and malformed output failures
+            last_error = exc
+            if attempt < 3:
+                time.sleep(2**attempt)
+    raise RuntimeError(f"Could not generate {required} perspectives after 4 attempts: {last_error}")
+
+
 def plan_perspectives(args: argparse.Namespace, queries: list[Query], required: int) -> dict[str, list[str]]:
     if args.perspectives_file.exists():
         raw = json.loads(args.perspectives_file.read_text(encoding="utf-8"))
         perspectives = {str(key): dedupe(list(value)) for key, value in raw.items()}
     else:
         perspectives = {}
-        endpoint = f"{args.api_base.rstrip('/')}/api/retrieval/plan"
-        for index, query in enumerate(queries, start=1):
-            payload = {
-                "dataset_id": args.dataset_id,
-                "query_name": query.query_id,
-                "query_type": "KIS",
-                "query_text": query.text,
-                "top_k": args.top_k,
-                "profile": args.profile,
-                "options": {
-                    "use_query_expansion": False,
-                    "use_agent_query_planning": True,
-                    "use_metadata": False,
-                    "use_reranker": False,
-                },
-            }
-            response = post_json(endpoint, payload, args.timeout_s)
-            normalized = response.get("normalized_query") or {}
-            views = normalized.get("semantic_variants") or normalized.get("multi_views") or []
-            perspectives[query.query_id] = dedupe([str(item) for item in views])
-            print(json.dumps({"stage": "plan", "index": index, "query_id": query.query_id}, ensure_ascii=False))
-        args.perspectives_file.parent.mkdir(parents=True, exist_ok=True)
+
+    args.perspectives_file.parent.mkdir(parents=True, exist_ok=True)
+    for index, query in enumerate(queries, start=1):
+        existing = perspectives.get(query.query_id, [])
+        if len(existing) >= required:
+            print(json.dumps({"stage": "plan", "index": index, "query_id": query.query_id, "status": "cached"}, ensure_ascii=False))
+            continue
+        views = generate_openai_perspectives(query.text, required, args.timeout_s)
+        perspectives[query.query_id] = views
         args.perspectives_file.write_text(
             json.dumps(perspectives, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
+        )
+        print(
+            json.dumps(
+                {"stage": "plan", "index": index, "query_id": query.query_id, "views": len(views), "status": "generated"},
+                ensure_ascii=False,
+            )
         )
 
     missing = {
