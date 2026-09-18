@@ -25,6 +25,7 @@ export interface SearchDraft {
 }
 export interface StoredWorkspace {
   version: 1;
+  mode?: 'Search' | 'Auto' | 'Chat';
   datasetId: string;
   active: SearchDraft;
   drafts: Partial<Record<SearchTask, SearchDraft>>;
@@ -61,6 +62,7 @@ export function readWorkspace(storage: Pick<Storage,'getItem'> = localStorage): 
     if (!raw) return {value:null,error:null};
     const value=JSON.parse(raw) as StoredWorkspace;
     if (value.version!==1 || typeof value.datasetId!=='string' || !validDraft(value.active)
+      || (value.mode !== undefined && !['Search','Auto','Chat'].includes(value.mode))
       || (value.trakeChoices !== undefined && (!Array.isArray(value.trakeChoices) || !value.trakeChoices.every(c=>c && Number.isInteger(c.eventIndex) && c.eventIndex>=1 && c.eventIndex<=8 && c.frame && Number.isInteger(c.frame.frame_idx) && c.result && typeof c.result.id==='string' && Array.isArray(c.result.sequence_frames))))
       || (value.history !== undefined && (!Array.isArray(value.history) || !value.history.every(h=>h && typeof h.id==='string'
         && typeof h.queryText==='string' && typeof h.queryName==='string' && typeof h.createdAt==='string'

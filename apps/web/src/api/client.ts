@@ -1,5 +1,5 @@
 import { requireValidExport } from "./submissionValidation";
-import { mediaCache } from "./mediaCache";
+import { consumeCached, mediaCache } from "./mediaCache";
 import type {
   Dataset,
   FrameListResponse,
@@ -151,8 +151,8 @@ export async function runSearch(input: RetrievalSearchInput, signal?: AbortSigna
 
 export async function getFrameContext(frameId: string, signal?: AbortSignal): Promise<FrameContext> {
   // Aborting one consumer must not abort another consumer's cached promise.
-  if (signal) return requestJson<FrameContext>(`/api/media/frames/${frameId}/context`, { signal });
-  return mediaCache.get(`context:${frameId}`, () => requestJson<FrameContext>(`/api/media/frames/${frameId}/context`));
+  signal?.throwIfAborted();
+  return consumeCached(mediaCache.get(`context:${frameId}`, () => requestJson<FrameContext>(`/api/media/frames/${frameId}/context`)), signal);
 }
 
 export async function getVideoPreviewUrl(
