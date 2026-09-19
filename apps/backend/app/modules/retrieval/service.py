@@ -36,7 +36,7 @@ from app.modules.retrieval.temporal.dev_first import (
     score_candidate_videos,
     score_candidate_videos_across_events,
     select_diverse_candidate_videos,
-    select_diagnostic_event,
+    select_diagnostic_events,
     temporal_nms,
 )
 from app.modules.retrieval.temporal.diversification import diversify_temporal_sequences, nms_event_candidates
@@ -903,10 +903,7 @@ class RetrievalService:
         parts = [part.strip(" .:-") for part in re.split(pattern, query, flags=re.IGNORECASE) if part.strip(" .:-")]
         return parts[:8] if len(parts) > 1 else [query]
 
-
-
     # Search functions
-
     # 1. Frame-level search (default)
     def _search_frame_level(
         self,
@@ -984,19 +981,26 @@ class RetrievalService:
         return items
 
     # 2. Search temporal
-    @staticmethod
+    # DEV
+    # Refiner for overlong fallback events, and a first-pass search strategy that
     def _refine_dev_event_plans(
-        events: list[str], plans: list[dict[str, Any]], max_events: int = 8,
+        self,
+        request: SearchRequest,
+        events: list[str],
+        plans: list[dict[str, Any]],
+        config: dict[str, Any],
+        max_events: int = 8,
     ) -> tuple[list[str], list[dict[str, Any]]]:
-        """Atomize overlong fallback events without changing non-DEV planners.
+        """Use a smaller LLM to refine only compound DEV events, with safe fallback.
 
-        A failed/unavailable plan agent can leave a whole multi-action sentence
-        in one event.  That is a poor visual query and makes a diagnostic
-        video pool collapse around generic frames.  Split only long events on
-        sentence/time boundaries, clone its retrieval directives, and divide
-        its importance across children so the original LLM/planner weight is
-        fully conserved.
+        GPT-4o remains the experiment's query planner.  The optional
+        ``llm_refiner`` profile (default: GPT-5 nano) is invoked only when its
+        event decomposition is clearly compound.  This avoids hard-coded
+        linguistic splitting while keeping a deterministic rule-based fallback
+        for outages or malformed small-model output.
         """
+        refiner_cfg = config.get("llm_refiner", {}) if isinstance(config.get("llm_refiner"), dict) else {}
+        max_event_chars = max(1, int(refiner_cfg.get("max_event_chars", 120)))
         refined_events: list[str] = []
         refined_plans: list[dict[str, Any]] = []
         boundary = re.compile(
@@ -1004,12 +1008,42 @@ class RetrievalService:
             r"sau\s+\u0111[oó]|ti[eế]p\s+theo|cu[oố]i\s+c[uù]ng|r[oồ]i)\b",
             flags=re.IGNORECASE,
         )
+        needs_refinement = any(
+            len(event) > max_event_chars and len([piece for piece in boundary.split(event) if piece.strip(" ,;:-")]) > 1
+            for event in events
+        )
+        if needs_refinement and bool(refiner_cfg.get("enabled", True)):
+            profile_name = str(refiner_cfg.get("profile", "openai_gpt5_nano")).strip()
+            refiner_config = deepcopy(self.query_planner.config)
+            planning_cfg = refiner_config.setdefault("llm_query_planning", {})
+            if isinstance(planning_cfg, dict):
+                planning_cfg["request_profile_override"] = profile_name
+                planning_cfg["active_profile"] = profile_name
+                refiner = AgentQueryPlanner(config=refiner_config, config_path=self.query_planner.config_path)
+                try:
+                    result = refiner.plan(
+                        query=request.query_text,
+                        query_type=request.query_type,
+                        max_variants=max(1, min(3, int(refiner_cfg.get("max_variants", 3)))),
+                        temporal_kis=True,
+                    )
+                    if result.source.startswith("langchain") and len(result.temporal_events) >= 2:
+                        selected_events = self._dedupe_query_variants(result.temporal_events, max_variants=max_events)
+                        selected_plans = [dict(plan) for plan in result.temporal_event_plans[:len(selected_events)]]
+                        if len(selected_plans) == len(selected_events):
+                            for plan in selected_plans:
+                                plan["refiner_model"] = result.agent_metadata.get("model")
+                                plan["refiner_source"] = result.source
+                            return selected_events, selected_plans
+                except Exception:  # The deterministic fallback below preserves retrieval availability.
+                    logger.warning("DEV small-LLM event refinement failed; using deterministic fallback.", exc_info=True)
+
         for index, event in enumerate(events):
             source_plan = dict(plans[index]) if index < len(plans) else {}
             pieces = [piece.strip(" ,;:-") for piece in boundary.split(event) if piece.strip(" ,;:-")]
             # Existing LLM events are normally already atomic.  Only refine a
             # long compound query; this is deliberately DEV-local.
-            if len(event) <= 120 or len(pieces) <= 1:
+            if len(event) <= max_event_chars or len(pieces) <= 1:
                 pieces = [event]
             remaining = max_events - len(refined_events)
             if remaining <= 0:
@@ -1028,6 +1062,34 @@ class RetrievalService:
                 refined_plans.append(child)
         return refined_events or events, refined_plans or plans
 
+    @staticmethod
+    def _two_tier_dev_ranking(sequences: list[Any], top_k: int, config: dict[str, Any]) -> list[Any]:
+        """Keep precise complete chains at the head and recall-safe chains in the tail.
+
+        DEV's original score applies the same missing-event penalty to every
+        rank.  That is appropriate for the first page, but makes ranks 21--100
+        unnecessarily brittle when AutoShot misses one visual event.  Preserve
+        the original score for the configured head, then use a bounded tail
+        score with lower missing penalty and stronger diagnostic-anchor support.
+        """
+        if not sequences:
+            return sequences
+        cfg = config.get("two_tier_ranking", {}) if isinstance(config.get("two_tier_ranking"), dict) else {}
+        head_size = min(max(1, int(cfg.get("head_size", 20))), max(1, top_k))
+        missing_relaxation = max(0.0, float(cfg.get("tail_missing_penalty_relaxation", 0.65)))
+        anchor_bonus = max(0.0, float(cfg.get("tail_anchor_bonus", 0.12)))
+        ordered = sorted(sequences, key=lambda sequence: sequence.score, reverse=True)
+        head, tail = ordered[:head_size], ordered[head_size:]
+
+        def tail_score(sequence: Any) -> float:
+            details = sequence.details if isinstance(sequence.details, dict) else {}
+            missing_ratio = max(0.0, min(1.0, float(details.get("missing_ratio", 0.0))))
+            diagnostic_match = max(0.0, min(1.0, float(details.get("diagnostic_match", 0.0))))
+            return sequence.score + missing_relaxation * missing_ratio + anchor_bonus * diagnostic_match
+
+        return [*head, *sorted(tail, key=tail_score, reverse=True)]
+
+    # DEV search strategy
     def _search_dev_first_kis(
         self,
         run: QueryRun,
@@ -1036,14 +1098,16 @@ class RetrievalService:
         normalized: dict[str, Any],
     ) -> list[ResultItem]:
         """DEV: probe globally, choose a diagnostic event, then sequence by time."""
+
+        # Config from the LLM planner.
         events = self._dedupe_query_variants(normalized["temporal_events"] or [request.query_text], max_variants=8)
         plans = normalized.get("temporal_event_plans") if isinstance(normalized.get("temporal_event_plans"), list) else []
         plans = [plan if isinstance(plan, dict) else {} for plan in plans]
         while len(plans) < len(events):
             plans.append({"query": events[len(plans)], "importance": 1.0, "diagnostic_prior": 0.5})
-        events, plans = self._refine_dev_event_plans(events, plans)
         profile = self.profiles.get(request.profile, self.profiles.get("competition_default", {}))
         config = profile.get("dev_first", {}) if isinstance(profile.get("dev_first"), dict) else {}
+        events, plans = self._refine_dev_event_plans(request, events, plans, config)
         probe_cfg = config.get("diagnostic_probe", {}) if isinstance(config.get("diagnostic_probe"), dict) else {}
         # A retrieval result ultimately has at most one representative sequence
         # per video.  Make the global evidence pool large enough for the caller
@@ -1051,15 +1115,23 @@ class RetrievalService:
         # model/Milvus request: this only changes the requested result window.
         output_buffer = max(1, int(config.get("output_video_buffer", 10)))
         required_video_pool = request.top_k + output_buffer
+        global_cfg = config.get("global_recall", {}) if isinstance(config.get("global_recall"), dict) else {}
+        global_multiplier = max(1, int(global_cfg.get("top_k_multiplier", 1)))
+        global_minimum = max(1, int(global_cfg.get("min_top_k", 1)))
         probe_top_k = max(
             1,
             int(probe_cfg.get("top_k_per_event", 40)),
             required_video_pool,
+            request.top_k * global_multiplier,
+            global_minimum,
         )
         calibration = config.get("score_calibration", {}) if isinstance(config.get("score_calibration"), dict) else {}
         semantic_view_limit = max(1, int(config.get("max_semantic_views_per_event", 2)))
         text_view_limit = max(1, int(config.get("max_text_views_per_event", 2)))
+        global_view_limit = max(1, int(global_cfg.get("semantic_views_per_event", semantic_view_limit)))
+        global_siglip2 = bool(global_cfg.get("include_siglip2", True))
 
+        # Retrieve and calibrate one event's frame candidates.
         def retrieve(
             event_index: int,
             top_k: int,
@@ -1071,36 +1143,32 @@ class RetrievalService:
             plan = plans[event_index - 1]
             query = events[event_index - 1]
             active_view_limit = max(1, semantic_view_cap or semantic_view_limit)
+
+            # Semantic views are fused by rank, not concatenated as text.
             semantic_views = self._event_semantic_views(plan, query, max_views=active_view_limit)
-            # Prompt v3 supplies a full Vietnamese visual description for
-            # SigLIP2.  Keep it as a semantic view (rather than reducing it to
-            # ASR/OCR keywords) whenever SigLIP2 participates in the visual
-            # ensemble.  Older plans have no such field and retain identical
-            # behaviour.
-            # Global probes intentionally use one English primary view per
-            # event.  Vietnamese SigLIP2 views are valuable only after video
-            # filtering; adding them globally doubles model/Milvus work and
-            # violates the configured coarse-pass budget.
+            # Include the planned Vietnamese view for SigLIP2 when requested.
             if include_siglip2 and request.options.visual_search_mode in {"siglip2", "both"}:
                 semantic_views = self._dedupe_query_variants(
                     [*semantic_views, *self._extract_plan_text_values(plan, ("siglip2_views",))],
                     max_variants=active_view_limit + 1,
                 )
-            # The final event often describes the sought product/state while
-            # the root plan carries a more precise semantic rewrite of the
-            # whole Vietnamese narrative.  Inject it as an auxiliary view so
-            # event retrieval retains that information instead of embedding a
-            # vague phrase such as "stick-like product" by itself.
             if include_root_summary and event_index == len(events):
                 semantic_views = self._dedupe_query_variants(
                     [*semantic_views, *list(normalized.get("semantic_variants") or [])],
                     max_variants=active_view_limit + 1,
                 )
+
+            # Text view
             text_views = self._event_text_views(
                 plan, str(plan.get("text_query") or query), max_views=text_view_limit,
             )
+            # Modality weights
             weights = self._normalize_retrieval_weights(plan.get("retrieval_weights")) or normalized.get("retrieval_weights")
+
+            # Text source weights: OCR, ASR, caption
             text_weights = self._normalize_text_source_weights(plan.get("text_source_weights")) or self._normalize_text_source_weights(normalized.get("text_source_weights"))
+
+            # Search with multi-view
             ranked = self._rank_frames_multiperspective(
                 dataset=dataset, semantic_views=semantic_views, text_views=text_views,
                 query_text=text_views[0] if text_views else query, profile_name=request.profile,
@@ -1109,6 +1177,8 @@ class RetrievalService:
                 text_source_weights=text_weights,
                 allowed_video_ids=allowed_video_ids,
             )
+
+            # Process the ranked results into a list of DevFirstCandidate objects -> data structure
             raw = [
                 DevFirstCandidate(
                     frame_id=item.frame.id, video_id=item.frame.video_id, video_code=item.frame.video.video_code,
@@ -1121,49 +1191,37 @@ class RetrievalService:
             ]
             return calibrate_candidates(raw, calibration)
 
-        # Coarse global recall uses the planner's primary visual view only.
-        # The second, video-constrained pass below is where extra English and
-        # Vietnamese fine-grained views are worth their cost.
+        # Coarse recall intentionally fuses the English planner view with the
+        # Vietnamese SigLIP2 view.  Candidate-video recall is the irreversible
+        # part of DEV, so it must be broader than the later local precision pass.
         probes = [
-            retrieve(index, probe_top_k, semantic_view_cap=1)
+            retrieve(
+                index,
+                probe_top_k,
+                semantic_view_cap=global_view_limit,
+                include_siglip2=global_siglip2,
+                include_root_summary=index == len(events),
+            )
             for index in range(1, len(events) + 1)
         ]
-        diagnostic_index, diagnostics = select_diagnostic_event(
+        diagnostic_indices, diagnostics = select_diagnostic_events(
             plans,
             [event_probe(candidates, probe_top_k) for candidates in probes],
             config,
+            limit=max(1, int(probe_cfg.get("anchor_count", 2))),
         )
-        # The diagnostic event is already part of the independent global
-        # probes. Reusing it avoids a duplicate global embedding + Milvus pass
-        # (previously a deep top-500 search) while retaining enough diverse
-        # candidates for local retrieval.
-        diagnostic = temporal_nms(
-            probes[diagnostic_index - 1],
-            int(config.get("event_nms_window_ms", 2500)),
-        )
-        # Keep the coarse pass cheap (one English view per event), then spend
-        # one bounded bilingual re-probe only on the event that the diagnostic
-        # stage selected. This lets a grounded Vietnamese SigLIP2 view recover
-        # a hard visual state without multiplying every global Milvus request.
-        if bool(config.get("bilingual_diagnostic_reprobe", True)) and request.options.visual_search_mode in {"siglip2", "both"}:
-            diagnostic = temporal_nms(
-                retrieve(
-                    diagnostic_index,
-                    probe_top_k,
-                    semantic_view_cap=1,
-                    include_siglip2=True,
-                    include_root_summary=diagnostic_index == len(events),
-                ),
-                int(config.get("event_nms_window_ms", 2500)),
-            )
-        # Preserve the diagnostic event's role, but seed candidate videos with
-        # every event probe so a broad diagnostic event cannot remove the true
-        # video before the later frame-level sequence search starts.
+        diagnostic_index = diagnostic_indices[0] if diagnostic_indices else 1
+
+        # Retain the top two diagnostic anchors and take their union in global
+        # seeding.  This avoids one generic event gating out a correct video.
+        diagnostic_by_event = {
+            event_index: temporal_nms(probes[event_index - 1], int(config.get("event_nms_window_ms", 2500)))
+            for event_index in diagnostic_indices
+        }
+        diagnostic = diagnostic_by_event.get(diagnostic_index, probes[diagnostic_index - 1])
         seed_candidate_sets = list(probes)
-        # The chosen diagnostic event is intentionally retrieved to a deeper
-        # pool. Keep that recall in video seeding; the lightweight probes from
-        # other events only add corroborating evidence.
-        seed_candidate_sets[diagnostic_index - 1] = diagnostic
+        for event_index, candidates in diagnostic_by_event.items():
+            seed_candidate_sets[event_index - 1] = candidates
         event_weights = [max(0.0, float(plan.get("importance", 1.0))) for plan in plans[:len(events)]]
         if not event_weights or sum(event_weights) <= 0:
             event_weights = [1.0] * len(events)
@@ -1178,7 +1236,10 @@ class RetrievalService:
 
         configured_limit = max(1, int(config.get("candidate_video_limit", 18)))
         maximum_limit = max(configured_limit, int(config.get("max_candidate_video_limit", 100)))
-        candidate_limit = min(maximum_limit, max(configured_limit, required_video_pool))
+        candidate_limit = min(
+            maximum_limit,
+            max(configured_limit, required_video_pool, request.top_k * global_multiplier),
+        )
         candidate_video_order = select_diverse_candidate_videos(
             seed_candidate_sets,
             video_ranking,
@@ -1241,6 +1302,21 @@ class RetrievalService:
         if len(events) > 1 and explicit_min_match is None:
             default_maximum = max(2, int(config.get("max_default_min_match", 2)))
             min_match = max(2, min(min_match, default_maximum))
+        # Do not make every multi-event request pass the same two-event gate.
+        # If evidence is sparse, a planner with low confidence should preserve
+        # recall and let the two-tier ranker push incomplete chains to the tail.
+        adaptive_cfg = config.get("adaptive_min_match", {}) if isinstance(config.get("adaptive_min_match"), dict) else {}
+        if explicit_min_match is None and bool(adaptive_cfg.get("enabled", True)):
+            evidence_floor = max(1, int(adaptive_cfg.get("min_candidates_per_event", minimum)))
+            weak_events = sum(len(candidates) < evidence_floor for candidates in candidate_sets)
+            planner_confidence = sum(
+                max(0.0, min(1.0, float(plan.get("diagnostic_prior", plan.get("importance", 0.5)))))
+                for plan in plans[:len(events)]
+            ) / max(1, len(events))
+            confidence_floor = max(0.0, min(1.0, float(adaptive_cfg.get("planner_confidence_floor", 0.35))))
+            if weak_events or planner_confidence < confidence_floor:
+                min_match = min(min_match, max(1, int(adaptive_cfg.get("weak_evidence_min_match", 1))))
+                fallback_stages.append("adaptive_min_match")
         sequence_limit = max(request.top_k * 2, candidate_limit)
         sequences = build_dev_first_vortex_ats_sequences(
             candidate_sets, weights, diagnostic_index,
@@ -1267,10 +1343,28 @@ class RetrievalService:
                 reverse=True,
             )[:sequence_limit]
             fallback_stages.append("partial_temporal_completion")
+        # A local pass can still be empty when the correct video narrowly misses
+        # its candidate cutoff.  Complete the result window from the global
+        # fused pool, but only with video IDs not already represented locally.
+        if len(sequences) < request.top_k:
+            global_sequences = build_dev_first_vortex_ats_sequences(
+                seed_candidate_sets, weights, diagnostic_index,
+                normalized.get("temporal_edges") if isinstance(normalized.get("temporal_edges"), list) else [],
+                config, 1, sequence_limit,
+                request.options.delta_t_max_ms,
+            )
+            existing_videos = {sequence.video_id for sequence in sequences}
+            sequences = sorted(
+                [*sequences, *(sequence for sequence in global_sequences if sequence.video_id not in existing_videos)],
+                key=lambda sequence: sequence.score,
+                reverse=True,
+            )[:sequence_limit]
+            fallback_stages.append("global_fused_recall_completion")
         target_scope = str(normalized.get("target_scope") or "frame")
         anchor_index = normalized.get("temporal_anchor_index")
         if target_scope == "frame" and anchor_index:
             sequences = [sequence for sequence in sequences if any(item.event_index == anchor_index for item in sequence.candidates)]
+        sequences = self._two_tier_dev_ranking(sequences, request.top_k, config)
         sequence_pool_count = len(sequences)
         sequences = sequences[:request.top_k]
         # Dynamic samples are contextual only: they neither change sequence
@@ -1327,7 +1421,9 @@ class RetrievalService:
                     ],
                     "target_scope": target_scope, "representative_frame_policy": representative_policy,
                     "representative_event_index": representative.event_index, "diagnostic_event_index": diagnostic_index,
-                    "diagnostic_events": diagnostics, "candidate_video_count": len(candidate_video_ids),
+                    "diagnostic_anchor_indices": diagnostic_indices, "diagnostic_events": diagnostics,
+                    "global_probe_top_k": probe_top_k, "global_semantic_views_per_event": global_view_limit,
+                    "global_siglip2_fusion": global_siglip2, "candidate_video_count": len(candidate_video_ids),
                     "fallback_stages": fallback_stages,
                     "sequence_pool_count": sequence_pool_count,
                     "matched_events": sum(not item.is_dynamic_sample for item in sequence.candidates),

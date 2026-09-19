@@ -121,6 +121,24 @@ def event_probe(candidates: list[DevFirstCandidate], top_k: int) -> dict[str, fl
 
 
 def select_diagnostic_event(event_plans: list[dict[str, Any]], probes: list[dict[str, float]], config: dict[str, Any]) -> tuple[int, list[dict[str, float]]]:
+    """Return the best diagnostic event; retained for callers needing one anchor."""
+    selected, diagnostics = select_diagnostic_events(event_plans, probes, config, limit=1)
+    return (selected[0] if selected else 1), diagnostics
+
+
+def select_diagnostic_events(
+    event_plans: list[dict[str, Any]],
+    probes: list[dict[str, float]],
+    config: dict[str, Any],
+    limit: int = 2,
+) -> tuple[list[int], list[dict[str, float]]]:
+    """Choose several high-quality diagnostic anchors for recall-safe DEV seeding.
+
+    A single LLM-selected diagnostic event is brittle: if its visual wording is
+    generic, the true video can be removed before local sequence construction.
+    This ranks planner prior and probe evidence as before, but exposes the top
+    ``limit`` distinct event indices so the global candidate pool is their union.
+    """
     probe_cfg = config.get("diagnostic_probe", {}) if isinstance(config.get("diagnostic_probe"), dict) else {}
     planner_weight = max(0.0, float(probe_cfg.get("planner_weight", 0.55)))
     probe_weight = max(0.0, float(probe_cfg.get("probe_weight", 0.45)))
@@ -132,8 +150,11 @@ def select_diagnostic_event(event_plans: list[dict[str, Any]], probes: list[dict
         prior = _clamp(float(plan.get("diagnostic_prior", plan.get("importance", 0.5))))
         probe_score = _clamp(0.4 * float(probe.get("selectivity", 0.0)) + 0.3 * float(probe.get("margin", 0.0)) + 0.3 * float(probe.get("top_confidence", 0.0)))
         diagnostics.append({"event_index": float(index + 1), "planner_prior": prior, "probe_score": probe_score, "diagnostic_score": planner_weight * prior + probe_weight * probe_score})
-    best = max(range(len(diagnostics)), key=lambda index: diagnostics[index]["diagnostic_score"]) if diagnostics else 0
-    return best + 1, diagnostics
+    ordered = sorted(
+        range(len(diagnostics)),
+        key=lambda index: (-diagnostics[index]["diagnostic_score"], index),
+    )
+    return [index + 1 for index in ordered[: max(1, limit)]], diagnostics
 
 
 def score_candidate_videos(candidates: list[DevFirstCandidate], config: dict[str, Any]) -> list[tuple[str, float]]:

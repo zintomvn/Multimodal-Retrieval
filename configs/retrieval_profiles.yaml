@@ -72,20 +72,17 @@ competition_default:
     max_sequences_per_video: 1
     min_representative_gap_ms: 10000
   dev_first:
-    diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45}
-    # One bilingual re-probe of the selected diagnostic event restores
-    # SigLIP2 recall without multiplying every global event search.
-    bilingual_diagnostic_reprobe: true
-    # DEV's global pass reserves distinct videos for each important event; the
-    # second Milvus pass is restricted to this small, diverse set.
-    candidate_video_limit: 32
-    # Expand only when a caller asks for a large top-k.  The pool contains
-    # distinct videos, so one representative sequence/video can still return
-    # more candidates than the requested top-k without a broad local scan.
-    # For top_k=5 this keeps 85 distinct videos. A controlled benchmark at the
-    # 160-video cap did not improve recall but increased latency substantially.
-    output_video_buffer: 80
-    max_candidate_video_limit: 160
+    diagnostic_probe: {enabled: true, top_k_per_event: 40, planner_weight: 0.55, probe_weight: 0.45, anchor_count: 2}
+    # Fuse English planner views and Vietnamese SigLIP2 views before any video
+    # gate. DEV must retain broad global evidence before local precision work.
+    global_recall: {top_k_multiplier: 5, min_top_k: 500, semantic_views_per_event: 2, include_siglip2: true}
+    # Retained for old profiles; the fused global stage makes a second probe unnecessary.
+    bilingual_diagnostic_reprobe: false
+    # Dynamic candidate width grows with requested top-k and is deliberately
+    # broader than Vortex so candidate-video recall is not the limiting step.
+    candidate_video_limit: 200
+    output_video_buffer: 100
+    max_candidate_video_limit: 600
     # Bound multiperspective work in both the global diagnostic and the local
     # filtered pass: two English CLIP/caption views plus one Vietnamese
     # SigLIP2 semantic view when the bilingual prompt provides it.
@@ -94,6 +91,8 @@ competition_default:
     min_candidate_videos: 8
     diverse_videos_per_event: 2
     video_scoring: {best_weight: 0.55, top_m_mean_weight: 0.30, view_agreement_weight: 0.15, top_m: 3, diagnostic_weight: 0.55, cross_event_weight: 0.35, coverage_weight: 0.10}
+    # Global recall is deliberately wide; the local pass stays bounded so its
+    # rank-based evidence calibration retains top-20 precision.
     event_retrieval: {initial_top_k: 200, max_top_k: 400, min_candidates_per_event: 24}
     event_nms_window_ms: 2500
     per_video_candidate_min_gap_ms: 1500
@@ -108,6 +107,15 @@ competition_default:
     # AutoShot may omit one of several planned events; retain the two-event
     # noise guard without forcing three matches for a five-event narrative.
     max_default_min_match: 2
+    # Sparse visual evidence or low planner confidence may safely fall back to
+    # one matched event; the recall-safe chain is ranked only after full ones.
+    adaptive_min_match: {enabled: true, min_candidates_per_event: 24, planner_confidence_floor: 0.35, weak_evidence_min_match: 1}
+    # Top ranks remain completeness/precision-first; ranks 21--100 soften the
+    # missing penalty and reward diagnostic evidence to avoid tail collapse.
+    two_tier_ranking: {head_size: 20, tail_missing_penalty_relaxation: 0.65, tail_anchor_bonus: 0.12}
+    # Query planning stays on GPT-4o. Only an overlong compound event is sent
+    # to this cheaper refiner, with deterministic splitting as its fallback.
+    llm_refiner: {enabled: true, profile: openai_gpt5_nano, max_event_chars: 120, max_variants: 3}
     temporal_gap_classes:
       short: {max_gap_ms: 45000}
       medium: {max_gap_ms: 120000}
