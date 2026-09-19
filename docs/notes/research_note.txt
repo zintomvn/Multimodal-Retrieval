@@ -17,9 +17,6 @@ Note: viết technical report cho những thứ này
 - Vortex algorithm
 
 
-
-
-
 Những thứ cần study further:
 - elasticsearch: full-text search works (text analysis, Inverted index creation, BM25 algorithm, Relevance scoring)
     + BM25: https://www.elastic.co/blog/practical-bm25-part-2-the-bm25-algorithm-and-its-variables
@@ -30,3 +27,75 @@ Những thứ cần study further:
     + Ingest data flow and Data sharding
     + Cách lưu trữ trên cloud -> file storage (URL signed, ...)
 -  
+
+# Paper exp
+
+## Problem 1
+
+1. DEV cắt recall trước khi temporal rerank.
+Vortex thực hiện retrieval toàn cục cho từng event với per_event_top_k tối đa 500 và cho mọi event/view, sau đó mọi video còn có thể làm anchor. DEV probe ban đầu chỉ lấy khoảng 180 kết quả/event, một English semantic view/event, rồi giới hạn video candidate tối đa 160.
+Đặc biệt có mâu thuẫn cấu hình:
+- top_k=100
+- output_video_buffer=80 → cần 180 video để có tail an toàn
+- nhưng max_candidate_video_limit=160
+Nên DEV không thể duy trì cả 100 kết quả trả về lẫn 80 video dự phòng. Vortex không có “video gate” này, nên recall @50/@100 tốt hơn.
+2. SigLIP2 view được dùng quá muộn trong DEV.
+DEV coarse probe dùng một English view; Vietnamese SigLIP2 view chỉ được đưa vào sau khi video đã bị lọc vào candidate_video_ids. Nếu GT chỉ nổi bật khi dùng SigLIP2/Vietnamese fine-grained view, video đúng đã bị loại trước local re-probe.
+Vortex lại dùng nhiều view trong retrieval toàn cục. Đây rất có thể là nguyên nhân DEV mất các KIS phức tạp dù semantic model đã là SigLIP2.
+3. DEV yêu cầu chain quá chặt cho tail.
+DEV mặc định yêu cầu ít nhất 2 event cho query nhiều event (min_match >= 2). Vortex dùng min_match = 1: chỉ cần anchor mạnh và context hợp lệ là video vẫn được giữ. Với AutoShot thiếu frame, một event khó truy hồi, hoặc LLM tách event quá chi tiết, DEV sẽ:
+- loại hẳn video đúng;
+- hoặc đưa video đúng vào partial_temporal_completion;
+- rồi phạt missing_penalty và làm rank tụt sâu.
+query-p1-20-kis và query-p3-33-kis đều là ví dụ: DEV trả sequence chỉ match 1/3 event và rank khoảng 38–93, trong khi Vortex vẫn giữ đúng video ở rank 1–13.
+4. DEV chọn một diagnostic event, Vortex không phụ thuộc một event.
+DEV dùng diagnostic_prior từ planner cộng với probe score để chọn event dẫn đường. Nếu GPT gán diagnostic prior sai hoặc event được chọn quá generic, candidate-video set ban đầu lệch. Vortex cho mỗi event có thể làm anchor, nên bền vững hơn với planner error.
+5. Hàm score DEV ưu tiên precision hơn recall.
+DEV score gồm evidence, coverage, strong coverage, diagnostic score, missing penalty và temporal-gap penalty. Đây là hợp lý cho top-k nhỏ, giải thích việc DEV tốt ở R@1–R@10. Nhưng khi k lớn, các chain partial của video đúng bị phạt mạnh và bị các chain “đủ event nhưng sai video” vượt qua.
+6. DEV chậm hơn đáng kể.
+Median latency:
+- Vortex: 811.5 ms
+- DEV: 2948.0 ms
+DEV chậm khoảng 3.6×, vì có global probe, diagnostic re-probe và local retrieval theo từng event. Điều này cũng làm DEV dễ gặp timeout khi chạy benchmark dài.
+
+Các cải tiến nên ưu tiên:
+1. Nới candidate-video recall trước: tăng max_candidate_video_limit ít nhất bằng top_k + output_video_buffer (180 với thí nghiệm này), hoặc dynamic theo top_k.
+2. Thay global single-English probe bằng fusion ngay từ coarse stage: English view + SigLIP2 Vietnamese view cho event diagnostic, hoặc ít nhất rerun SigLIP2 cho các video nằm gần candidate cutoff.
+3. Thay hard gate bằng fallback recall: nếu DEV trả ít hơn top_k, bổ sung các video từ global Vortex pool chưa xuất hiện, thay vì chỉ dùng local partial chain.
+4. Dùng score hai tầng:
+   - tầng 1: sequence completeness/precision cho top 10–20;
+   - tầng 2: giảm missing penalty và tăng anchor evidence cho rank 21–100.
+5. Không cố định min_match=2 cho mọi multi-event KIS. Nên adaptive theo số event có evidence thực tế hoặc confidence của planner.
+6. Chọn diagnostic event dạng multi-anchor: giữ top 2 diagnostic event thay vì một event duy nhất, rồi hợp union candidate videos.
+7. Đo ablation rõ ràng:
+   - DEV hiện tại;
+   - DEV + candidate pool 180/250;
+   - DEV + coarse SigLIP2 bilingual;
+   - DEV + min_match=1;
+   - DEV + Vortex global fallback.
+Kết luận: DEV hiện là thiết kế precision-first, nên thắng ở R@10 nhưng thua Vortex ở R@20–100 vì recall bị cắt quá sớm tại diagnostic probe/candidate-video gate, sau đó bị phạt sequence partial quá mạnh.
+
+
+## Problem 2
+Local DEV làm rơi evidence đã tìm được ở global stage.
+DEV probe global rộng, rồi giới hạn video, sau đó query local lại và chỉ dùng local candidates. Khi local event rỗng thì global candidates không được merge trở lại; fallback global chỉ chạy khi tổng sequence < top_k, không chạy khi một event bị rỗng. p3-28 chứng minh trực tiếp lỗi này.
+Cải tiến: merge seed_candidate_sets[event] đã lọc theo candidate_video_ids với local results; nếu local event < minimum hoặc rỗng, dùng global candidates làm fallback ngay cho event đó. Không đợi toàn bộ sequence thiếu kết quả.
+
+DEV bỏ planner anchor và chỉ dùng diagnostic anchor thứ nhất.
+Trong service.py, DEV đặt temporal_anchor_index=None; sau đó chỉ lấy diagnostic_indices[0] cho sequence construction. Dù chọn 2 diagnostic anchors để global seed, sequence rank chỉ khai thác anchor đầu tiên. Các query p3-3/p3-4/p3-26 đều bị lệch planner anchor.
+Cải tiến: giữ planner anchor làm một nhánh bắt buộc; build sequence cho cả planner anchor và mọi diagnostic anchor, rồi merge/deduplicate theo video.
+
+Sequence construction của DEV là greedy, ATS là beam search.
+build_dev_first_vortex_ats_sequences() luôn lấy candidate tốt nhất tương thích trước/sau một anchor. Một lựa chọn local tốt có thể chặn chain tốt hơn. ATS duy trì beam rộng 400 nên có cơ hội giữ sequence GT.
+Cải tiến: dùng beam nhỏ theo từng video/anchor, ví dụ 8–16 states, thay vì greedy một đường. Đây là trade-off tốt hơn nhiều so với full ATS beam.
+
+adaptive_min_match bị self-reinforcing.
+10/58 KIS bị hạ xuống min_match=1; nhóm này chỉ đạt R@1=2/10, R@5=4/10. Vì candidate đã bị local gate làm thưa, DEV lại hạ điều kiện xuống một event, khiến ranking bị dominated bởi match đơn lẻ.
+Cải tiến: quyết định weak evidence từ global probe trước gate; với query nhiều event vẫn giữ min_match>=2 nếu global có evidence, chỉ cho single-event fallback ở tail, không cho cạnh tranh top-20.
+
+Calibration ưu tiên rank quá mạnh.
+score_calibration đặt relative_weight=0.60, còn raw semantic và hybrid chỉ tổng 0.40. Relative rank được tính sau local filtering, nên không còn comparable với global score và dễ nâng false positive trong tập video đã gate.
+Cải tiến: giảm rank weight; chuẩn hóa score theo event/source; log cả raw-score rank và calibrated-score rank. Các case p1-22/p1-24 có cùng coverage nhưng DEV vẫn thua top đầu chính là dấu hiệu này.
+
+Latency cũng là chi phí đáng kể.
+Median DEV 37.4s, ATS 13.3s, Vortex 10.8s; riêng KIS DEV 44.8s. DEV thực hiện global multi-event probe rồi local multi-event retrieval. Merge global fallback theo event sẽ vừa tăng recall vừa tránh re-query local vô ích khi local bị collapse.

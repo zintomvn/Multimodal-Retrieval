@@ -480,9 +480,8 @@ Future works:
 - Study more about the fundamental (data, cloud, agent, web)
 
 
-# Contribution:
-- 
-
+--------------------------------------------------------------------------------------------------------------------------------
+# Milestone 7
 
 
 # Idea:
@@ -597,12 +596,82 @@ Lỗi giải thuật DEV-First
     + không copy diagnostic_prior trong LLM planner
 - NMS dùng được
 
-- Data:
-    + Chạy insert data OCR, Caption, ASR vào elasticsearch
-
 Những kiến thức có thể áp dụng:
 - Clustering
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Milestone 8 - Paper
+
+# Experiments
+
+## Experiment setup
+
+## Result and analysis
+
+
+## Ablation study
+
+### LLM Prompt
+- Fewshot prompting
+- Oneshot prompting
 - 
+
+### Prompt
+
+
+
+## Experiment Prompt 
+role: bạn là AI reseacher
+context: hiện tại tôi đang cần chạy thực nghiệm so sánh các giải thuật search trong temporal search.
+benchmark: [aic_2026_GT_dataset.csv](d:/University/Projects/Individual projects/Multimodal-Retrieval/data/experiments/aic_2026_groundtruth/aic_2026_GT_dataset.csv) 
+- viết cho tôi notebook và chạy thực nghiệm notebook đó lưu nó vào folder @notebooks/experiments/exp1_temporal_search/
+- Giữ nguyên thông số là dùng model LLM gpt-4o và siplip2 để semantic search 
+- Sau đó tổng hợp và ghi lại tổng hợp thành dạng bảng cho 3 phương pháp giống như hình tôi gửi
+Dependent Variable - Temporal search: ATS, Vortex, DEV
+Metrics: Rank (có top 100)
+output: chạy và lưu thành 3 bảng đáp án và 1 bảng tổng hợp lưu vào[exp1_temporal_search](d:/University/Projects/Individual projects/Multimodal-Retrieval/data/experiments/results/exp1_temporal_search/)
+
+## Experiment - Improving 1
+role: bạn là AI reseacher
+context: hiện tại tôi đang cần tối ưu DEV search, phần giải thuật của 
+Phân tích dữ liệu đo được từ [exp1\_temporal\_search\_v1](data/experiments/results/exp1_temporal_search_v1/) và so sánh code search rút ra error ở đâu mà làm DEV yếu hơn Vortex khi k = 20 trở đi, phân tích và rút ra những thứ cần cải tiến
+
+Drawback:
+
+
+
+
+## Experiment - Improving 2
+role: bạn là AI reseacher
+context: hiện tại tôi đang cần tối ưu DEV search 
+Phân tích dữ liệu đo được từ [exp1\\_temporal\\_search\\_v1](data/experiments/results/exp1_temporal_search_v1/) và so sánh code search rút ra error ở đâu mà làm DEV yếu hơn ATS và Vortex khi k = 1 và k = 5, phân tích những trường hợp yếu hơn và rút ra những thứ cần cải tiến
+
+contraint: dựa hoàn toàn vào code và phân tích
+
+
+## Contributions prompt
+role: bạn là một AI Researcher 
+context: đọc kỹ source code trong https://github.com/zintomvn/Multimodal-Retrieval  - hiện tại tôi đang làm research cho phương pháp search tối ưu trong multimodal retrieval, 
+task:
+Search thêm những paper mới và dẫn nguồn cho tôi, lấy từ SOICT và các cuộc thi tương tự.
+Search những paper tôi thừa kế ý tưởng.
+Tôi đang cần bạn so sánh phương pháp của tôi có những đóng góp gì mới - contribution, cải tiến những gì so với những paper trước đó để tôi ghi vào paper 
+contraint: search thông tin và đọc thông tin trong paper đó luôn không chỉ list ra hay đọc abstract, so sánh kỹ lưỡng với code của tôi (chỉ rõ là phần nào). 
+So sánh và chỉ rõ dùng phần nào, không chế thông tin ngoài tài liệu search và paper của tôi gửi.
+
+
+
+
+
+
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Prompt Improving
 
 Prompt impv 1:
 role: bạn là một AI reseacher
@@ -639,7 +708,6 @@ contraint: có thể chỉnh sửa giải thuật và câu prompt,&#x20;
 verify: nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth 5 câu query nằm trong top 5 là thành công
 
 output: viết test\_report\_v1.md vào folder [tests](<docs/milestones/milestone 6/tests/>)&#x20;
-
 
 
 Prompt impv 4:
@@ -709,4 +777,39 @@ output: viết test_report_v4.md vào folder [tests](docs/milestones/milestone 6
 
 chạy cho tôi ablation study trên 5 câu query đó cho các thông số, hyperparameters liên quan về search và ghi vào report xem 
 
+
+Prompt impv 7:
+role: bạn là một AI reseacher
+
+context: hiện tại hệ thống của tôi có các module trong phần search của KIS temporal dùng giải thuật DEV tôi vừa tạo ra, bạn hãy đọc tất cả các cách viết prompt trong folder [agent prompt](<configs/agent prompt/>) trong đó thì cách viết prompt hiệu quả là agent\_v2 và tôi cần bạn tối ưu prompt và code của search.
+
+Dùng câu prompt v4-v6 tối ưu cho câu prompt 2, hệ thống gán lại bằng câu prompt 2, câu multi-view đủ ngữ nghĩa theo các góc nhìn về evidence.
+
+verify: chạy test cho chiến lược DEV search để search đúng theo benchmark [aic2026\_round\_3.csv](data/experiments/aic_2026_groundtruth/aic2026_round_3.csv) với những câu query tôi đã khai báo ở dưới.
+
+benchmark: query-p2-1-kis, query-p2-2-kis, query-p2-3-kis, query-p2-4-kis, query-p2-10-kis, query-p2-11-kis.
+
+task:
+
+- Tối ưu search cho groundtruth cho KIS
+- phân tích lỗi khi search các câu query, điểm yếu nằm ở module nào mà không search được groundtruth tối ưu xong viết vào report cho tôi.
+- Sửa lại phần module đó sao cho tối ưu nhất để search được các câu query mà tôi lấy trong benchmark tôi để dưới.
+- nếu sai thì phân tích lỗi (phân tích groundtruth của những câu search đó để xem chiến lược nào cho prompt và logic search đúng nhất) và chỉnh lại prompt và logic search, nào đúng groundtruth các câu query nằm trong top 10 là thành công.
+
+contraint:
+
+- Đủ top k
+- video dự đoán
+- sửa câu prompt version 2 (agent\_v2)
+- sửa giải thuật thì kiểm tra logic của temporal search DEV, kiểm tra theo module nhỏ để fix
+
+verify: Khi chỉnh xong search lại và kiểm tra cho đến khi groundtruth vào top 10.
+
+output: viết test\_report\_v4.md vào folder [tests](<docs/milestones/milestone 6/tests/>)
+
+chạy cho tôi ablation study trên các câu query đó cho các thông số, hyperparameters liên quan về search và ghi vào report.
+
+
+
+-----------------------------------------------------------------
 
