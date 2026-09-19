@@ -36,7 +36,9 @@ services:
       TEXT_SEARCH_BACKEND: elasticsearch
       CLIP_EMBEDDING_BASE_URL: http://host.docker.internal:8001/v1
       MILVUS_CONNECT_TIMEOUT: "3.0"
-      MILVUS_SEARCH_TIMEOUT: "12.0"
+      # SigLIP2's remote Zilliz collection can exceed the default 12 seconds
+      # during a cold or large temporal retrieval; retain a bounded deadline.
+      MILVUS_SEARCH_TIMEOUT: "30.0"
       SKIP_DB_INIT: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"
