@@ -1,0 +1,402 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thể lệ — AIC26</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="/static/js/app.d28ae88c88c5.js" defer></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col" data-now="2026-08-21T08:38:27.739536+00:00">
+  <nav class="bg-slate-900 text-white">
+    <div class="max-w-5xl mx-auto flex items-center justify-between px-4 py-3">
+      <a href="/" class="font-bold text-lg">AIC26</a>
+      <div class="flex gap-4 text-sm items-center">
+        <a href="/rules/" class="hover:underline">Thể lệ</a>
+        <a href="/timeline/" class="hover:underline">Lịch thi</a>
+        <a href="/faq/" class="hover:underline">FAQ</a>
+        <a href="/announcements/" class="hover:underline">Thông báo</a>
+        
+          <a href="/app/" class="hover:underline">Bảng điều khiển</a>
+          <a href="/app/team/" class="hover:underline">AIC2026-229</a>
+          <form method="post" action="/logout/" class="inline">
+            <input type="hidden" name="csrfmiddlewaretoken" value="GW45R1h1x32YU9bDxlzUhq6X2tBrDkDbeXEMqxM3eeid2U1vqhV0Z4MHdqmboSD8">
+            <button type="submit" class="hover:underline bg-transparent border-0 p-0 cursor-pointer text-sm">Đăng xuất</button>
+          </form>
+        
+      </div>
+    </div>
+  </nav>
+
+  <main class="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
+    
+    
+<h1 class="text-2xl font-bold mb-4">Thể lệ cuộc thi</h1>
+<div class="prose prose-slate max-w-none bg-white border rounded-lg shadow-sm p-6">
+  <h1>Hướng dẫn nộp bài sơ tuyển</h1>
+<h2>Các loại truy vấn</h2>
+<p>Vòng sơ tuyển bao gồm 3 dạng truy vấn chính:</p>
+<ol>
+<li><strong>Textual Known Item Search (Textual KIS)</strong>: Tìm kiếm chính xác theo văn bản</li>
+<li><strong>Visual Question Answering (Q&amp;A)</strong>: Truy vấn dạng Hỏi-Đáp</li>
+<li><strong>Temporal Retrieval and Alignment of Key Events (TRAKE)</strong>: Truy xuất và căn chỉnh sự kiện video theo thời gian</li>
+</ol>
+<h2>Các gói truy vấn</h2>
+<p>Trong vòng sơ tuyển BTC sẽ cung cấp lần lượt các gói câu truy vấn theo nhiều đợt. Với mỗi gói câu truy vấn, đội thi cần trả về kết quả tương ứng và nộp trực tiếp trên hệ thống thi này bằng tài khoản BTC đã cấp.</p>
+<p>Với mỗi gói câu truy vấn, BTC sẽ cung cấp một danh sách các câu truy vấn trong từng file text. Ví dụ trong đợt 1, BTC cung cấp gói gồm 4 câu truy vấn <code>query-1-kis</code>, <code>query-2-kis</code>, <code>query-3-qa</code>, <code>query-4-trake</code> tương ứng với nội dung trong 4 file <code>query-1-kis.txt</code>, <code>query-2-kis.txt</code>, <code>query-3-qa.txt</code>, <code>query-4-trake.txt</code>. </p>
+<p><strong>Quy ước tên file truy vấn:</strong><br />
+- Hậu tố <code>"kis"</code>: Câu truy vấn dạng Textual KIS<br />
+- Hậu tố <code>"qa"</code>: Câu truy vấn dạng Q&amp;A<br />
+- Hậu tố <code>"trake"</code>: Câu truy vấn dạng TRAKE</p>
+<h2>Yêu cầu kết quả</h2>
+<p>Đối với mỗi câu truy vấn, đội thi cần nộp tương ứng một file <code>.csv</code> (comma-separated values file) với mỗi dòng tương ứng với một lần đội dự đoán kết quả. Đội thi có thể nộp file tối đa 100 dòng. Kết quả trên mỗi dòng của đội có format theo từng loại truy vấn:</p>
+<h3>1. Textual Known Item Search (Textual KIS)</h3>
+<p><strong>Format</strong>: <code>&lt;Tên file video&gt;, &lt;Frame Idx&gt;</code></p>
+<p><strong>Ví dụ</strong>:</p>
+<pre><code class="language-csv">L00_V000, 1234
+L00_V055, 5555
+L01_V028, 25300
+</code></pre>
+<h3>2. Question Answering (Q&amp;A)</h3>
+<p><strong>Format</strong>: <code>&lt;Tên file video&gt;, &lt;Frame Idx&gt;, &lt;Answer&gt;</code></p>
+<p><strong>Quy định cho Answer</strong>:<br />
+- Độ dài tối đa: <strong>100 ký tự</strong><br />
+- Có thể bằng tiếng Việt hoặc tiếng Anh<br />
+- Được so sánh chính xác về mặt ngữ nghĩa với đáp án</p>
+<p><strong>Ví dụ</strong>:</p>
+<pre><code class="language-csv">L01_V028, 3450, &quot;5&quot;
+L02_V011, 1200, &quot;Năm người&quot;
+L03_V005, 2800, &quot;Màu đỏ&quot;
+</code></pre>
+<h3>3. Temporal Retrieval and Alignment of Key Events (TRAKE)</h3>
+<p><strong>Format</strong>: <code>&lt;Tên file video&gt;, &lt;Frame ID_1&gt;, &lt;Frame ID_2&gt;, ..., &lt;Frame ID_N&gt;</code></p>
+<p>Trong đó:<br />
+- <code>Frame ID_1, Frame ID_2, ..., Frame ID_N</code> là các keyframe tương ứng với N events trong chuỗi sự kiện<br />
+- Số lượng Frame ID phải khớp với số events được yêu cầu trong truy vấn<br />
+- Thứ tự các Frame ID phải tuân theo thứ tự thời gian của các events</p>
+<p><strong>Ví dụ</strong> (chuỗi 4 events):</p>
+<pre><code class="language-csv">L10_V001, 1200, 1850, 2100, 2450
+L10_V001, 1180, 1820, 2080, 2420
+L11_V003, 5100, 5700, 6200, 6800
+</code></pre>
+<h2>Quy chuẩn định dạng CSV</h2>
+<blockquote>
+<p><strong>⚠️ Lưu Ý QUAN TRỌNG cho học sinh THPT</strong>: </p>
+<p><strong>CSV ≠ Excel</strong>: Đây là hai định dạng file hoàn toàn khác nhau!</p>
+<ul>
+<li><strong>File CSV (.csv)</strong>: Là file văn bản thuần túy, chỉ chứa dữ liệu được phân cách bằng dấu phẩy</li>
+<li><strong>File Excel (.xlsx/.xls)</strong>: Là file nhị phân phức tạp của Microsoft Excel</li>
+</ul>
+<p><strong>PHẢI NỘP FILE .CSV</strong>, KHÔNG PHẢI FILE EXCEL!</p>
+<p><strong>Cách tạo file CSV đúng</strong>:<br />
+1. <strong>Từ Excel</strong>: File → Save As → chọn "CSV (Comma delimited) (<em>.csv)"<br />
+2. </em><em>Từ Google Sheets</em><em>: File → Download → Comma Separated Values (.csv)<br />
+3. </em><em>Từ Notepad</em><em>: Gõ trực tiếp theo format và lưu với đuôi .csv<br />
+4. </em><em>Từ các text editor</em>*: VS Code, Sublime Text, Notepad++</p>
+<p><strong>Kiểm tra file CSV</strong>:<br />
+- Có thể mở bằng Notepad và thấy dữ liệu dạng text thuần túy<br />
+- Kích thước file nhỏ hơn nhiều so với Excel<br />
+- Đuôi file phải là .csv (KHÔNG phải .xlsx hoặc .xls)</p>
+</blockquote>
+<h3>Quy tắc chung:</h3>
+<ol>
+<li><strong>Encoding</strong>: UTF-8</li>
+<li><strong>Delimiter</strong>: Dấu phẩy (<code>,</code>)</li>
+<li><strong>Line ending</strong>: CRLF (<code>\r\n</code>) hoặc LF (<code>\n</code>)</li>
+<li><strong>Không có header row</strong>: File CSV bắt đầu trực tiếp bằng dữ liệu</li>
+</ol>
+<h3>Xử lý ký tự đặc biệt:</h3>
+<blockquote>
+<p><strong>Lưu ý quan trọng</strong>: Dấu ngoặc kép chỉ <strong>BẮT BUỘC</strong> khi answer chứa các ký tự đặc biệt. Nếu answer đơn giản không có ký tự đặc biệt, có thể bỏ qua dấu ngoặc kép.</p>
+</blockquote>
+<ol>
+<li>
+<p><strong>Dấu phẩy trong answer</strong>: <strong>BẮT BUỘC</strong> bao quanh bằng dấu ngoặc kép<br />
+<code>csv
+   L01_V028, 3450, "Có 3 người, bao gồm nam và nữ"</code></p>
+</li>
+<li>
+<p><strong>Dấu ngoặc kép trong answer</strong>: <strong>BẮT BUỘC</strong> escape bằng double quotes<br />
+<code>csv
+   L01_V028, 3450, "Anh ấy nói ""Xin chào"""</code></p>
+</li>
+<li>
+<p><strong>Xuống dòng trong answer</strong>: <strong>BẮT BUỘC</strong> bao quanh bằng dấu ngoặc kép<br />
+<code>csv
+   L01_V028, 3450, "Dòng 1
+   Dòng 2"</code></p>
+</li>
+<li>
+<p><strong>Answer đơn giản</strong>: <strong>KHÔNG BẮT BUỘC</strong> dấu ngoặc kép<br />
+<code>csv
+   L01_V028, 3450, 5
+   L02_V011, 1200, Năm người
+   L03_V005, 2800, Màu đỏ</code></p>
+</li>
+<li>
+<p><strong>Khoảng trắng đầu/cuối</strong>: Được giữ nguyên, không tự động trim</p>
+</li>
+</ol>
+<h3>Ví dụ CSV chuẩn cho từng loại:</h3>
+<p><strong>Textual KIS</strong> (<code>query-1-kis.csv</code>):</p>
+<pre><code class="language-csv">L00_V000,1234
+L00_V055,5555
+L01_V028,25300
+</code></pre>
+<p><strong>Q&amp;A</strong> (<code>query-2-qa.csv</code>) - <strong>Cả hai cách đều đúng</strong>:</p>
+<pre><code class="language-csv">L01_V028,3450,5
+L02_V011,1200,Năm người
+L03_V005,2800,&quot;Màu đỏ, rất đẹp&quot;
+L04_V012,4100,&quot;Anh ấy nói &quot;&quot;Tuyệt vời&quot;&quot;&quot;
+</code></pre>
+<p><strong>HOẶC</strong> (với dấu ngoặc kép cho tất cả):</p>
+<pre><code class="language-csv">L01_V028,3450,&quot;5&quot;
+L02_V011,1200,&quot;Năm người&quot;
+L03_V005,2800,&quot;Màu đỏ, rất đẹp&quot;
+L04_V012,4100,&quot;Anh ấy nói &quot;&quot;Tuyệt vời&quot;&quot;&quot;
+</code></pre>
+<p><strong>TRAKE</strong> (<code>query-3-trake.csv</code> - 4 events):</p>
+<pre><code class="language-csv">L10_V001,1200,1850,2100,2450
+L10_V001,1180,1820,2080,2420
+L11_V003,5100,5700,6200,6800
+</code></pre>
+<h3>Quy tắc dấu ngoặc kép trong CSV</h3>
+<h4><strong>KHÔNG cần ngoặc kép:</strong></h4>
+<ul>
+<li>Answer đơn giản: <code>5</code>, <code>Năm người</code>, <code>Màu đỏ</code>, <code>Ba</code></li>
+<li>Chỉ chứa chữ cái, số, khoảng trắng thông thường</li>
+<li>Không có dấu phẩy, ngoặc kép, xuống dòng</li>
+</ul>
+<h4><strong>BẮT BUỘC có ngoặc kép:</strong></h4>
+<ul>
+<li>Answer có dấu phẩy: <code>"Có 3 người, bao gồm nam và nữ"</code></li>
+<li>Answer có ngoặc kép: <code>"Anh ấy nói ""Xin chào"""</code></li>
+<li>Answer có xuống dòng: <code>"Dòng 1\nDòng 2"</code></li>
+</ul>
+<h4><strong>An toàn nhất:</strong></h4>
+<p>Để tránh nhầm lẫn, có thể <strong>luôn đặt dấu ngoặc kép</strong> cho tất cả answer trong Q&amp;A. Cả hai cách đều được hệ thống chấp nhận.</p>
+<h3>Hướng dẫn tạo file CSV cho học sinh THPT</h3>
+<h4>Phương pháp 1: Sử dụng Microsoft Excel</h4>
+<ol>
+<li>Mở Excel và nhập dữ liệu theo đúng format</li>
+<li><strong>File</strong> → <strong>Save As</strong> </li>
+<li>Chọn vị trí lưu file</li>
+<li>Trong mục <strong>"Save as type"</strong> → chọn <strong>"CSV (Comma delimited) (*.csv)"</strong></li>
+<li>Đặt tên file theo quy định (ví dụ: <code>query-1-kis.csv</code>)</li>
+<li>Click <strong>Save</strong></li>
+<li>Nếu Excel hỏi về compatibility → click <strong>Yes</strong></li>
+</ol>
+<h4>Phương pháp 2: Sử dụng Google Sheets</h4>
+<ol>
+<li>Mở Google Sheets và nhập dữ liệu</li>
+<li><strong>File</strong> → <strong>Download</strong> → <strong>Comma Separated Values (.csv)</strong></li>
+<li>File sẽ được tải về máy với đuôi .csv</li>
+</ol>
+<h4>Phương pháp 3: Sử dụng Notepad (cho người hiểu kỹ thuật)</h4>
+<ol>
+<li>Mở Notepad</li>
+<li>Gõ dữ liệu theo đúng format (ví dụ: <code>L00_V000,1234</code>)</li>
+<li><strong>File</strong> → <strong>Save As</strong></li>
+<li>Trong mục <strong>"Save as type"</strong> → chọn <strong>"All Files (<em>.</em>)"</strong></li>
+<li>Đặt tên file với đuôi .csv (ví dụ: <code>query-1-kis.csv</code>)</li>
+<li>Trong mục <strong>Encoding</strong> → chọn <strong>UTF-8</strong></li>
+</ol>
+<h4>Kiểm tra file CSV đã đúng chưa:</h4>
+<ol>
+<li>Click chuột phải vào file → <strong>Open with</strong> → <strong>Notepad</strong></li>
+<li>Nếu thấy dữ liệu dạng text thuần túy với dấu phẩy phân cách → ✅ ĐÚNG</li>
+<li>Nếu thấy ký tự lạ hoặc không đọc được → ❌ SAI (có thể vẫn là Excel format)</li>
+</ol>
+<h4>Lỗi thường gặp:</h4>
+<ul>
+<li><strong>Lưu nhầm file Excel</strong>: File có đuôi .xlsx/.xls thay vì .csv</li>
+<li><strong>Encoding sai</strong>: File hiển thị ký tự lạ khi mở bằng Notepad</li>
+<li><strong>Delimiter sai</strong>: Sử dụng dấu chấm phẩy (;) thay vì dấu phẩy (,)</li>
+<li><strong>Có header</strong>: Dòng đầu chứa tiêu đề thay vì dữ liệu</li>
+</ul>
+<h2>Nộp kết quả cho gói truy vấn</h2>
+<p>Mỗi đội thi đăng nhập bằng tài khoản BTC đã cấp (theo thông tin đội đã đăng ký trước đó với BTC), vào đúng vòng thi tương ứng và nộp file <code>.zip</code> trực tiếp trên hệ thống — không cần đăng ký thêm ở đâu khác.</p>
+<h3>Cách chuẩn bị file nộp:</h3>
+<p><strong>Bước 1</strong>: Tạo thư mục có tên <code>submission</code></p>
+<p><strong>Bước 2</strong>: Đặt tất cả file CSV kết quả vào trong thư mục <code>submission</code></p>
+<p><strong>Bước 3</strong>: Nén thư mục <code>submission</code> thành file <code>.zip</code></p>
+<p><strong>Bước 4 (Tùy chọn)</strong>: Đổi tên file zip thành tên phù hợp (ví dụ: <code>team_ABC_round1.zip</code>)</p>
+<h3>Cấu trúc thư mục yêu cầu:</h3>
+<pre><code>submission/
+├── query-1-kis.csv
+├── query-2-kis.csv  
+├── query-3-qa.csv
+├── query-4-trake.csv
+└── ... (các file CSV khác)
+</code></pre>
+<p><strong>Ví dụ file nộp cuối cùng</strong>: <code>team_ABC_round1.zip</code> chứa:</p>
+<pre><code>submission/
+├── query-1-kis.csv
+├── query-2-kis.csv
+├── query-3-qa.csv
+└── query-4-trake.csv
+</code></pre>
+<blockquote>
+<p><strong>Lưu ý quan trọng:</strong><br />
+* <strong>PHẢI có thư mục <code>submission</code></strong> bên trong file zip<br />
+* <strong>KHÔNG nén trực tiếp các file CSV</strong> - phải nén thư mục <code>submission</code><br />
+* Cách tính điểm được mô tả trong đề bài của từng vòng thi trên hệ thống<br />
+* <strong>Tên file video không có phần đuôi</strong> (<code>.mp4</code>)<br />
+* <strong>Frame ID</strong> sẽ được so sánh dưới dạng số nguyên<br />
+* <strong>Answer</strong> (Q&amp;A) sẽ được so sánh dưới dạng chuỗi chính xác<br />
+* <strong>Answer</strong> (Q&amp;A) có độ dài tối đa <strong>100 ký tự</strong><br />
+* Đối với <strong>TRAKE</strong>: Số lượng Frame ID phải khớp chính xác với số events yêu cầu<br />
+* Chỉ chấp nhận file nén định dạng <code>.zip</code><br />
+* <strong>Khuyến cáo</strong>: Tên file zip chỉ nên bao gồm các ký tự chữ hoặc số</p>
+</blockquote>
+<h2>Đánh giá và xếp hạng</h2>
+<p>Kết quả đánh giá trên <strong>Public Leaderboard</strong> chỉ tính dựa trên 50% đáp án của BTC. Kết quả cuối cùng của đội nộp sẽ được tính trên 100% đáp án và dùng để xếp hạng vòng sơ tuyển tại <strong>Private Leaderboard</strong>.</p>
+<h3>Phương pháp tính điểm:</h3>
+<p>Mỗi gói truy vấn, các đội được phép nộp kết quả tối đa <strong>3 lần</strong>. Kết quả được dùng để xếp hạng là kết quả đội nộp <strong>lần cuối cùng</strong>.</p>
+<blockquote>
+<p><strong>Lưu ý cuối cùng:</strong><br />
+* Mỗi đội chỉ được dùng duy nhất một tài khoản để nộp bài<br />
+* Khi nộp sai định dạng vẫn tính là 01 lần nộp<br />
+* Đội cần lưu ý chọn lựa kết quả nào để nộp lần cuối cùng<br />
+* Khuyến nghị kiểm tra kỹ format CSV trước khi nộp để tránh lỗi parse</p>
+</blockquote>
+<hr />
+<h2>📋 BẢNG TÓM TẮT - NHỮNG ĐIỀU QUAN TRỌNG NHẤT</h2>
+<table>
+<thead>
+<tr>
+<th><strong>TIÊU CHÍ</strong></th>
+<th><strong>YÊU CẦU</strong></th>
+<th><strong>VÍ DỤ</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>📁 Định dạng file nộp</strong></td>
+<td>✅ File <code>.csv</code> thuần túy<br>❌ KHÔNG phải Excel (.xlsx/.xls)</td>
+<td><code>query-1-kis.csv</code></td>
+</tr>
+<tr>
+<td><strong>📦 Cách đóng gói</strong></td>
+<td>File <code>.zip</code> chứa tất cả file CSV</td>
+<td><code>submission.zip</code></td>
+</tr>
+<tr>
+<td><strong>🎯 Format KIS</strong></td>
+<td><code>&lt;video_name&gt;, &lt;frame_id&gt;</code></td>
+<td><code>L01_V028, 25300</code></td>
+</tr>
+<tr>
+<td><strong>❓ Format Q&amp;A</strong></td>
+<td><code>&lt;video_name&gt;, &lt;frame_id&gt;, "&lt;answer&gt;"</code></td>
+<td><code>L01_V028, 3450, "5"</code></td>
+</tr>
+<tr>
+<td><strong>⏱️ Format TRAKE</strong></td>
+<td><code>&lt;video_name&gt;, &lt;frame_1&gt;, &lt;frame_2&gt;, ...</code></td>
+<td><code>L10_V001, 1200, 1850, 2100</code></td>
+</tr>
+<tr>
+<td><strong>💬 Câu trả lời Q&amp;A</strong></td>
+<td>Tối đa <strong>100 ký tự</strong>, tiếng Việt/Anh</td>
+<td><code>"Năm người"</code></td>
+</tr>
+<tr>
+<td><strong>📊 Số dòng tối đa</strong></td>
+<td><strong>100 dòng</strong> cho mỗi file CSV</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>🎫 Số lần nộp</strong></td>
+<td>Tối đa <strong>3 lần</strong> cho mỗi gói truy vấn</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>🏆 Kết quả xếp hạng</strong></td>
+<td>Lần nộp <strong>cuối cùng</strong> được tính điểm</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>📝 Tên file video</strong></td>
+<td><strong>KHÔNG có đuôi</strong> .mp4</td>
+<td><code>L01_V028</code> ✅<br><code>L01_V028.mp4</code> ❌</td>
+</tr>
+<tr>
+<td><strong>🔢 Frame ID</strong></td>
+<td>Số nguyên, không có khoảng trắng thừa</td>
+<td><code>25300</code> ✅<br><code>25 300</code> ❌</td>
+</tr>
+<tr>
+<td><strong>Text Editor an toàn</strong></td>
+<td>Notepad, VS Code, Google Sheets</td>
+<td>Excel cần Save As → CSV</td>
+</tr>
+</tbody>
+</table>
+<h3>🚨 <strong>5 LỖI THƯỜNG GẶP NHẤT:</strong></h3>
+<table>
+<thead>
+<tr>
+<th><strong>LỖI</strong></th>
+<th><strong>NGUYÊN NHÂN</strong></th>
+<th><strong>CÁCH SỬA</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>🔴 File không được chấp nhận</strong></td>
+<td>Nộp file Excel thay vì CSV</td>
+<td>Save As → CSV trong Excel</td>
+</tr>
+<tr>
+<td><strong>🔴 Thiếu thư mục submission</strong></td>
+<td>Nén trực tiếp file CSV thay vì thư mục</td>
+<td>Tạo thư mục <code>submission</code> rồi nén</td>
+</tr>
+<tr>
+<td><strong>🔴 Dữ liệu hiển thị lạ</strong></td>
+<td>Encoding không phải UTF-8</td>
+<td>Chọn UTF-8 khi Save</td>
+</tr>
+<tr>
+<td><strong>🔴 Answer bị cắt</strong></td>
+<td>Answer có dấu phẩy nhưng thiếu ngoặc kép</td>
+<td><code>"Năm người, gồm nam và nữ"</code></td>
+</tr>
+<tr>
+<td><strong>🔴 TRAKE sai số frame</strong></td>
+<td>Thiếu/thừa frame cho các events</td>
+<td>Kiểm tra đúng N events</td>
+</tr>
+</tbody>
+</table>
+<h3>✅ <strong>CHECKLIST TRƯỚC KHI NỘP:</strong></h3>
+<ul>
+<li>[ ] File có đuôi <code>.csv</code> (không phải <code>.xlsx</code> hay <code>.xls</code>)</li>
+<li>[ ] Mở file bằng Notepad thấy dữ liệu text thuần túy</li>
+<li>[ ] Tên file khớp với tên truy vấn (ví dụ: <code>query-1-kis.csv</code>)</li>
+<li>[ ] Format đúng theo loại truy vấn (KIS/Q&amp;A/TRAKE)</li>
+<li>[ ] Answer Q&amp;A không quá 100 ký tự</li>
+<li>[ ] TRAKE có đúng số frame theo yêu cầu</li>
+<li>[ ] Tên video không có đuôi <code>.mp4</code></li>
+<li>[ ] <strong>Đã tạo thư mục <code>submission</code> và đặt tất cả CSV vào đó</strong></li>
+<li>[ ] <strong>File được nén từ thư mục <code>submission</code></strong> (không nén trực tiếp CSV)</li>
+<li>[ ] Đã kiểm tra số lần nộp còn lại</li>
+</ul>
+<h3>📞 <strong>KHI GẶP VẤN ĐỀ:</strong></h3>
+<ol>
+<li><strong>Kiểm tra lại format CSV</strong> bằng cách mở file bằng Notepad</li>
+<li><strong>Xem lại ví dụ</strong> trong tài liệu này</li>
+<li><strong>Thử tạo file CSV mới</strong> theo hướng dẫn</li>
+<li><strong>Liên hệ BTC</strong> nếu vẫn gặp khó khăn kỹ thuật</li>
+</ol>
+</div>
+
+  </main>
+
+  <footer class="text-center text-xs text-slate-400 py-6">AIC26</footer>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4d6c20df08a04804a05156356d29ad9e","r":1}' crossorigin="anonymous"></script>
+</body>
+</html>

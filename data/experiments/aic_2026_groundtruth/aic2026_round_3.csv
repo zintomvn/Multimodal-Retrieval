@@ -1,0 +1,96 @@
+Query,Trạng thái,Đáp án
+"Câu query-p2-1-kis
+Một chén trứng gà đã đánh tan được đổ vào nồi nước súp đang nấu. Trong nồi có các nguyên liệu được cắt thành sợi, gồm nấm và măng. Người đầu bếp dùng dao cắt đậu hũ thành từng miếng nhỏ ngay phía trên nồi. Đậu hũ được cho trực tiếp vào nồi rồi các nguyên liệu được khuấy đều với nhau.",Chắn chắn,"L26_V424,5111"
+"Câu query-p2-2-kis
+Một nhóm đông học sinh mặc đồng phục tập trung thành nhiều hàng trước khu vực trường học. Phía trước mỗi hàng có người cầm bảng ghi số lớp để phân chia các nhóm học sinh. Sau đó, các hàng học sinh lần lượt di chuyển vào bên trong khuôn viên trường dưới sự hướng dẫn của giáo viên. Cuối đoạn, học sinh nối thành hàng dài, đi qua hành lang và lên cầu thang của tòa nhà.",Chắn chắn,"L22_V026,1514"
+"Câu query-p2-3-kis
+Người đầu bếp lần lượt cho nhiều loại nguyên liệu vào một nồi nước dùng đang sôi. Đầu tiên, một loại rau củ màu cam được cho vào nồi. Sau đó, một loại nguyên liệu dạng ống nhỏ được đổ từ đĩa vào nồi. Tiếp theo, các loại rau củ và nấm được cho vào, gồm những miếng màu xanh và các lát nấm màu nâu. Cuối cùng, một đĩa thịt đã cắt thành từng miếng mỏng được đổ vào nồi để nấu cùng các nguyên liệu trước đó.",Cân nhắc,"L26_V390,6010"
+"Câu query-p2-4-kis
+Một giáo viên nữ ngồi bên phải màn hình và giảng bài Tiếng Anh. Trên bảng xanh lần lượt xuất hiện hai câu ví dụ, một câu nói về việc đi bảo tàng vào tuần trước, câu còn lại nói về thói quen chơi bóng đá khi còn trẻ. Sau đó, nội dung trên bảng bổ sung phần giải thích chức năng của hai ví dụ và cuối cùng xuất hiện công thức ngữ pháp tương ứng.",Chắn chắn,"L25_V075,975"
+"Câu query-p2-5-qa
+Một giáo viên nam đứng bên trái màn hình giảng bài ôn tập môn Địa lí. Nội dung trình chiếu giới thiệu khái quát một vùng kinh tế, sau đó chuyển sang vị trí địa lí, phạm vi lãnh thổ và ý nghĩa phát triển. Ở phần sau, một bản đồ khí hậu Việt Nam được đưa lên để minh họa cho bài giảng.
+Câu hỏi: Theo nội dung bài giảng, vùng được nhắc đến gồm bao nhiêu tỉnh, thành?",Chắn chắn,"L25_V016,3651,""6"""
+"Câu query-p2-6-qa
+Một giáo viên nam đứng bên trái màn hình và giảng bài trước một máy tính. Trên màn hình lớn hiển thị hướng dẫn chấm điểm, trong đó phần a đề cập đến cấu trúc của bài nghị luận văn học gồm mở bài, thân bài và kết bài. Nội dung bài giảng liên quan đến một tác phẩm văn học và yêu cầu phân tích nhân vật. Phía dưới màn hình xuất hiện dòng chữ giới thiệu chương trình ôn thi môn Ngữ văn.
+Câu hỏi: Tác giả được giới thiệu là người có duyên nợ gắn bó với đề tài miền núi nào?",Chắn chắn,"L25_V027,11842,""Tây Bắc""
+"
+"Câu query-p2-7-kis
+Đoạn phim ghi lại cảnh giao thông trên đường phố, trong đó hai thanh niên chạy xe với tư thế bất cẩn trên làn ô tô, tiềm ẩn nguy cơ gây tai nạn giao thông.",Chắn chắn,"L22_V024,20783"
+"Câu query-p2-8-qa
+Đoạn phim ghi lại cuộc phỏng vấn một người đàn ông đam mê sưu tầm game, chia sẻ rằng niềm đam mê của anh được truyền cảm hứng từ món đồ chơi của bà mình. Trong đoạn phỏng vấn xuất hiện một dòng chữ neon phát sáng.
+Câu hỏi: Dòng chữ đó là gì?",Chắn chắn,"L21_V018, 21393,""SEGA"""
+"Câu query-p2-9-kis
+Đoạn clip bắt đầu với các người mẫu trình diễn những bộ trang phục màu kem dáng rộng, được điểm xuyết bằng các mảng vải nhiều màu sắc và họa tiết hình học. Nhiều tác phẩm đầy màu sắc được trưng bày trên thảm cỏ ngoài trời, thu hút đông đảo người dân và du khách tham quan. Những món đồ thủ công như búp bê và quả cầu được tạo nên từ nhiều mảnh vải màu sắc, hoa văn khác nhau.",Không tra ra,
+"Câu query-p2-10-kis
+Đoạn video ghi lại cuộc diễu hành của những chiếc xe lội nước độc đáo, có hình dáng như ô tô cổ điển nhưng có thể di chuyển trực tiếp trên mặt nước. Những chiếc xe lần lượt xuống kênh, chạy qua các cây cầu giữa sự theo dõi của đông đảo người dân đứng hai bên bờ. Nhiều mẫu xe với màu sắc và kiểu dáng khác nhau cùng di chuyển trên kênh, tạo nên một khung cảnh vừa lạ mắt vừa sôi động.",Chắn chắn,"L21_V003,19866"
+"Câu query-p2-11-kis
+Người phụ nữ đang lấy 1 thành phẩm từ trong đồ vật màu đỏ, và cho lần lượt nguyên liệu vào tiếp. Thành phẩm có màu trắng, được nở to hơn ban đầu, có hình thù giống các sợi que dính với nhau. Các thành phẩm được bày trí trên 1 vật liệu màu trắng.",Chắn chắn,"L26_V483,599"
+"Câu query-p2-12-kis
+Một người đang đổ 1 chất lỏng đựng trong bát màu trắng vào chiếc chảo màu đỏ. Sau khi chất lỏng được xóc đều cùng các thực phẩm có sẵn trong chảo, tạo 1 hiện tượng bốc lên trong chảo có màu hồng. Sau đó chuyển từ nồi to qua nồi nhỏ hơn, công đoạn tương tự, khi chất lỏng tiếp xúc lửa trên bếp đều tạo chung 1 hiện tượng.",Chắn chắn,"L26_V484,6314"
+"Câu query-p2-13-kis
+Hàng trăm chiếc lờ/lợp bắt cá bằng tre đan được tập kết thành từng dãy lớn bên bờ sông. Khung cảnh bờ sông miền Tây rợp bóng những hàng dừa, với ghe neo sát mép nước và rất nhiều cần xé tre được tập kết dưới các gốc dừa, tạo nên nét sinh hoạt làng nghề mộc mạc, đặc trưng vùng sông nước.",Chắn chắn,"L29_V014,18504"
+"Câu query-p2-14-qa
+Một bé gái mặc áo bơi họa tiết hoa lá đang trả lời phỏng vấn bên cạnh một hồ bơi. Tiếp theo là hình ảnh cháu bé bơi trong hồ nước, đội mũ bơi màu tím.
+Câu hỏi: Hãy cho biết bé gái này sắp lên học lớp mấy? (Đáp án chỉ ghi 1 chữ số).",Chắn chắn,"L30_V047,5347,""5"""
+"Câu query-p2-15-kis
+Đoạn video ghi lại cảnh 1 người đầu bếp đã sơ chế thực phẩm với nước lạnh và để ráo nước. Sau đó, đầu bếp sử dụng 1 loạt bột nhào chung với thực phẩm, để qua một bên và chuẩn bị các loại gia vị khác. Tiếp theo, đầu bếp cho 1 miếng nguyên liệu màu xanh lá cây kết hợp 2 miếng màu vàng vào 1 chảo màu đỏ đã đổ dầu ăn trước khi chiên thực phẩm chính.",Không tra ra,"L26_V480, 4618"
+"Câu query-p2-16-kis
+Một người đang đổ 1 nguyên liệu vào trong 1 nồi thủy tinh, sau đó sử dụng 1 đôi đũa để đảo nguyên liệu màu đỏ có chút màu xanh lá cây. Sau khi nguyên liệu đã biến đổi màu, người đàn ông đổ thêm 1.5L nguyên liệu dạng lỏng, 1/2 muỗng (cà phê) nguyên liệu trắng có vị mặn, 1/2 muỗng nguyên liệu trắng có vị ngọt, 2 muỗng hạt nguyên liệu có vị từ xương hầm.",Chắn chắn,"L26_V481,4969"
+"Câu query-p2-17-kis
+Một nguyên liệu đã được chiên sơ, được sơ chế cắt làm 2 nửa (không để 2 nửa tách rời). Tiếp theo, người đàn ông sử dụng 1 công cụ để tách phần lõi và lớp vỏ của nguyên liệu. Sau đó, đặt phần nguyên liệu vừa sơ chế trên 1 loại công cụ có màu trắng.",Chắn chắn,"
+L26_V482,2225"
+"Câu query-p2-18-qa
+Các cảnh quay nối tiếp nhau từ nhiều góc máy trong một lớp học tại một thời điểm. Cảnh đầu tiên là cảnh một sư cô ân cần quan sát một cậu bé áo xanh lá ngồi học bài. Sau đó là cảnh quay cận trang vở môn Toán, ghi lại các nét chữ mà học sinh đang ghi chép. Trong lớp học này, giáo viên nữ trong trang phục màu hồng đứng lớp chính, còn sư cô di chuyển xung quanh lớp học để hỗ trợ các em.
+Câu hỏi: Các giáo viên tham gia giảng dạy tại lớp học này là giáo viên dạy chính ở trường tiểu học nào?",Chắn chắn,"L30_V010,3174,""Công Hải"""
+"Câu query-p2-19-kis
+Sau khi lướt qua các cọc trụ, chú lân vàng đứng thăng bằng bằng ba chân trên ba đỉnh trụ, trước khi khéo léo đặt nốt chân còn lại lên trụ thứ tư. Chú lân cúi đầu ngoạm lấy cành hoa màu tím rồi xoay người quay lưng lại. Theo từng tiếng chập cheng vang lên, lân mở rồi đóng hàm đúng 4 nhịp, rồi nhả cành hoa rơi xuống đất.",Chắn chắn,"L24_V032,13630"
+"Câu query-p2-20-kis
+Slide bài giảng về một nhóm hợp chất hữu cơ. Trong slide có 2 hình đặt cạnh nhau là hai biến thể của cùng 1 loại hạt lương thực, và ở nửa dưới là một sơ đồ phân loại của nhóm hợp chất ấy. Đáng chú ý có một phân loại được mô tả bởi cấu trúc phân tử là những dải hình tròn dài được bắc cầu với nhau bằng những cặp hình tròn màu tím.",Chắn chắn,"L25_V021,14213"
+"Câu query-p2-21-trake
+Một món ăn làm từ tôm và các loại gia vị.
+E1: Khoảnh khắc người đầu bếp bắt đầu trộn hỗn hợp nước xốt, trong nước xốt này có 2 thành phần là nước cam và vỏ cam.
+E2: Khoảnh khắc người đầu bếp bắt đầu cắt bỏ đầu tôm.
+E3: Người đầu bếp cho tôm ra dĩa. Hãy chọn khoảnh khắc con tôm đầu tiên chạm vào dĩa.
+E4: Khoảnh khắc tép cam thứ 4 được xếp lên dĩa khi trang trí món ăn.",Chắn chắn,"L26_V156,3265,3768,4785,6738"
+"Câu query-p2-22-kis
+Một phương tiện giao thông trên không chạy bằng điện đang bay thử nghiệm phía trên khuôn viên rộng lớn với những khu vườn xanh được cắt tỉa theo hình học và các công trình kiến trúc cổ kính. Phần phía trên thiết bị bay có dạng khung tròn lớn. Đây là việc thử nghiệm thiết bị bay này ở một nước Tây Âu.",Chắn chắn,"L21_V012,20113"
+"Câu query-p2-23-kis
+Trong clip có cảnh 3 cặp trâu nước đang được điều khiển chạy đua trên ruộng bùn ở 1 quốc gia Đông Nam Á. Sau đó có cảnh 1 cặp trâu màu trắng (màu sáng) chạy đua.",Chắn chắn,"L21_V005, 23110"
+"Câu query-p2-24-qa
+Một đầu bếp đang chuẩn bị một món ăn từ một miếng thực phẩm màu cam. Người này băm nhỏ một số nguyên liệu, tách các hạt nhỏ khỏi cành rồi trộn chúng thành hỗn hợp gia vị. Sau đó, nhiều loại gia vị được lần lượt thêm vào và hỗn hợp được phủ lên cả hai mặt của nguyên liệu chính trước khi thêm một chất lỏng.
+Câu hỏi: Trong quá trình nêm gia vị, lượng nước tương được sử dụng là bao nhiêu?",Chắn chắn,"L26_V448,2755,""2 muỗng cà phê"""
+"Câu query-p2-25-kis
+Một người dùng vá nhúng những lát thịt mỏng vào nồi nước đang sôi. Thịt sau đó được cho vào tô có sẵn sợi trắng cùng với cà chua và một số nguyên liệu khác. Cuối cùng, nước dùng nóng được chan vào tô.",Chắn chắn,"L26_V049,5366"
+"Câu query-p2-26-kis
+Một bài giảng chuyển qua nhiều sơ đồ hình học không gian. Các hình ban đầu gồm một đường xiên đi qua một hình phẳng và hai hình phẳng giao nhau. Tiếp đó xuất hiện một điểm phía trên một hình phẳng có đoạn thẳng nối vuông góc xuống dưới. Cuối cùng là một khối gồm bốn đỉnh, sau đó được bổ sung thêm các đường nét đứt, điểm và ký hiệu vuông góc.",Chắn chắn,"L25_V043,6763
+L25_V043,5871
+"
+"Câu query-p2-27-qa
+Cảnh quay 2 người đang nắn những cục bột nhỏ thành hình dẹt. 1 người nắn cục bột màu trắng, người còn lại nắn cục bột màu khác. Sau đó họ đặt nhân vào phần giữa và cuộn lớp bột bao quanh phần nhân. Trước khi đặt lên dĩa, họ đặt thành phẩm lên 1 miếng lá nhỏ.
+Câu hỏi: Trên dĩa có mấy màu bột khác nhau?",Chắn chắn,"L29_V020,24730,""2"""
+"Câu query-p2-28-kis
+Cảnh quay phỏng vấn một người phụ nữ, đeo kính gọng đen, tay đang ôm một bao đồ như quần áo. Xung quanh đó có những bao đồ khác. Bao đồ trên tay người phụ nữ có màu trắng và có 1 logo màu xanh lá cây.",Chắn chắn," L30_V091,2720"
+"Câu query-p2-29-kis
+Một người đang múc canh từ trong nồi qua một tô nhỏ hơn. Chiếc tô này đang đặt trên 1 tấm vải có sọc trắng và đặt trên một khay gỗ. Tổng số lần quay được của người này múc canh ra tô là 2 lần.",Chắn chắn,"
+L26_V051,5982 "
+"Câu query-p2-30-kis
+Đoạn clip bắt đầu khi có 1 người đang phất cờ về đích đến trong chặng đua xe đạp quanh hồ. Ngay sau đó, một đoàn đông vận động viên xe đạp đang vào cua giữa khung cảnh đường phố rợp bóng cây. Một người đứng bên đường, tay trái cầm điện thoại để ghi hình, còn tay phải cầm một cây gậy có gắn thiết bị quay ở đầu hướng về phía đoàn đua.",Chắn chắn,"L23_018,8914"
+"Câu query-p2-31-kis
+Điểm thú vị trong cảnh là một bạn trẻ có mái tóc sáng màu, trông có vẻ là người nước ngoài, đang ngồi xếp bằng cùng người dân địa phương và trực tiếp tham gia đóng gói những chiếc bánh gói lá. Trong cảnh có chiếc quạt máy với cánh quạt màu xanh lá cây.",Chắn chắn,"L30_V023,3727"
+"Câu query-p2-32-kis
+Đoạn phim bắt đầu với cảnh hai mẹ con cầm điện thoại trò chuyện, sau đó chuyển sang cảnh người con trả lời phỏng vấn, phía sau có một phụ nữ da đen đang bước qua.",Chắn chắn,"L21_V010,23356
+L21_V010,23455"
+"Câu query-p2-33-kis
+Cảnh quay slow motion từ flycam ghi lại màn nước rút của hai tay đua dẫn đầu, trong đó tay đua mũ đen được cho là đuối sức hơn tay đua mũ trắng và để thua ở đoạn cuối.",Chắn chắn,"L23_V009,6530"
+"Câu query-p2-34-trake
+Con lân màu đỏ đang biểu diễn trên các cột trụ.
+E1: Con lân treo hai chân trước vào phần dưới thân của hai trụ gần cuối (gần trụ cuối cùng cao nhất).
+E2: Con lân đứng thẳng sau khi di chuyển từ cuối dãy trụ về, hai chân đứng trên hai trụ khác nhau và một chân trước co lên.
+E3: Khoảnh khắc con lân hoàn tất động tác ngoảnh mặt theo hướng ngược lại.
+E4: Khoảnh khắc đầu tiên con lân ngậm một thanh trụ.",Chắn chắn,"L24_V042,9579,9923,10078,10257 -> sai
+L24_V013,9865,10214,10343,10643"
+"Câu query-p2-35-qa
+Giải đề THPTQG 2018 tại nhóm X. Nhóm này gồm 4 câu hỏi trắc nghiệm 4 đáp án A, B, C, D, trong đó đáp án 4 câu không trùng nhau và đều chứa chữ số 0.
+Câu hỏi: X là số mấy?",Chắn chắn,"L25_V014,41143,""3"""
+"Câu query-p2-36-kis
+Camera lia chậm trên mặt bàn làm việc, bắt đầu từ một bức ảnh/tranh một người đang bắt tay với Bác Hồ, sau đó chuyển sang phần bên phải là tay nghệ nhân đang vẽ lại chân dung người bắt tay Bác. Người nghệ nhân này vẽ bằng một cây bút đặc biệt trên một chất liệu đặc biệt.",Chắn chắn,"L28_V010,14857"

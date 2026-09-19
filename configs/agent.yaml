@@ -67,7 +67,7 @@ llm_query_planning:
   # Add a new file and version entry for a new experiment; do not edit another
   # version's file when comparing runs.
   prompt_versions:
-    active_version: agent_v6_dev_evidence_adaptive
+    active_version: agent_v2
     versions:
       agent_v1:
         description: English semantic views for CLIP/Milvus (control).

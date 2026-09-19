@@ -241,8 +241,9 @@ feature_extraction_notebooks
 demo
 data/extracted/
 data/test-submission-queries
-data
+data/submission-queries
 data/benchmarks/
+data/experiments/results/
 
 # Env
 .env
