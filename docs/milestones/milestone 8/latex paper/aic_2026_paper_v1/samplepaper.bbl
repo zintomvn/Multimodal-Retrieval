@@ -1,0 +1,180 @@
+\begin{thebibliography}{10}
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\urlprefix}{URL }
+\providecommand{\doi}[1]{https://doi.org/#1}
+
+\bibitem{bai2025qwen3vl}
+Bai, S., Cai, Y., Chen, R., et~al.: Qwen3-vl technical report (2025),
+  \url{https://arxiv.org/abs/2511.21631}
+
+\bibitem{vietnameseCorrectionV2}
+{bmd1905}: vietnamese-correction-v2 (2024),
+  \url{https://huggingface.co/bmd1905/vietnamese-correction-v2}, accessed: 19
+  September 2026
+
+\bibitem{cormack2009rrf}
+Cormack, G.V., Clarke, C.L.A., B{\"u}ttcher, S.: Reciprocal rank fusion
+  outperforms condorcet and individual rank learning methods. In: Proceedings
+  of the 32nd International ACM SIGIR Conference on Research and Development in
+  Information Retrieval. pp. 758--759. ACM (2009).
+  \doi{10.1145/1571941.1572114}
+
+\bibitem{do2027abstraction}
+Do, T.L., Huynh, V.T., Nguyen, H.D., Nguyen-Quang, T., Tran, M.K., Nguyen,
+  T.T., Ninh, T.V., Le, T.K., Ngo, T.D., Dang-Nguyen, D.T., Ngo, T.T.,
+  Sch{\"o}ffmann, K., Gurrin, C., Tran, M.T.: Toward abstraction-level event
+  retrieval in large video collections: Leveraging human knowledge and
+  {LLM}-based reasoning in the {Ho Chi Minh City AI Challenge 2025}. In:
+  Information and Communication Technology. {SOICT} 2025. Communications in
+  Computer and Information Science, vol.~2912, pp. 124--138. Springer Nature
+  Singapore, Singapore (2027). \doi{10.1007/978-981-92-2584-2_10}
+
+\bibitem{du2020ppocr}
+Du, Y., Li, C., Guo, R., Yin, X., Liu, W., Zhou, J., Bai, Y., Yu, Z., Yang, Y.,
+  Dang, Q., Wang, H.: Pp-ocr: A practical ultra lightweight ocr system (2020),
+  \url{https://arxiv.org/abs/2009.09941}
+
+\bibitem{elasticsearch2026}
+{Elasticsearch B.V.}: Elasticsearch reference (2026),
+  \url{https://www.elastic.co/guide/en/elasticsearch/reference/current/},
+  accessed: 19 September 2026
+
+\bibitem{fang2024dfn}
+Fang, A., Jose, A.M., Jain, A., Schmidt, L., Toshev, A., Shankar, V.: Data
+  filtering networks. In: International Conference on Learning Representations
+  ({ICLR}) (2024),
+  \url{https://proceedings.iclr.cc/paper_files/paper/2024/hash/9bf0810a4a1597a36d27ceea58667d92-Abstract-Conference.html}
+
+\bibitem{gago2025memoria}
+Gago, A., Kaluza, B., Neves, A.J.R.: {MEMORIA}: A memory enhancement and moment
+  retrieval application at the {LSC2025}. In: Proceedings of the 8th Annual ACM
+  Workshop on the Lifelog Search Challenge. pp.~1--6. Association for Computing
+  Machinery (2025). \doi{10.1145/3729459.3748693}
+
+\bibitem{googlecloudstorage2026}
+{Google Cloud}: Cloud storage overview (2026),
+  \url{https://cloud.google.com/storage/docs/introduction}, accessed: 19
+  September 2026
+
+\bibitem{hole2025snapseek}
+Ho-Le, M.Q., Ho, D.K., Ninh, V.T., Nguyen, T.T., Gurrin, C., Tran, M.T.:
+  Snapseek 3.0: Interactive lifelog search system with enhanced scene
+  understanding. In: Proceedings of the 8th Annual ACM Workshop on the Lifelog
+  Search Challenge. pp. 7--14. Association for Computing Machinery (2025).
+  \doi{10.1145/3729459.3748697}
+
+\bibitem{ilharco2021openclip}
+Ilharco, G., Wortsman, M., Wightman, R., Gordon, C., Carlini, N., Taori, R.,
+  Dave, A., Shankar, V., Namkoong, H., Miller, J., Hajishirzi, H., Farhadi, A.,
+  Schmidt, L.: Openclip (2021). \doi{10.5281/zenodo.5143773}
+
+\bibitem{jocher2026yolo26}
+Jocher, G., Qiu, J., Liu, M., Lyu, S., Akyon, F.C., Kalfaoglu, M.E.:
+  Ultralytics yolo26: Unified real-time end-to-end vision models (2026).
+  \doi{10.48550/arXiv.2606.03748}, \url{https://arxiv.org/abs/2606.03748}
+
+\bibitem{le2026ucese}
+Le, D.N., Nguyen, H.P., Lam, T.D., Dang, M.N., Le, M.H.: {U-CESE}: Unified
+  clip-based event search engine for {AI Challenge HCMC 2025} (2026).
+  \doi{10.48550/arXiv.2605.23274}
+
+\bibitem{nguyen2027vortex}
+Nguyen, D.T., Tran-Minh, H.H., Lam, K.H., Ly, H.N., Huynh, H.P., Tran, T.T.,
+  Le, T.N.: {Vortex}: Multi-modal fusion system for intelligent video
+  retrieval. In: Information and Communication Technology. {SOICT} 2025.
+  Communications in Computer and Information Science, vol.~2912, pp. 497--511.
+  Springer Nature Singapore, Singapore (2027).
+  \doi{10.1007/978-981-92-2584-2_39}
+
+\bibitem{nguyen2027aithena}
+Nguyen, T.V., Duong, N.T., Pham, N.T., Le, K.Q., Le, T.H.N.: {AIthena-Vision}:
+  Adaptive temporal multimodal event retrieval with {LLM}-generated
+  multiperspective fusion. In: Information and Communication Technology.
+  {SOICT} 2025. Communications in Computer and Information Science, vol.~2913,
+  pp. 572--587. Springer Nature Singapore, Singapore (2027).
+  \doi{10.1007/978-981-92-2587-3_45}
+
+\bibitem{nguyenho2025teagle}
+Nguyen-Ho, T.L., Tran, L.D., Tran, M.T., Gurrin, C., Healy, G.: {T-EAGLE}:
+  Capturing temporal narratives via sequence captioning and text matching. In:
+  Proceedings of the 8th Annual ACM Workshop on the Lifelog Search Challenge.
+  pp. 23--27. Association for Computing Machinery (2025).
+  \doi{10.1145/3729459.3748691}
+
+\bibitem{openai2024gpt4omini}
+{OpenAI}: {GPT-4o mini}: Advancing cost-efficient intelligence (Jul 2024),
+  \url{https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/},
+  accessed: 19 September 2026
+
+\bibitem{whisperLargeV3Turbo}
+{OpenAI}: Whisper large v3 turbo (2024),
+  \url{https://huggingface.co/openai/whisper-large-v3-turbo}, accessed: 19
+  September 2026
+
+\bibitem{vietocr}
+Pham, Q.B.: Vietocr: Transformer ocr (2020),
+  \url{https://github.com/pbcquoc/vietocr}, accessed: 19 September 2026
+
+\bibitem{piramanayagam2025lifesearch}
+Piramanayagam, S., Chen, E., Melo, A., Vougiouklis, P., Diao, C., Merita, P.,
+  Jiang, Z., Lai, R., Pan, J.Z.: Lifesearch: Multimodal lifelog search system
+  for {LSC'25}. In: Proceedings of the 8th Annual ACM Workshop on the Lifelog
+  Search Challenge. pp. 28--33. Association for Computing Machinery (2025).
+  \doi{10.1145/3729459.3748696}
+
+\bibitem{postgresql2026}
+{PostgreSQL Global Development Group}: Postgresql documentation (2026),
+  \url{https://www.postgresql.org/docs/}, accessed: 19 September 2026
+
+\bibitem{radford2022whisper}
+Radford, A., Kim, J.W., Xu, T., Brockman, G., McLeavey, C., Sutskever, I.:
+  Robust speech recognition via large-scale weak supervision (2022),
+  \url{https://arxiv.org/abs/2212.04356}
+
+\bibitem{schoeffmann2014video}
+Schoeffmann, K., Ahlstr{\"o}m, D., Bailer, W., Cob{\^a}rzan, C., Hopfgartner,
+  F., McGuinness, K., Gurrin, C., Frisson, C., Le, D.D., {del Fabro}, M., Bai,
+  H., Weiss, W.: The video browser showdown: A live evaluation of interactive
+  video search tools. International Journal of Multimedia Information Retrieval
+   \textbf{3}(2),  113--127 (2014). \doi{10.1007/s13735-013-0050-8}
+
+\bibitem{tran2025state}
+Tran, A., Bailer, W., Dang-Nguyen, D.T., Healy, G., Hodges, S., J{\'o}nsson,
+  B.{\TH}., Rossetto, L., Schoeffmann, K., Tran, M.T., Vadicamo, L., Gurrin,
+  C.: The state-of-the-art in lifelog retrieval: A review of progress at the
+  {{ACM} Lifelog Search Challenge Workshop 2022--2024}. IEEE Access
+  \textbf{13},  216340--216363 (2025). \doi{10.1109/ACCESS.2025.3644952}
+
+\bibitem{tran2025videoease}
+Tran, Q.L., Nguyen, B.T., Jones, G.J.F., Gurrin, C.: Videoease at vbs2025: An
+  interactive video retrieval system. In: MultiMedia Modeling. pp. 363--370.
+  Springer Nature Singapore (2025). \doi{10.1007/978-981-96-2074-6_44}
+
+\bibitem{tschannen2025siglip2}
+Tschannen, M., Gritsenko, A., Wang, X., Naeem, M.F., Alabdulmohsin, I.,
+  Parthasarathy, N., Evans, T., Beyer, L., Xia, Y., Mustafa, B., H{\'e}naff,
+  O., Harmsen, J., Steiner, A., Zhai, X.: {SigLIP 2}: Multilingual
+  vision--language encoders with improved semantic understanding, localization,
+  and dense features. CoRR  \textbf{abs/2502.14786} (2025).
+  \doi{10.48550/arXiv.2502.14786}
+
+\bibitem{ueki2026ucker}
+Ueki, K.: {U-Cker}: Enhancing lifelog retrieval with temporal exploration
+  interfaces. In: Proceedings of the 9th Annual ACM Workshop on the Lifelog
+  Search Challenge. pp. 89--93. Association for Computing Machinery (2026).
+  \doi{10.1145/3810984.3817078}
+
+\bibitem{wang2021milvus}
+Wang, J., Yi, X., Guo, R., Jin, H., Xu, P., Li, S., Wang, X., Guo, X., Li, C.,
+  Xu, X., et~al.: Milvus: A purpose-built vector data management system. In:
+  Proceedings of the 2021 International Conference on Management of Data. pp.
+  2614--2627 (2021). \doi{10.1145/3448016.3457550}
+
+\bibitem{zhu2023autoshot}
+Zhu, W., Huang, Y., Xie, X., Liu, W., Deng, J., Zhang, D., Wang, Z., Liu, J.:
+  {AutoShot}: A short video dataset and state-of-the-art shot boundary
+  detection. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+  Pattern Recognition ({CVPR}) Workshops. pp. 2238--2247 (2023),
+  \url{https://openaccess.thecvf.com/content/CVPR2023W/NAS/html/Zhu_AutoShot_A_Short_Video_Dataset_and_State-of-the-Art_Shot_Boundary_Detection_CVPRW_2023_paper.html}
+
+\end{thebibliography}

@@ -1,0 +1,17 @@
+Notes
+- Ghi lại câu Prompt
+
+Tasks:
+- Viết notebook chạy frame extraction
+- Chạy frame extraction: 
+    + Khương
+    + An
+    + Lộc
+    + Phương
+    + Đức
+    + Thắng
+
+
+
+
+

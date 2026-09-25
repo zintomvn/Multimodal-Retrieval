@@ -1,0 +1,93 @@
+# Frontend 
+
+# Backend 
+
+# Step-by-step to build one web (Learn to build from scratch)
+## Setting up
+1. Essential Tools
+2. Verification Steps
+- tech stack version
+3. Project Structure Setup
+- Create folder and directory for app (backend, frontend)
+mkdir my-first-web-app
+cd my-first-web-app
+mkdir frontend backend
+- Initialize Git repository
+git init
+echo "node_modules/" > .gitignore
+echo ".env" >> .gitignore
+
+## Building the Frontend
+frontend/index.html
+
+## Creating the Backend
+1. Project Setup
+
+2. Server Configuration
+backend/server.js
+
+3. Database Models
+Create backend/models/User.js
+Create backend/models/Task.js
+
+4. API Routes (lên trước --> design sẵn để connect frontend and backend) 
+
+5. Connecting Frontend and Backend
+- Environment Variables
+- CORS Configuration
+- API Integration Testing
+
+6. Testing Your Application
+- Local Development Server
+
+- Testing Checklist
+    - Viết ra những unit test cơ bản để test hệ thống trước
+    - 
+
+Debugging Tips
+- CORS errors: Check your CORS configuration
+- Database connection: Verify MongoDB URI
+- Authentication issues: Check JWT token handling
+- Frontend not loading: Verify HTTP server is running
+- API calls failing: Check network tab in browser dev tools
+
+
+Note: Build một cái MVP trước -> Mấy cái dưới này thì sau khi làm xong hãng tối ưu
+# Deployment Options
+
+# Post-Deployment Steps
+
+
+
+# Pipeline: 
+## Search
+- Input: state in frontend (UI State)
+const searchInput = {
+    datasetId,
+    queryType, # KIS, QA, TRAKE
+    queryName, # Tự sinh ra encode theo ngày tháng
+    queryText, # Input của user - câu cần tìm
+    topK,
+    useExpansion, 
+    useAgentPlanning,
+    agentModel: reasoningModel,
+    useMetadata,
+    temporalMode: queryType === "KIS" && kisTemporalMode,
+    temporalStrategy,
+    visualSearchMode,
+};
+
+
+- Output: 
+Pipeline:
+1. Click the 
+onClick={() => void submitSearch()}
+
+Read the UI State
+
+
+
+
+
+
+

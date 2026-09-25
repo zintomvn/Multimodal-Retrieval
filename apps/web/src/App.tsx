@@ -1,6 +1,11 @@
 import { LatestRequest } from "./api/latestRequest";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readWorkspace, saveWorkspace, newQueryName, type SearchDraft } from "./workspace";
+import {
+  readWorkspace,
+  saveWorkspace,
+  newQueryName,
+  type SearchDraft,
+} from "./workspace";
 import { useStableEvent } from "./useStableEvent";
 import { useDialogFocus } from "./useDialogFocus";
 import {
@@ -1217,20 +1222,48 @@ function FrameCard({
 }
 
 const EMPTY_SELECTION = new Set<string>();
-const ResultGrid = memo(function ResultGrid({results, columns, selectedKeys, keyFor, onOpen, onPick, onPreview, className = "frame-grid"}: {
-  results: SearchResult[]; columns: number; selectedKeys: Set<string>; keyFor: (result: SearchResult) => string;
-  onOpen: (result: SearchResult) => void; onPick: (result: SearchResult) => void; onPreview: (result: SearchResult) => void;
+const ResultGrid = memo(function ResultGrid({
+  results,
+  columns,
+  selectedKeys,
+  keyFor,
+  onOpen,
+  onPick,
+  onPreview,
+  className = "frame-grid",
+}: {
+  results: SearchResult[];
+  columns: number;
+  selectedKeys: Set<string>;
+  keyFor: (result: SearchResult) => string;
+  onOpen: (result: SearchResult) => void;
+  onPick: (result: SearchResult) => void;
+  onPreview: (result: SearchResult) => void;
   className?: string;
 }) {
   if (import.meta.env.DEV) {
-    if (performance.getEntriesByName("result-grid-render").length >= 100) performance.clearMarks("result-grid-render");
+    if (performance.getEntriesByName("result-grid-render").length >= 100)
+      performance.clearMarks("result-grid-render");
     performance.mark("result-grid-render");
   }
-  return <div className={className} style={{gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`}}>
-    {results.map((result, index) => <FrameCard key={result.id} result={result} eager={index < columns}
-      selected={selectedKeys.has(keyFor(result))} onOpen={() => onOpen(result)}
-      onSelect={() => onPick(result)} onPreview={() => onPreview(result)} />)}
-  </div>;
+  return (
+    <div
+      className={className}
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+    >
+      {results.map((result, index) => (
+        <FrameCard
+          key={result.id}
+          result={result}
+          eager={index < columns}
+          selected={selectedKeys.has(keyFor(result))}
+          onOpen={() => onOpen(result)}
+          onSelect={() => onPick(result)}
+          onPreview={() => onPreview(result)}
+        />
+      ))}
+    </div>
+  );
 });
 
 function TrakeRows({
@@ -1572,22 +1605,43 @@ export function App() {
   const [mode, setMode] = useState<AppMode>(saved?.mode ?? "Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetId, setDatasetId] = useState(saved?.datasetId ?? "");
-  const [queryType, setQueryType] = useState<SearchTask>(saved?.active.queryType ?? "KIS");
-  const [queryName, setQueryName] = useState(saved?.active.queryName ?? queryNameByType.KIS);
-  const [exportFileName, setExportFileName] = useState(saved?.active.exportFileName ?? queryNameByType.KIS);
-  const [queryText, setQueryText] = useState(saved?.active.queryText ?? sampleQueries.KIS);
-  const [videoCodeQuery, setVideoCodeQuery] = useState(saved?.active.videoCodeQuery ?? sampleQueries.VIDEO);
-  const [videoFrameQuery, setVideoFrameQuery] = useState(saved?.active.videoFrameQuery ?? "");
+  const [queryType, setQueryType] = useState<SearchTask>(
+    saved?.active.queryType ?? "KIS",
+  );
+  const [queryName, setQueryName] = useState(
+    saved?.active.queryName ?? queryNameByType.KIS,
+  );
+  const [exportFileName, setExportFileName] = useState(
+    saved?.active.exportFileName ?? queryNameByType.KIS,
+  );
+  const [queryText, setQueryText] = useState(
+    saved?.active.queryText ?? sampleQueries.KIS,
+  );
+  const [videoCodeQuery, setVideoCodeQuery] = useState(
+    saved?.active.videoCodeQuery ?? sampleQueries.VIDEO,
+  );
+  const [videoFrameQuery, setVideoFrameQuery] = useState(
+    saved?.active.videoFrameQuery ?? "",
+  );
   const [topK, setTopK] = useState(saved?.active.topK ?? 50);
-  const [useExpansion, setUseExpansion] = useState(saved?.active.useExpansion ?? true);
-  const [useAgentPlanning, setUseAgentPlanning] = useState(saved?.active.useAgentPlanning ?? true);
-  const [useMetadata, setUseMetadata] = useState(saved?.active.useMetadata ?? true);
-  const [kisTemporalMode, setKisTemporalMode] = useState(saved?.active.kisTemporalMode ?? false);
+  const [useExpansion, setUseExpansion] = useState(
+    saved?.active.useExpansion ?? true,
+  );
+  const [useAgentPlanning, setUseAgentPlanning] = useState(
+    saved?.active.useAgentPlanning ?? true,
+  );
+  const [useMetadata, setUseMetadata] = useState(
+    saved?.active.useMetadata ?? true,
+  );
+  const [kisTemporalMode, setKisTemporalMode] = useState(
+    saved?.active.kisTemporalMode ?? false,
+  );
   const [temporalStrategy, setTemporalStrategy] = useState<
     "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
   >(saved?.active.temporalStrategy ?? "vortex_k_context");
-  const [visualSearchMode, setVisualSearchMode] =
-    useState<VisualSearchMode>(saved?.active.visualSearchMode ?? "openclip");
+  const [visualSearchMode, setVisualSearchMode] = useState<VisualSearchMode>(
+    saved?.active.visualSearchMode ?? "openclip",
+  );
   const [weights, setWeights] = useState({
     visual: 0.42,
     text: 0.32,
@@ -1625,10 +1679,14 @@ export function App() {
       previewRequests.current.cancel();
     };
   }, [datasetId, queryType, mode]);
-  const [selected, setSelected] = useState<SubmissionRow[]>(saved?.selected ?? []);
+  const [selected, setSelected] = useState<SubmissionRow[]>(
+    saved?.selected ?? [],
+  );
   const [context, setContext] = useState<FrameContext | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
-  const [history, setHistory] = useState<SearchHistoryItem[]>(saved?.history ?? []);
+  const [history, setHistory] = useState<SearchHistoryItem[]>(
+    saved?.history ?? [],
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceOpen, setIntelligenceOpen] = useState(false);
   const [autoEnabled, setAutoEnabled] = useState(true);
@@ -1642,8 +1700,9 @@ export function App() {
     typeof window === "undefined" ? true : window.innerWidth > 1180,
   );
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const [reasoningModel, setReasoningModel] =
-    useState<ReasoningModel>(saved?.active.reasoningModel ?? "gpt-4o");
+  const [reasoningModel, setReasoningModel] = useState<ReasoningModel>(
+    saved?.active.reasoningModel ?? "gpt-4o",
+  );
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
@@ -1681,27 +1740,84 @@ export function App() {
   useDialogFocus(settingsDialogRef, settingsOpen, () => setSettingsOpen(false));
 
   function currentDraft(): SearchDraft {
-    return {queryType, queryName, queryText, exportFileName, videoCodeQuery, videoFrameQuery,
-      topK, useExpansion, useAgentPlanning, useMetadata, kisTemporalMode, temporalStrategy,
-      visualSearchMode, reasoningModel, sourceMode: "auto", temporalEvents: []};
+    return {
+      queryType,
+      queryName,
+      queryText,
+      exportFileName,
+      videoCodeQuery,
+      videoFrameQuery,
+      topK,
+      useExpansion,
+      useAgentPlanning,
+      useMetadata,
+      kisTemporalMode,
+      temporalStrategy,
+      visualSearchMode,
+      reasoningModel,
+      sourceMode: "auto",
+      temporalEvents: [],
+    };
   }
   function applyDraft(draft: SearchDraft) {
-    setQueryType(draft.queryType); setQueryName(draft.queryName); setQueryText(draft.queryText);
-    setExportFileName(draft.exportFileName); setVideoCodeQuery(draft.videoCodeQuery); setVideoFrameQuery(draft.videoFrameQuery);
-    setTopK(draft.topK); setUseExpansion(draft.useExpansion); setUseAgentPlanning(draft.useAgentPlanning);
-    setUseMetadata(draft.useMetadata); setKisTemporalMode(draft.kisTemporalMode); setTemporalStrategy(draft.temporalStrategy);
-    setVisualSearchMode(draft.visualSearchMode); setReasoningModel(draft.reasoningModel);
+    setQueryType(draft.queryType);
+    setQueryName(draft.queryName);
+    setQueryText(draft.queryText);
+    setExportFileName(draft.exportFileName);
+    setVideoCodeQuery(draft.videoCodeQuery);
+    setVideoFrameQuery(draft.videoFrameQuery);
+    setTopK(draft.topK);
+    setUseExpansion(draft.useExpansion);
+    setUseAgentPlanning(draft.useAgentPlanning);
+    setUseMetadata(draft.useMetadata);
+    setKisTemporalMode(draft.kisTemporalMode);
+    setTemporalStrategy(draft.temporalStrategy);
+    setVisualSearchMode(draft.visualSearchMode);
+    setReasoningModel(draft.reasoningModel);
   }
-  const workspace = useMemo(() => ({version: 1 as const, mode, datasetId, active: currentDraft(),
-    drafts: {...drafts.current, [queryType]: currentDraft()}, selected, history}),
-    [mode,datasetId,queryType,queryName,queryText,exportFileName,videoCodeQuery,videoFrameQuery,
-      topK,useExpansion,useAgentPlanning,useMetadata,kisTemporalMode,temporalStrategy,visualSearchMode,reasoningModel,selected,history]);
+  const workspace = useMemo(
+    () => ({
+      version: 1 as const,
+      mode,
+      datasetId,
+      active: currentDraft(),
+      drafts: { ...drafts.current, [queryType]: currentDraft() },
+      selected,
+      history,
+    }),
+    [
+      mode,
+      datasetId,
+      queryType,
+      queryName,
+      queryText,
+      exportFileName,
+      videoCodeQuery,
+      videoFrameQuery,
+      topK,
+      useExpansion,
+      useAgentPlanning,
+      useMetadata,
+      kisTemporalMode,
+      temporalStrategy,
+      visualSearchMode,
+      reasoningModel,
+      selected,
+      history,
+    ],
+  );
   useEffect(() => {
     if (initialWorkspace.error) return; // Preserve incompatible storage for recovery.
-    const save = () => { const error = saveWorkspace(workspace); if (error) console.warn(error); };
+    const save = () => {
+      const error = saveWorkspace(workspace);
+      if (error) console.warn(error);
+    };
     const timer = window.setTimeout(save, 250);
     window.addEventListener("pagehide", save);
-    return () => { window.clearTimeout(timer); window.removeEventListener("pagehide", save); };
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pagehide", save);
+    };
   }, [workspace, initialWorkspace.error]);
 
   // Effects
@@ -1926,8 +2042,14 @@ export function App() {
     drafts.current[queryType] = currentDraft();
     const draft = drafts.current[type];
     if (draft) applyDraft(draft);
-    else applyDraft({...currentDraft(), queryType: type, queryName: queryNameByType[type],
-      exportFileName: queryNameByType[type], queryText: sampleQueries[type]});
+    else
+      applyDraft({
+        ...currentDraft(),
+        queryType: type,
+        queryName: queryNameByType[type],
+        exportFileName: queryNameByType[type],
+        queryText: sampleQueries[type],
+      });
     setResults([]);
     setHasSearched(false);
     setContext(null);
@@ -1971,7 +2093,8 @@ export function App() {
       createdAt,
       results: nextResults,
       trace,
-      datasetId, draft: currentDraft(),
+      datasetId,
+      draft: currentDraft(),
     };
     setHistory((current) => [item, ...current].slice(0, 12));
   }
@@ -1986,7 +2109,8 @@ export function App() {
       const next = await getFrameContext(result.frame_id, request.signal);
       if (contextRequests.current.isCurrent(request)) setContext(next);
     } catch {
-      if (contextRequests.current.isCurrent(request)) setStatus("Cannot load frame context. Try opening the frame again.");
+      if (contextRequests.current.isCurrent(request))
+        setStatus("Cannot load frame context. Try opening the frame again.");
     } finally {
       contextRequests.current.finish(request);
     }
@@ -2102,6 +2226,7 @@ export function App() {
     );
   }
 
+  // Search submission: call function search -> backend
   async function submitSearch() {
     if (mode === "Chat") {
       submitChat();
@@ -2276,17 +2401,20 @@ export function App() {
     );
 
     try {
-      const response = await listFrames({
-        datasetId,
-        videoCode,
-        frameIdx: frameIdx ?? undefined,
-        limit:
-          frameIdx === null
-            ? Math.min(topK, 200)
-            : Math.min(Math.max(topK, 12), 200),
-        offset: 0,
-        presentOnly: true,
-      }, request.signal);
+      const response = await listFrames(
+        {
+          datasetId,
+          videoCode,
+          frameIdx: frameIdx ?? undefined,
+          limit:
+            frameIdx === null
+              ? Math.min(topK, 200)
+              : Math.min(Math.max(topK, 12), 200),
+          offset: 0,
+          presentOnly: true,
+        },
+        request.signal,
+      );
       if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = response.frames.map((frame, index) =>
         frameToResult(frame, index + 1),
@@ -2367,20 +2495,23 @@ export function App() {
     setLoading(true);
     setStatus(`Reasoning with ${reasoningModelLabels[reasoningModel]}`);
     try {
-      const response = await runSearch({
-        datasetId,
-        queryType: "QA",
-        queryName,
-        queryText: prompt,
-        topK,
-        useExpansion,
-        useAgentPlanning: true,
-        agentModel: reasoningModel,
-        useMetadata,
-        temporalMode: false,
-        temporalStrategy,
-        visualSearchMode,
-      }, request.signal);
+      const response = await runSearch(
+        {
+          datasetId,
+          queryType: "QA",
+          queryName,
+          queryText: prompt,
+          topK,
+          useExpansion,
+          useAgentPlanning: true,
+          agentModel: reasoningModel,
+          useMetadata,
+          temporalMode: false,
+          temporalStrategy,
+          visualSearchMode,
+        },
+        request.signal,
+      );
       if (!searchRequests.current.isCurrent(request)) return;
       const nextResults = diversifyResultsForDisplay(response.results, "QA");
       setResults(nextResults);
@@ -2693,7 +2824,11 @@ export function App() {
     setStatus("Exporting");
     try {
       const csvName = csvDownloadName(exportFileName || "submission");
-      const exported = await createAndExportSubmission(datasetId, csvName.replace(/\.csv$/i, ""), selected);
+      const exported = await createAndExportSubmission(
+        datasetId,
+        csvName.replace(/\.csv$/i, ""),
+        selected,
+      );
       await downloadCsvFromUrl(exported.downloadUrl, csvName);
       setStatus("CSV downloaded");
     } catch (error) {
@@ -2706,7 +2841,8 @@ export function App() {
 
   function newSession() {
     const name = newQueryName(queryType);
-    setQueryName(name); setExportFileName(name);
+    setQueryName(name);
+    setExportFileName(name);
     cancelSearch();
     setQueryText(sampleQueries[queryType]);
     setResults([]);
@@ -2730,10 +2866,19 @@ export function App() {
     setTopK(Math.round(clampNumber(value, 1, 100)));
   }
 
-  const stableOpen = useStableEvent((result: SearchResult) => void openFrameContext(result));
-  const stablePick = useStableEvent((result: SearchResult) => addResult(result));
-  const stablePreview = useStableEvent((result: SearchResult) => void openVideoPreview(result));
-  const resultKey = useCallback((result: SearchResult) => selectionKeyForResult(result), [queryName, queryType]);
+  const stableOpen = useStableEvent(
+    (result: SearchResult) => void openFrameContext(result),
+  );
+  const stablePick = useStableEvent((result: SearchResult) =>
+    addResult(result),
+  );
+  const stablePreview = useStableEvent(
+    (result: SearchResult) => void openVideoPreview(result),
+  );
+  const resultKey = useCallback(
+    (result: SearchResult) => selectionKeyForResult(result),
+    [queryName, queryType],
+  );
 
   const videoPreviewFrame =
     videoPreview?.frames[videoPreview.frameIndex] ?? null;
@@ -2975,8 +3120,15 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <ResultGrid results={visibleResults} columns={frameColumns} selectedKeys={selectedKeys}
-                  keyFor={resultKey} onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
+                <ResultGrid
+                  results={visibleResults}
+                  columns={frameColumns}
+                  selectedKeys={selectedKeys}
+                  keyFor={resultKey}
+                  onOpen={stableOpen}
+                  onPick={stablePick}
+                  onPreview={stablePreview}
+                />
               )}
             </section>
           )}
@@ -3012,9 +3164,16 @@ export function App() {
                       onClearSelection={() => setTrakeFrameChoices([])}
                     />
                   ) : (
-                    <ResultGrid className="frame-grid auto-grid" results={visibleResults} columns={frameColumns}
-                      selectedKeys={EMPTY_SELECTION} keyFor={resultKey} onOpen={stableOpen}
-                      onPick={stablePick} onPreview={stablePreview} />
+                    <ResultGrid
+                      className="frame-grid auto-grid"
+                      results={visibleResults}
+                      columns={frameColumns}
+                      selectedKeys={EMPTY_SELECTION}
+                      keyFor={resultKey}
+                      onOpen={stableOpen}
+                      onPick={stablePick}
+                      onPreview={stablePreview}
+                    />
                   )}
                 </>
               ) : loading ? (
@@ -3043,8 +3202,15 @@ export function App() {
                   onClearSelection={() => setTrakeFrameChoices([])}
                 />
               ) : (
-                <ResultGrid results={visibleResults} columns={frameColumns} selectedKeys={EMPTY_SELECTION}
-                  keyFor={resultKey} onOpen={stableOpen} onPick={stablePick} onPreview={stablePreview} />
+                <ResultGrid
+                  results={visibleResults}
+                  columns={frameColumns}
+                  selectedKeys={EMPTY_SELECTION}
+                  keyFor={resultKey}
+                  onOpen={stableOpen}
+                  onPick={stablePick}
+                  onPreview={stablePreview}
+                />
               )}
             </section>
           )}
@@ -3403,7 +3569,12 @@ export function App() {
       </aside>
 
       {settingsOpen && (
-        <div ref={settingsDialogRef} className="settings-popover" role="dialog" aria-label="Settings">
+        <div
+          ref={settingsDialogRef}
+          className="settings-popover"
+          role="dialog"
+          aria-label="Settings"
+        >
           <div className="panel-heading">
             <strong>Settings</strong>
             <button

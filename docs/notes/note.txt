@@ -663,6 +663,23 @@ So sánh và chỉ rõ dùng phần nào, không chế thông tin ngoài tài li
 
 
 
+## New ideas
+role: bạn là một AI Researcher 
+context: đọc kỹ source code trong https://github.com/zintomvn/Multimodal-Retrieval  - hiện tại tôi đang làm research cho phương pháp search tối ưu trong multimodal retrieval,  
+task: 
+Search thêm những paper mới và dẫn nguồn cho tôi, lấy từ SOICT và các cuộc thi tương tự. 
+Search những paper tôi thừa kế ý tưởng. 
+Tôi đang cần bạn so sánh phương pháp của tôi có những đóng góp gì mới - contribution, cải tiến những gì so với những paper trước đó để tôi ghi vào paper  
+Sau khi đã search xong thì tách biệt hoàn toàn những tư tưởng đó ra và search cho tôi những ý tưởng mới đây trong các hội nghị lớn về multimodal retrieval mà chưa có cái gì mới trong SOICT những năm trước để tôi bỏ vào paper của tôi (về 2 vấn đề là agent và giải thuật gì đó trong retrieval mà chưa đưa vào ứng dụng, chỉ mới chạy trên lý thuyết)
+contraint: search thông tin và đọc thông tin trong paper đó luôn không chỉ list ra hay đọc abstract, so sánh kỹ lưỡng với code của tôi (chỉ rõ là phần nào). 
+So sánh và chỉ rõ dùng phần nào, không chế thông tin ngoài tài liệu search và paper của tôi gửi.
+
+Search ra những idea mới và tổng hợp lại cho tôi
+
+Note - Search ra được những idea sau:
+- Optimal Transport with Structured Data
+- Frame-to-Action Assignment
+- 
 
 
 
@@ -809,7 +826,49 @@ output: viết test\_report\_v4.md vào folder [tests](<docs/milestones/mileston
 
 chạy cho tôi ablation study trên các câu query đó cho các thông số, hyperparameters liên quan về search và ghi vào report.
 
-
-
 -----------------------------------------------------------------
 
+Milestone 9
+
+Problems:
+- Video camera giao thông thì dùng TransNetV2 cắt theo threshold bị mất frame
+Video Đua xe đạp: ~50 giờ
+Video Camera giao thông: ~50 giờ
+Video Tin tức truyền hình: ~100 giờ
+
+
+# Prompt
+
+role: bạn là một AI engineer
+context:
+- Hardware tôi chạy: kaggle T4x2 gpu
+- Dung lượng data tôi chạy: 150 gb video từ camera giao thông
+- Số máy chạy: 4 máy (4 accounts kaggle)
+- thời gian: chạy trong vòng 1 ngày
+- Format ban tổ chức cho: mỗi video được chia ra thành các batch nhỏ, mỗi batch 10 gb
+
+task: Kiếm cho tôi những models (paper và weights source) dùng để trích xuất frame trong video
+
+contraint:
+- Lấy những paper trong hội nghị lớn liên quan, được accept 
+- Không lấy những paper ngoài hay chưa được accept paper hoặc chưa public weights
+- Trích dẫn cụ thể nguồn paper và weights để tôi kiểm tra
+- Không chế thông tin hay bịa thông tin từ paper, lấy thông tin hoàn toàn từ text trong paper
+- Đọc thông tin abstract, experiments của paper và dùng nó để làm thông tin suy luận không, trích dẫn cụ thể
+- Kiểm tra kỹ thông tin của paper đã được test trên bộ data lớn chưa
+- Thỏa điều kiện chạy frame extraction 150gb video traffic trong vòng 1 ngày 
+- Tận dụng tối đa tài nguyên cpu (4 core) và gpu của kaggle RTX Pro 6000
+
+verify: Kiểm tra những thứ tôi đã ghi sẵn trong contraint và check lại cho đến khi thỏa mãn hết điều kiện
+output: xuất ra file markdown tổng hợp những model để tôi check
+
+
+
+
+
+
+trick:
+- dùng voice chứ không type thủ công
+- vừa có web để xem, hoặc trên màn hình lớn chiếu
+- chắc thi trc rồi nên biết cái web nó ra sao, rồi giả lập để nhảy vào web ocr câu hỏi hay sao đó
+- 
