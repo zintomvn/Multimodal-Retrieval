@@ -7,6 +7,7 @@ export interface SearchDraft {
   queryName: string;
   queryText: string;
   exportFileName: string;
+  qaAnswer?: string;
   videoCodeQuery: string;
   videoFrameQuery: string;
   topK: number;

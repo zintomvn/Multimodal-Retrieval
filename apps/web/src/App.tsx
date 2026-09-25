@@ -36,6 +36,7 @@ import {
   planSearch,
   runSearch,
   seekVideoFrame,
+  submitDresAnswer,
 } from "./api/client";
 import type {
   ContextFrame,
@@ -1601,6 +1602,7 @@ export function App() {
   const saved = initialWorkspace.value;
   const drafts = useRef(saved?.drafts ?? {});
   const exportInFlight = useRef(false);
+  const dresInFlight = useRef(false);
   // Attibutes
   const [mode, setMode] = useState<AppMode>(saved?.mode ?? "Search");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -1614,6 +1616,7 @@ export function App() {
   const [exportFileName, setExportFileName] = useState(
     saved?.active.exportFileName ?? queryNameByType.KIS,
   );
+  const [qaAnswer, setQaAnswer] = useState(saved?.active.qaAnswer ?? "");
   const [queryText, setQueryText] = useState(
     saved?.active.queryText ?? sampleQueries.KIS,
   );
@@ -1660,6 +1663,10 @@ export function App() {
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [dresSubmitting, setDresSubmitting] = useState(false);
+  const [lastDresSubmission, setLastDresSubmission] = useState<string | null>(
+    null,
+  );
   const searchRequests = useRef(new LatestRequest());
   const contextRequests = useRef(new LatestRequest());
   const previewRequests = useRef(new LatestRequest());
@@ -1745,6 +1752,7 @@ export function App() {
       queryName,
       queryText,
       exportFileName,
+      qaAnswer,
       videoCodeQuery,
       videoFrameQuery,
       topK,
@@ -1764,6 +1772,7 @@ export function App() {
     setQueryName(draft.queryName);
     setQueryText(draft.queryText);
     setExportFileName(draft.exportFileName);
+    setQaAnswer(draft.qaAnswer ?? "");
     setVideoCodeQuery(draft.videoCodeQuery);
     setVideoFrameQuery(draft.videoFrameQuery);
     setTopK(draft.topK);
@@ -1792,6 +1801,7 @@ export function App() {
       queryName,
       queryText,
       exportFileName,
+      qaAnswer,
       videoCodeQuery,
       videoFrameQuery,
       topK,
@@ -2033,7 +2043,10 @@ export function App() {
           : result.frame_idx === null
             ? []
             : [result.frame_idx],
-      answer: queryType === "QA" ? (result.answer ?? "") : null,
+      answer:
+        queryType === "QA"
+          ? qaAnswer.trim() || result.answer?.trim() || ""
+          : null,
     });
   }
 
@@ -2137,7 +2150,10 @@ export function App() {
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: result.video_code,
       frame_indices: frameIndices,
-      answer: queryType === "QA" ? (result.answer ?? "") : null,
+      answer:
+        queryType === "QA"
+          ? qaAnswer.trim() || result.answer?.trim() || ""
+          : null,
     };
 
     setSelected((current) => {
@@ -2807,7 +2823,10 @@ export function App() {
       rank: selected.filter((item) => item.query_name === queryName).length + 1,
       video_code: videoPreview.result.video_code,
       frame_indices: [videoPreview.selectedFrameIdx],
-      answer: queryType === "QA" ? (videoPreview.result.answer ?? "") : null,
+      answer:
+        queryType === "QA"
+          ? qaAnswer.trim() || videoPreview.result.answer?.trim() || ""
+          : null,
     };
     setSelected((current) => {
       if (current.some((item) => rowKey(item) === rowKey(row))) return current;
@@ -2839,10 +2858,44 @@ export function App() {
     }
   }
 
+  const dresRows = useMemo(
+    () =>
+      selected.filter(
+        (row) =>
+          row.query_name === queryName &&
+          (row.query_type === "KIS" ||
+            row.query_type === "QA" ||
+            row.query_type === "TRAKE"),
+      ),
+    [queryName, selected],
+  );
+
+  async function submitToDres() {
+    if (!datasetId || dresRows.length !== 1 || dresInFlight.current) return;
+    dresInFlight.current = true;
+    setDresSubmitting(true);
+    setStatus("Submitting selected frame to DRES");
+    try {
+      const submitted = await submitDresAnswer(datasetId, dresRows);
+      setLastDresSubmission(rowKey(dresRows[0]));
+      setStatus(
+        `Submitted ${submitted.media_item_name} at ${timestampLabel(submitted.timestamp_ms)} to ${submitted.evaluation_name}`,
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "DRES submission failed");
+    } finally {
+      dresInFlight.current = false;
+      setDresSubmitting(false);
+    }
+  }
+
   function newSession() {
     const name = newQueryName(queryType);
     setQueryName(name);
     setExportFileName(name);
+    setQaAnswer("");
+    setSelected([]);
+    setLastDresSubmission(null);
     cancelSearch();
     setQueryText(sampleQueries[queryType]);
     setResults([]);
@@ -3557,6 +3610,17 @@ export function App() {
               aria-label="Export CSV file name"
             />
           </label>
+          {queryType === "QA" && (
+            <label className="export-file-field">
+              Answer
+              <input
+                value={qaAnswer}
+                onChange={(event) => setQaAnswer(event.target.value)}
+                placeholder="Enter the answer"
+                aria-label="QA answer"
+              />
+            </label>
+          )}
           <button
             type="button"
             className="export-button"
@@ -3564,6 +3628,25 @@ export function App() {
             onClick={() => void exportSubmission()}
           >
             Export CSV
+          </button>
+          <button
+            type="button"
+            className="submit-button"
+            disabled={
+              (queryType !== "KIS" &&
+                queryType !== "QA" &&
+                queryType !== "TRAKE") ||
+              dresRows.length !== 1 ||
+              dresSubmitting
+            }
+            onClick={() => void submitToDres()}
+            title="Submit the one selected KIS, QA, or TRAKE answer for this query to DRES"
+          >
+            {dresSubmitting
+              ? "Submitting..."
+              : lastDresSubmission
+                ? "Submit Again"
+                : "Submit"}
           </button>
         </section>
       </aside>

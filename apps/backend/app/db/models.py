@@ -310,6 +310,30 @@ class SubmissionItem(Base):
     __table_args__ = (UniqueConstraint("submission_id", "query_name", "rank", name="uq_submission_query_rank"),)
 
 
+class DresSubmission(Base):
+    """A durable idempotency record for answers sent to DRES."""
+
+    __tablename__ = "dres_submissions"
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    evaluation_id = Column(String(128), nullable=False)
+    evaluation_name = Column(String(255), nullable=False)
+    media_item_name = Column(String(64), nullable=False)
+    timestamp_ms = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False, default="PENDING")
+    response = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "evaluation_id",
+            "media_item_name",
+            "timestamp_ms",
+            name="uq_dres_submission_answer",
+        ),
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

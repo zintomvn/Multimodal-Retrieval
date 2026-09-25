@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readWorkspace,saveWorkspace,newQueryName} from '../src/workspace.ts';
-const draft={queryType:'KIS',queryName:'query-1-kis',queryText:'custom draft',exportFileName:'answer',videoCodeQuery:'L01_V001',videoFrameQuery:'100',topK:10,useExpansion:false,useAgentPlanning:false,useMetadata:true,kisTemporalMode:false,temporalStrategy:'vortex_k_context',visualSearchMode:'openclip',reasoningModel:'gpt-4o',sourceMode:'ocr',temporalEvents:[]};
+const draft={queryType:'KIS',queryName:'query-1-kis',queryText:'custom draft',exportFileName:'answer',qaAnswer:'manual answer',videoCodeQuery:'L01_V001',videoFrameQuery:'100',topK:10,useExpansion:false,useAgentPlanning:false,useMetadata:true,kisTemporalMode:false,temporalStrategy:'vortex_k_context',visualSearchMode:'openclip',reasoningModel:'gpt-4o',sourceMode:'ocr',temporalEvents:[]};
 test('workspace round trip preserves options and independent task drafts',()=>{
   let raw=null;const storage={getItem:()=>raw,setItem:(_,v)=>raw=v};
   const value={version:1,mode:'Auto',datasetId:'real',active:draft,drafts:{QA:{...draft,queryType:'QA',queryText:'other'}},selected:[]};

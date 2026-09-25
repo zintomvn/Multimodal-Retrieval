@@ -23,6 +23,7 @@ async(page)=>{
   await page.getByRole('button',{name:'New search',exact:true}).click();
   const after=await page.getByLabel('Export CSV file name').inputValue();
   if(before===after) throw new Error('Query identity reused');
+  if(await page.locator('.selected-row').count()!==0) throw new Error('New search retained selected frames');
   if(!await page.getByRole('button',{name:'Export current query CSV'}).isDisabled()) throw new Error('Previous selection leaked into new query');
   return {taskDrafts:true,reload:true,options:true,selections:true,uniqueQuery:true};
 }

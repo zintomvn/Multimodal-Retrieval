@@ -8,10 +8,25 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Submission
 from app.db.session import get_db
-from app.modules.submissions.schemas import SubmissionCreate, SubmissionExportResponse, SubmissionItemsRequest
+from app.adapters.dres.client import DresConfigurationError, DresRemoteError
+from app.modules.submissions.dres import DresSubmissionService
+from app.modules.submissions.schemas import DresSubmitRequest, SubmissionCreate, SubmissionExportResponse, SubmissionItemsRequest
 from app.modules.submissions.service import SubmissionService
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
+
+
+@router.post("/dres")
+def submit_to_dres(request: DresSubmitRequest, db: Session = Depends(get_db)) -> dict:
+    try:
+        return DresSubmissionService(db).submit(request.dataset_id, request.rows)
+    except DresConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except DresRemoteError as exc:
+        status = 422 if exc.status_code is not None and 400 <= exc.status_code < 500 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("")

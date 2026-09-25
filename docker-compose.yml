@@ -39,7 +39,9 @@ services:
       # SigLIP2's remote Zilliz collection can exceed the default 12 seconds
       # during a cold or large temporal retrieval; retain a bounded deadline.
       MILVUS_SEARCH_TIMEOUT: "30.0"
-      SKIP_DB_INIT: "true"
+      # Apply Alembic migrations at startup so DRES receipt storage is present
+      # before the web UI can submit an answer.
+      SKIP_DB_INIT: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

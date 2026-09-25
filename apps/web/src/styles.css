@@ -208,6 +208,7 @@ button:disabled {
 .intelligence-button,
 .auto-toggle,
 .export-button,
+.submit-button,
 .settings-block button {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -1750,6 +1751,29 @@ button:disabled {
   color: var(--bg-panel);
   font-weight: 800;
   text-decoration: none;
+}
+
+.submit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  background: var(--text-1);
+  color: var(--bg-panel);
+  font-weight: 800;
+}
+
+.submit-button:active {
+  transform: scale(0.98);
+}
+
+.submit-button:disabled {
+  border-color: transparent;
+  background: var(--bg-hover);
+  color: var(--text-3);
 }
 
 .export-button:disabled {

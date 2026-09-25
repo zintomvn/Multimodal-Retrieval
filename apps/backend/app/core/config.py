@@ -81,6 +81,15 @@ class Settings:
     model_registry_path: Path = _resolve_repo_path(os.getenv("MODEL_REGISTRY_PATH", "../../configs/model_registry.yaml"))
     retrieval_profiles_path: Path = _resolve_repo_path(os.getenv("RETRIEVAL_PROFILES_PATH", "../../configs/retrieval_profiles.yaml"))
     agent_config_path: Path = _resolve_repo_path(os.getenv("AGENT_CONFIG_PATH", "../../configs/agent.yaml"))
+    # DRES credentials are intentionally backend-only. Never expose either
+    # value through a VITE_ variable or an API response.
+    dres_base_url: str = os.getenv("DRES_BASE_URL", "https://eventretrieval.one/api/v2").rstrip("/")
+    dres_session_id: str = os.getenv("DRES_SESSION_ID", "").strip()
+    dres_evaluation_name: str = os.getenv("DRES_EVALUATION_NAME", "").strip()
+    dres_kis_evaluation_name: str = os.getenv("DRES_KIS_EVALUATION_NAME", "").strip()
+    dres_qa_evaluation_name: str = os.getenv("DRES_QA_EVALUATION_NAME", "").strip()
+    dres_trake_evaluation_name: str = os.getenv("DRES_TRAKE_EVALUATION_NAME", "").strip()
+    dres_timeout_seconds: float = float(os.getenv("DRES_TIMEOUT_SECONDS", "12"))
     skip_db_init: bool = _bool_env("SKIP_DB_INIT", False)
 
     @property

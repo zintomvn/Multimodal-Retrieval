@@ -23,6 +23,11 @@ class SubmissionItemsRequest(BaseModel):
     rows: list[SubmissionRow]
 
 
+class DresSubmitRequest(BaseModel):
+    dataset_id: str
+    rows: list[SubmissionRow] = Field(min_length=1)
+
+
 class SubmissionExportResponse(BaseModel):
     submission_id: str
     status: str

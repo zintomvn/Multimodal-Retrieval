@@ -252,6 +252,24 @@ export async function createAndExportSubmission(
   };
 }
 
+export interface DresSubmitResponse {
+  evaluation_id: string;
+  evaluation_name: string;
+  media_item_name: string;
+  timestamp_ms: number;
+  dres_response: unknown;
+}
+
+export async function submitDresAnswer(
+  datasetId: string,
+  rows: SubmissionRow[],
+): Promise<DresSubmitResponse> {
+  return requestJson<DresSubmitResponse>("/api/submissions/dres", {
+    method: "POST",
+    body: JSON.stringify({ dataset_id: datasetId, rows }),
+  });
+}
+
 export function mediaUrl(path: string | null): string | null {
   if (!path) return null;
   if (

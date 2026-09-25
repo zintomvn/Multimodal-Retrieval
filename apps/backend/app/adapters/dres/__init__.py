@@ -1,0 +1,1 @@
+"""DRES HTTP adapter."""
