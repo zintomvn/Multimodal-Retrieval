@@ -982,6 +982,7 @@ class RetrievalService:
 
     # 2. Search temporal
     # DEV
+    
     # Refiner for overlong fallback events, and a first-pass search strategy that
     def _refine_dev_event_plans(
         self,

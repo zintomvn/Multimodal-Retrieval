@@ -15,16 +15,20 @@ router = APIRouter(prefix='/api/retrieval', tags=['retrieval'])
 
 @router.post('/results/{result_id}/answer')
 def answer_result(result_id: str, db: Session = Depends(get_db), registry=Depends(get_model_registry_service)):
+    # Result 
     result = db.get(RetrievalResult, result_id)
     if not result or not result.frame or result.query_run.query_type != 'QA':
         raise HTTPException(404, 'QA result not found')
     if result.answer and result.score_breakdown.get('qa_evidence'):
         return {'answer': result.answer, 'evidence': result.score_breakdown['qa_evidence'], 'mode': 'text_evidence'}
     frame = result.frame
+
+    # Payload 
     payload = _video_evidence_payload(result.video_id, anchor_frame_id=frame.id,
         index_version=(result.score_breakdown.get('text_hit') or {}).get('index_version'),
         anchor_seconds=float(frame.frame_seconds) if frame.frame_seconds is not None else None)
     evidence = [{**item, 'source': source} for source, items in payload['evidence'].items() for item in items]
+
     if not evidence:
         raise HTTPException(422, 'No aligned evidence. Inspect the frame and enter an answer manually.')
     text = '\n'.join(f'[{i+1} {item["source"]}] {item["text"]}' for i,item in enumerate(evidence))
