@@ -31,8 +31,8 @@ services:
       - ./data:/app/data
       - ./models:/app/models:ro
       - ./apps/secrets:/app/apps/secrets:ro
+      - ./gen-lang-client-0547522732-410672fac05f.json:/app/gen-lang-client-0547522732-410672fac05f.json:ro
     environment:
-      DATABASE_URL: sqlite:////app/data/dev_search_local.db
       TEXT_SEARCH_BACKEND: elasticsearch
       CLIP_EMBEDDING_BASE_URL: http://host.docker.internal:8001/v1
       MILVUS_CONNECT_TIMEOUT: "3.0"

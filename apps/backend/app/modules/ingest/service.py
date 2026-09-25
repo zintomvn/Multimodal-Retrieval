@@ -418,6 +418,14 @@ class DemoIngestService:
                 "json_value": {
                     "source_image_name": row.get("image_name"),
                     "source_image_path": row.get("image_path"),
+                    "elasticsearch": {
+                        "index": "keyframe_annotations",
+                        "document_id": keyframe_id,
+                    },
+                    "zilliz": {
+                        "collection": "keyframe_embeddings",
+                        "vector_id": keyframe_id,
+                    },
                 },
                 "confidence": 1.0,
                 "model_version": "demo-v1",

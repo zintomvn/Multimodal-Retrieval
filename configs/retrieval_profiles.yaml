@@ -14,12 +14,22 @@ competition_default:
       model_key: clip_vith14_quickgelu_dfn5b_v2
       collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
       weight: 1.0
-      enabled: true
+      enabled: false
     siglip2_fine_grained:
       model_key: siglip2_so400m16_384_webli_openclip_1152_v1
       collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
       weight: 1.0
-      enabled: false
+      enabled: true
+    siglip2_batch_m:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_aic_batch_m_shot_keyframes_siglip2_1152_v1
+      weight: 1.0
+      enabled: true
+    siglip2_batch_s:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_aic2026_batch_s01_siglip2_1152_v1
+      weight: 1.0
+      enabled: true
   query_expansion:
     enabled_default: true
     max_variants: 5
@@ -32,8 +42,8 @@ competition_default:
     min_candidate_pool: 500
     max_candidate_pool: 1000
   milvus:
-    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
-    model_key: clip_vith14_quickgelu_dfn5b_v2
+    collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+    model_key: siglip2_so400m16_384_webli_openclip_1152_v1
     weight: 1.0
     top_k_per_model: 100
     final_top_k: 50
@@ -148,8 +158,8 @@ semantic_fast:
     min_candidate_pool: 500
     max_candidate_pool: 1000
   milvus:
-    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
-    model_key: clip_vith14_quickgelu_dfn5b_v2
+    collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+    model_key: siglip2_so400m16_384_webli_openclip_1152_v1
     weight: 1.0
     top_k_per_model: 50
     final_top_k: 50
@@ -182,12 +192,22 @@ competition_mvp_v1:
       model_key: clip_vith14_quickgelu_dfn5b_v2
       collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
       weight: 1.0
-      enabled: true
+      enabled: false
     siglip2_fine_grained:
       model_key: siglip2_so400m16_384_webli_openclip_1152_v1
       collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
       weight: 1.0
-      enabled: false
+      enabled: true
+    siglip2_batch_m:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_aic_batch_m_shot_keyframes_siglip2_1152_v1
+      weight: 1.0
+      enabled: true
+    siglip2_batch_s:
+      model_key: siglip2_so400m16_384_webli_openclip_1152_v1
+      collection: keyframe_embeddings_aic2026_batch_s01_siglip2_1152_v1
+      weight: 1.0
+      enabled: true
   query_type_weights:
     kis:
       visual: 0.50
@@ -224,8 +244,8 @@ competition_mvp_v1:
     min_candidate_pool: 500
     max_candidate_pool: 1000
   milvus:
-    collection: keyframe_embeddings_clip_vith14_quickgelu_dfn5b_v2
-    model_key: clip_vith14_quickgelu_dfn5b_v2
+    collection: keyframe_embeddings_siglip2_so400m16_384_webli_openclip_1152_v1
+    model_key: siglip2_so400m16_384_webli_openclip_1152_v1
     weight: 1.0
     top_k_per_model: 120
     final_top_k: 50

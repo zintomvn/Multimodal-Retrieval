@@ -142,6 +142,16 @@ def test_m2_ingestion_pipeline_imports_pg_media_milvus_and_es(tmp_path: Path) ->
     assert len(vector._collections["event_embeddings"]) == 1
     assert len(text._indices["keyframe_annotations"]) == 2
 
+    annotation = db.query(FrameAnnotation).first()
+    assert annotation.json_value["elasticsearch"] == {
+        "index": "keyframe_annotations",
+        "document_id": annotation.frame_id,
+    }
+    assert annotation.json_value["zilliz"] == {
+        "collection": "keyframe_embeddings",
+        "vector_id": annotation.frame_id,
+    }
+
     db.close()
 
 

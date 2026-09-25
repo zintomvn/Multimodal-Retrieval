@@ -1,0 +1,13 @@
+services:
+  backend:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+  ngrok:
+    image: ngrok/ngrok:latest
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env}
+    command: ["http", "http://web:5173", "--log", "stdout"]
+    ports:
+      - "127.0.0.1:4040:4040"
+    depends_on:
+      - web

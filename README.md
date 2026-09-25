@@ -189,6 +189,30 @@ docker compose run --rm --no-deps backend pytest -q `
 
 ## 5.2 Short Local Commands
 
+### Raw M/N/S videos before frame processing is complete
+
+The source videos live under `gs://aic_ai_2026/raw/source=kaggle/dataset=aiteam_dataset_batch_2/source_version=kaggle_current/`. Register them in PostgreSQL independently of the keyframe pipeline:
+
+```powershell
+.\.venv\Scripts\python.exe apps\backend\scripts\import_raw_gcs_videos.py --dry-run
+.\.venv\Scripts\python.exe apps\backend\scripts\import_raw_gcs_videos.py
+```
+
+The importer is safe to rerun. It links M, N, and S videos to their actual `.mp4` or `.mov` GCS objects while preserving existing frame counts and annotations. Use the **Video** lookup in the web app with a code such as `N050-V001`; when no processed frame exists, the raw video opens directly. The preview API is `/api/media/videos/{video_id}/preview`.
+
+When frame artifacts are ready, import the VLM archives and reconcile which frame objects actually exist in GCS:
+
+```powershell
+.\.venv\Scripts\python.exe apps\backend\scripts\import_object_detection_batches.py --dry-run
+.\.venv\Scripts\python.exe apps\backend\scripts\import_object_detection_batches.py --targets pg
+.\.venv\Scripts\python.exe apps\backend\scripts\import_object_detection_batches.py --targets es --elasticsearch-url http://localhost:9200
+.\.venv\Scripts\python.exe apps\backend\scripts\reconcile_gcs_media_presence.py
+```
+
+The frame importer keeps `is_media_present` false until the reconciliation confirms each GCS object. The Elasticsearch documents and PostgreSQL annotations use the same canonical frame ID; M vector IDs use generated `data/map-keyframes/*.csv` files for lookup. The raw videos remain playable when frames are missing.
+
+For Kaggle SigLIP2 serving, configure the Kaggle Secret `SIGLIP2_API_KEY` with the same value as `.env`, run `notebooks/search pipeline/siglip2-server-v1.2.ipynb`, then set `SIGLIP2_EMBEDDING_BASE_URL` in `.env` to the notebook's Cloudflare `/v1` URL. `SIGLIP2_MODEL_KEY` in the notebook names the model registry entry; it is not the API authentication secret.
+
 From the repository root, use these wrappers for local development:
 
 Backend:

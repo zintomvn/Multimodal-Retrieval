@@ -14,6 +14,7 @@ from time import perf_counter
 from typing import Any
 
 import yaml
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.adapters.text_search.base import TextSearchClient
@@ -2009,8 +2010,22 @@ class RetrievalService:
 
         dataset_video_ids = self._dataset_video_ids(dataset)
         if options.video_codes:
-            dataset_video_ids &= {row[0] for row in self.db.query(Video.video_id).filter(
-                Video.dataset_id == dataset.id, Video.video_code.in_(options.video_codes)).all()}
+            video_query = self.db.query(Video.video_id).filter(Video.dataset_id == dataset.id)
+            exact_video_ids = {
+                row[0]
+                for row in video_query.filter(Video.video_code.in_(options.video_codes)).all()
+            }
+            if exact_video_ids:
+                dataset_video_ids &= exact_video_ids
+            else:
+                batch_patterns = [f"%{code.strip()}%" for code in options.video_codes if code.strip()]
+                if batch_patterns:
+                    dataset_video_ids &= {
+                        row[0]
+                        for row in video_query.filter(or_(*(Video.video_code.ilike(pattern) for pattern in batch_patterns))).all()
+                    }
+                else:
+                    dataset_video_ids = set()
         if not dataset_video_ids:
             return []
         semantic_scores, semantic_backend_error = ({}, False) if options.source_mode in {"ocr", "asr"} else self._semantic_scores(
@@ -2065,8 +2080,29 @@ class RetrievalService:
             # invents visual scores and makes no-match latency scale with dataset.
             return []
 
+        # The indexes can each return 1,000 hits. Hydrating their full union
+        # through the remote PostgreSQL pooler makes this request very slow and
+        # can close the SSL connection before ranking begins. Keep a balanced
+        # head of both result lists, with enough candidates for diversification.
+        hydration_limit = max(top_k, min(250, max(100, top_k * 4)))
+        if len(candidate_ids) > hydration_limit:
+            ranked_lists = [
+                sorted(scores, key=lambda frame_id: (-scores[frame_id], frame_id))
+                for scores in (semantic_scores, text_scores)
+            ]
+            selected: set[str] = set()
+            for rank in range(max(map(len, ranked_lists))):
+                for ranked_ids in ranked_lists:
+                    if rank < len(ranked_ids):
+                        selected.add(ranked_ids[rank])
+                        if len(selected) >= hydration_limit:
+                            break
+                if len(selected) >= hydration_limit:
+                    break
+            candidate_ids = selected
+
         load_options = [joinedload(Frame.video)]
-        if self._needs_frame_annotations(options):
+        if self._needs_frame_annotations(options, profile):
             load_options.append(selectinload(Frame.annotations))
         frames = (
             self.db.query(Frame)
@@ -2705,8 +2741,10 @@ class RetrievalService:
                 return False
         return True
 
-    def _needs_frame_annotations(self, options: SearchOptions) -> bool:
-        return bool(options.objects or (options.scene or "").strip() or options.use_reranker)
+    def _needs_frame_annotations(self, options: SearchOptions, profile: dict[str, Any]) -> bool:
+        reranking = profile.get("reranking", {})
+        reranking_enabled = isinstance(reranking, dict) and bool(reranking.get("enabled", False))
+        return bool(options.objects or (options.scene or "").strip() or (options.use_reranker and reranking_enabled))
 
     def _normalize_signal(self, scores: list[float]) -> list[float]:
         if not scores:

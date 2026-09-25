@@ -153,7 +153,18 @@ class PostgresAnnotationSink:
                 "frame_id": item.keyframe_id,
                 "kind": "MULTIMODAL",
                 "text_value": text_value,
-                "json_value": {"gcs_uri": item.gcs_uri, "image_name": item.image_name},
+                "json_value": {
+                    "gcs_uri": item.gcs_uri,
+                    "image_name": item.image_name,
+                    "elasticsearch": {
+                        "index": self.config.elasticsearch_index,
+                        "document_id": item.keyframe_id,
+                    },
+                    "zilliz": {
+                        "collection": self.config.milvus_collection,
+                        "vector_id": item.keyframe_id,
+                    },
+                },
                 "confidence": 1.0,
                 "model_version": self.config.model_version,
                 "caption": caption,

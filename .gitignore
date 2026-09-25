@@ -237,8 +237,24 @@ __marimo__/
 # Data Extration Notebooks
 feature_extraction_notebooks
 
+
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.npy
+*.pkl
+
+data/
+datasets/
+checkpoints/
+models/
+outputs/
+
 # Data
 demo
+tmp
+data.zip
 data/extracted/
 data/test-submission-queries
 data/submission-queries

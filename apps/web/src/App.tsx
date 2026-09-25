@@ -1643,7 +1643,7 @@ export function App() {
     "vortex_k_context" | "aithena_weighted_ats" | "dev_first_search"
   >(saved?.active.temporalStrategy ?? "vortex_k_context");
   const [visualSearchMode, setVisualSearchMode] = useState<VisualSearchMode>(
-    saved?.active.visualSearchMode ?? "openclip",
+    "siglip2",
   );
   const [weights, setWeights] = useState({
     visual: 0.42,
@@ -2449,7 +2449,40 @@ export function App() {
           : "No indexed frames match this video",
       );
       rememberSearch(nextResults, trace, videoCode);
-      if (nextResults[0]) void openFrameContext(nextResults[0]);
+      if (nextResults[0]) {
+        void openFrameContext(nextResults[0]);
+      } else {
+        try {
+          const rawVideoId = videoCode
+            .replace(/\.(mov|mp4|mkv|avi)$/i, "")
+            .toUpperCase();
+          await getVideoPreviewUrl(rawVideoId);
+          if (!searchRequests.current.isCurrent(request)) return;
+          const rawVideoResult: SearchResult = {
+            id: `raw-video-${rawVideoId}`,
+            rank: 1,
+            video_id: rawVideoId,
+            video_code: rawVideoId,
+            frame_id: null,
+            frame_idx: null,
+            timestamp_ms: null,
+            answer: null,
+            score: 0,
+            score_breakdown: { source: "raw_video" },
+            sequence_frames: [],
+            thumbnail_url: null,
+            image_url: null,
+            image_uri: null,
+            image_storage_key: null,
+            video_url: `/api/media/videos/${encodeURIComponent(rawVideoId)}/preview`,
+            video_uri: null,
+          };
+          await openVideoPreview(rawVideoResult);
+          setStatus("Raw video ready; frame indexing pending");
+        } catch {
+          setStatus("No indexed frames or raw video match this code");
+        }
+      }
     } catch (error) {
       if (!searchRequests.current.isCurrent(request)) return;
       const detail =
@@ -2618,7 +2651,9 @@ export function App() {
     const fallbackFrame = contextFrameFromResult(result);
     const initialFrames = fallbackFrame ? [fallbackFrame] : [];
     const initialTimestamp = fallbackFrame?.timestamp_ms ?? result.timestamp_ms;
-    const frameLabel = fallbackFrame
+    const frameLabel = result.score_breakdown.source === "raw_video"
+      ? "Raw video | frames pending"
+      : fallbackFrame
       ? `frame ${fallbackFrame.frame_idx}`
       : "sequence";
     const initialSeconds = Math.max(0, (initialTimestamp ?? 0) / 1000);
@@ -3151,7 +3186,9 @@ export function App() {
                 </div>
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {queryType === "TRAKE"
+                  {status.startsWith("Search failed")
+                    ? status
+                    : queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -3195,7 +3232,9 @@ export function App() {
                     <SearchLoadingStage frameColumns={frameColumns} />
                   ) : hasSearched && visibleResults.length === 0 ? (
                     <p className="empty-note search-empty-note">
-                      {queryType === "TRAKE"
+                      {status.startsWith("Search failed")
+                        ? status
+                        : queryType === "TRAKE"
                         ? "No complete ordered sequence matches this query."
                         : "No frames match this query."}
                     </p>
@@ -3233,7 +3272,9 @@ export function App() {
                 <SearchLoadingStage frameColumns={frameColumns} />
               ) : hasSearched && visibleResults.length === 0 ? (
                 <p className="empty-note search-empty-note">
-                  {queryType === "TRAKE"
+                  {status.startsWith("Search failed")
+                    ? status
+                    : queryType === "TRAKE"
                     ? "No complete ordered sequence matches this query."
                     : "No frames match this query."}
                 </p>
@@ -3842,7 +3883,7 @@ export function App() {
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={videoPreview.loadingFrames}
+                    disabled={videoPreview.loadingFrames || videoPreview.result.score_breakdown.source === "raw_video"}
                     onClick={() => void selectCurrentVideoFrame()}
                     title="Select the frame currently shown in the video"
                   >
@@ -3907,9 +3948,11 @@ export function App() {
                       : "Pick frame"}
                   </button>
                 </div>
-                <div className="video-score-panel">
-                  <ScoreBreakdown result={videoPreview.result} />
-                </div>
+                {videoPreview.result.score_breakdown.source !== "raw_video" && (
+                  <div className="video-score-panel">
+                    <ScoreBreakdown result={videoPreview.result} />
+                  </div>
+                )}
               </div>
             </div>
           </div>
